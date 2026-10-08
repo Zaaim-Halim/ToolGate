@@ -107,7 +107,7 @@ class PathRulesTest {
         assertThatThrownBy(() -> policy(a -> a.allow("readLog")
                 .rule("readLog.path", under("/var/log"), hosts("logs.example"))))
                 .isInstanceOf(InvalidPolicyException.class)
-                .hasMessageContaining("URL rules or path rules");
+                .hasMessageContaining("not a mix");
     }
 
     private static ToolGate gate(ToolGatePolicy policy) {

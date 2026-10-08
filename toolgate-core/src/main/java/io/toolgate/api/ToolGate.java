@@ -9,6 +9,7 @@ import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.session.InMemorySessionStore;
 import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.HostResolver;
+import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.spi.SessionStore;
 import java.time.Clock;
 import java.util.Arrays;
@@ -99,6 +100,7 @@ public interface ToolGate extends AutoCloseable {
         private final ToolGatePolicy policy;
         private SessionStore sessionStore;
         private HostResolver hostResolver;
+        private OwnershipResolver ownershipResolver;
         private AuditSink auditSink;
         private byte[] argumentHashKey;
         private Clock clock = Clock.systemUTC();
@@ -129,6 +131,18 @@ public interface ToolGate extends AutoCloseable {
          */
         public Builder hostResolver(HostResolver resolver) {
             this.hostResolver = Objects.requireNonNull(resolver, "hostResolver");
+            return this;
+        }
+
+        /**
+         * Answers who owns a record, for {@code sameTenant} and {@code ownedByPrincipal} rules.
+         * Required when the policy uses them.
+         *
+         * @param resolver the application's resolver; fast, since it runs during every such check
+         * @return this builder
+         */
+        public Builder ownershipResolver(OwnershipResolver resolver) {
+            this.ownershipResolver = Objects.requireNonNull(resolver, "ownershipResolver");
             return this;
         }
 
@@ -177,13 +191,19 @@ public interface ToolGate extends AutoCloseable {
          * Builds the gate and starts its audit thread.
          *
          * @return a thread-safe gate; close it at shutdown
+         * @throws IllegalStateException if the policy uses ownership rules and no
+         *                               {@link #ownershipResolver} was given
          */
         public ToolGate build() {
+            if (ownershipResolver == null && BuiltInEvaluators.usesOwnership(policy)) {
+                throw new IllegalStateException(
+                        "the policy uses sameTenant or ownedByPrincipal rules; set an ownershipResolver");
+            }
             return new DefaultToolGate(
                     policy,
-                    hostResolver != null
-                            ? BuiltInEvaluators.forPolicy(policy, hostResolver)
-                            : BuiltInEvaluators.forPolicy(policy),
+                    BuiltInEvaluators.forPolicy(policy,
+                            hostResolver != null ? BuiltInEvaluators.resolving(hostResolver) : BuiltInEvaluators.NO_NAME_CHECK,
+                            ownershipResolver != null ? ownershipResolver : BuiltInEvaluators.NO_OWNERS),
                     sessionStore != null ? sessionStore : new InMemorySessionStore(),
                     new AsyncAuditDispatcher(auditSink != null ? auditSink : new SystemLoggerSink(),
                             AsyncAuditDispatcher.DEFAULT_CAPACITY),

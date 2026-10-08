@@ -20,8 +20,13 @@ import java.util.stream.Collectors;
  * <p>Path rules: {@link #under} and {@link #notUnder} compare real paths, after following symlinks.
  * A relative path is resolved against the single {@code under} root, so the tool must resolve it the
  * same way; with several roots it is denied. A new file is checked through its folder, which must
- * exist, and a file with several hard links is denied. One argument takes URL rules or path rules,
- * not both.
+ * exist, and a file with several hard links is denied.
+ *
+ * <p>Ownership rules: {@link #sameTenant} and {@link #ownedByPrincipal} ask the application's
+ * {@code OwnershipResolver} who owns the record an ID names. An unknown record is denied. The
+ * argument may be a text or number ID, or a list of them, every one of which must pass.
+ *
+ * <p>One argument takes rules of one family only: URL, path or ownership.
  */
 public final class ArgumentRules {
 
@@ -80,6 +85,26 @@ public final class ArgumentRules {
         return new ArgumentRule.NotUnder(List.of(roots));
     }
 
+    /**
+     * Allows only IDs of records that the principal's tenant owns.
+     *
+     * @param resourceType the type of record, such as {@code invoice}, passed to the resolver
+     * @return the rule
+     */
+    public static ArgumentRule sameTenant(String resourceType) {
+        return new ArgumentRule.SameTenant(resourceType);
+    }
+
+    /**
+     * Allows only IDs of records that the principal itself owns.
+     *
+     * @param resourceType the type of record, such as {@code customer}, passed to the resolver
+     * @return the rule
+     */
+    public static ArgumentRule ownedByPrincipal(String resourceType) {
+        return new ArgumentRule.OwnedByPrincipal(resourceType);
+    }
+
     /** The kind of a rule, so a policy can give each kind at most once per argument. */
     static Class<? extends ArgumentRule> kind(ArgumentRule rule) {
         return switch (rule) {
@@ -88,6 +113,8 @@ public final class ArgumentRules {
             case ArgumentRule.Ports ports -> ArgumentRule.Ports.class;
             case ArgumentRule.Under under -> ArgumentRule.Under.class;
             case ArgumentRule.NotUnder notUnder -> ArgumentRule.NotUnder.class;
+            case ArgumentRule.SameTenant sameTenant -> ArgumentRule.SameTenant.class;
+            case ArgumentRule.OwnedByPrincipal owned -> ArgumentRule.OwnedByPrincipal.class;
         };
     }
 }

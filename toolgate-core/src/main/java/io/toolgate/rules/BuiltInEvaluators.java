@@ -3,6 +3,7 @@ package io.toolgate.rules;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.engine.Evaluator;
 import io.toolgate.spi.HostResolver;
+import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.validate.ResolvedAddresses;
 import java.util.ArrayList;
 import java.util.List;
@@ -12,36 +13,62 @@ import java.util.function.Function;
 /** The evaluators every gate runs. */
 public final class BuiltInEvaluators {
 
+    /** Accepts every URL host name without resolving it. */
+    public static final Function<String, Optional<String>> NO_NAME_CHECK = host -> Optional.empty();
+
+    /** Knows no owners, so every ownership rule denies; for policies without ownership rules. */
+    public static final OwnershipResolver NO_OWNERS = new OwnershipResolver() { };
+
     private BuiltInEvaluators() {}
 
     /**
-     * Every built-in evaluator, plus one for each argument and taint rule in the policy, without
-     * resolving names.
+     * A name check that resolves URL host names and denies names pointing at special-purpose addresses.
      *
-     * @param policy the policy whose argument rules to apply
-     * @return the evaluators, built-ins first
+     * @param resolver the application's resolver
+     * @return the check
      */
-    public static List<Evaluator> forPolicy(ToolGatePolicy policy) {
-        return withNameCheck(policy, host -> Optional.empty());
+    public static Function<String, Optional<String>> resolving(HostResolver resolver) {
+        return host -> ResolvedAddresses.problem(resolver, host);
     }
 
     /**
-     * Every built-in evaluator, plus one for each argument rule in the policy, resolving URL host
-     * names with {@code resolver} and denying names that point at special-purpose addresses.
+     * Whether a policy has rules that need an {@link OwnershipResolver}.
      *
-     * @param policy   the policy whose argument rules to apply
-     * @param resolver the application's resolver
-     * @return the evaluators, built-ins first
+     * @param policy the policy
+     * @return {@code true} if any agent uses sameTenant or ownedByPrincipal
      */
-    public static List<Evaluator> forPolicy(ToolGatePolicy policy, HostResolver resolver) {
-        return withNameCheck(policy, host -> ResolvedAddresses.problem(resolver, host));
+    public static boolean usesOwnership(ToolGatePolicy policy) {
+        return policy.agents().values().stream()
+                .flatMap(agent -> agent.argumentRules().values().stream())
+                .anyMatch(ArgumentChecks::isOwnership);
     }
 
-    private static List<Evaluator> withNameCheck(ToolGatePolicy policy, Function<String, Optional<String>> nameCheck) {
+    /**
+     * Every built-in evaluator, plus one for each argument and taint rule in the policy, with no name
+     * resolution and no owners; for tests and policies without ownership rules.
+     *
+     * @param policy the policy whose rules to apply
+     * @return the evaluators, built-ins first
+     */
+    public static List<Evaluator> forPolicy(ToolGatePolicy policy) {
+        return forPolicy(policy, NO_NAME_CHECK, NO_OWNERS);
+    }
+
+    /**
+     * Every built-in evaluator, plus one for each argument and taint rule in the policy.
+     *
+     * @param policy    the policy whose rules to apply
+     * @param nameCheck why a URL host name must not be used; {@link #NO_NAME_CHECK} or {@link #resolving}
+     * @param owners    the application's ownership resolver
+     * @return the evaluators, built-ins first
+     */
+    public static List<Evaluator> forPolicy(ToolGatePolicy policy, Function<String, Optional<String>> nameCheck,
+                                            OwnershipResolver owners) {
         var evaluators = new ArrayList<>(all());
         policy.agents().values().forEach(agent -> {
-            agent.argumentRules().forEach((argument, rules) ->
-                    evaluators.add(new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck))));
+            agent.argumentRules().forEach((argument, rules) -> evaluators.add(ArgumentChecks.isOwnership(rules)
+                    ? new OwnershipEvaluator(agent.id(), argument, rules, owners)
+                    : new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck))));
             agent.taintRules().forEach(rule -> evaluators.add(new TaintRuleEvaluator(agent.id(), rule)));
         });
         return List.copyOf(evaluators);

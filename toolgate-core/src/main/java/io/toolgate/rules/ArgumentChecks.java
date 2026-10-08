@@ -1,5 +1,7 @@
 package io.toolgate.rules;
 
+import static io.toolgate.support.Checks.requireNonBlank;
+
 import io.toolgate.api.policy.ArgumentRule;
 import io.toolgate.validate.HostPattern;
 import io.toolgate.validate.PathCheck;
@@ -11,11 +13,22 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
-/** Turns one argument's policy rules into the check that applies them to a string value. */
+/** Turns one argument's policy rules into the check that applies them. */
 public final class ArgumentChecks {
 
     private static final int MAX_PORT = 65_535;
+
+    /** The families of argument rules; one argument takes rules of one family only. */
+    enum Family {
+        /** Hosts, schemes and ports: the value is a URL. */
+        URL,
+        /** Under and notUnder: the value is a file path. */
+        PATH,
+        /** SameTenant and ownedByPrincipal: the value is a record ID, or a list of them. */
+        OWNERSHIP
+    }
 
     private ArgumentChecks() {}
 
@@ -23,50 +36,82 @@ public final class ArgumentChecks {
      * Validates one argument's rules, as the policy builder does.
      *
      * @param rules the argument's rules, each kind at most once
-     * @throws IllegalArgumentException if they mix URL and path rules, or a value is invalid
+     * @throws IllegalArgumentException if they mix families, or a value is invalid
      */
     public static void validate(List<ArgumentRule> rules) {
-        compile(rules, host -> Optional.empty());
+        switch (family(rules)) {
+            case URL -> urlRule(rules);
+            case PATH -> pathRule(rules);
+            case OWNERSHIP -> rules.forEach(ArgumentChecks::requireResourceType);
+        }
     }
 
     /**
-     * Compiles one argument's rules.
+     * Whether any of the rules needs an ownership resolver.
+     *
+     * @param rules an argument's rules
+     * @return {@code true} for ownership rules
+     */
+    static boolean isOwnership(List<ArgumentRule> rules) {
+        return family(rules) == Family.OWNERSHIP;
+    }
+
+    /**
+     * Compiles one argument's URL or path rules.
      *
      * @param rules     the argument's rules, each kind at most once
      * @param nameCheck why a URL host name must not be used, after any resolution; empty if fine
      * @return a function from the argument's value to the reason it is denied, or empty if allowed
-     * @throws IllegalArgumentException if the rules mix URL and path rules, or a value is invalid
+     * @throws IllegalArgumentException if the rules mix families, or a value is invalid
      */
     static Function<String, Optional<String>> compile(List<ArgumentRule> rules,
                                                       Function<String, Optional<String>> nameCheck) {
-        boolean pathRules = rules.stream().anyMatch(ArgumentChecks::isPathRule);
-        boolean urlRules = rules.stream().anyMatch(rule -> !isPathRule(rule));
-        if (pathRules && urlRules) {
-            throw new IllegalArgumentException("an argument takes URL rules or path rules, not both");
-        }
-        if (pathRules) {
-            PathCheck.Rule rule = pathRule(rules);
-            return value -> switch (PathCheck.check(value, rule)) {
-                case PathCheck.Accepted accepted -> Optional.empty();
-                case PathCheck.Rejected(String reason) -> Optional.of(reason);
-            };
-        }
-        UrlCheck.Rule rule = urlRule(rules);
-        return value -> switch (UrlCheck.check(value, rule)) {
-            case UrlCheck.Accepted(UrlCheck.Target target) ->
-                    target.address().isPresent() ? Optional.empty() : nameCheck.apply(target.host());
-            case UrlCheck.Rejected(String reason) -> Optional.of(reason);
+        return switch (family(rules)) {
+            case PATH -> {
+                PathCheck.Rule rule = pathRule(rules);
+                yield value -> switch (PathCheck.check(value, rule)) {
+                    case PathCheck.Accepted accepted -> Optional.empty();
+                    case PathCheck.Rejected(String reason) -> Optional.of(reason);
+                };
+            }
+            case URL -> {
+                UrlCheck.Rule rule = urlRule(rules);
+                yield value -> switch (UrlCheck.check(value, rule)) {
+                    case UrlCheck.Accepted(UrlCheck.Target target) ->
+                            target.address().isPresent() ? Optional.empty() : nameCheck.apply(target.host());
+                    case UrlCheck.Rejected(String reason) -> Optional.of(reason);
+                };
+            }
+            case OWNERSHIP -> throw new IllegalArgumentException("ownership rules are checked by OwnershipEvaluator");
         };
     }
 
-    private static boolean isPathRule(ArgumentRule rule) {
+    private static Family family(List<ArgumentRule> rules) {
+        Set<Family> families = rules.stream().map(ArgumentChecks::family).collect(Collectors.toSet());
+        if (families.size() != 1) {
+            throw new IllegalArgumentException("an argument takes URL rules, path rules or ownership rules, not a mix");
+        }
+        return families.iterator().next();
+    }
+
+    private static Family family(ArgumentRule rule) {
         return switch (rule) {
-            case ArgumentRule.Under under -> true;
-            case ArgumentRule.NotUnder notUnder -> true;
-            case ArgumentRule.Hosts hosts -> false;
-            case ArgumentRule.Schemes schemes -> false;
-            case ArgumentRule.Ports ports -> false;
+            case ArgumentRule.Hosts hosts -> Family.URL;
+            case ArgumentRule.Schemes schemes -> Family.URL;
+            case ArgumentRule.Ports ports -> Family.URL;
+            case ArgumentRule.Under under -> Family.PATH;
+            case ArgumentRule.NotUnder notUnder -> Family.PATH;
+            case ArgumentRule.SameTenant sameTenant -> Family.OWNERSHIP;
+            case ArgumentRule.OwnedByPrincipal owned -> Family.OWNERSHIP;
         };
+    }
+
+    private static void requireResourceType(ArgumentRule rule) {
+        switch (rule) {
+            case ArgumentRule.SameTenant(String type) -> requireNonBlank(type, "resource type");
+            case ArgumentRule.OwnedByPrincipal(String type) -> requireNonBlank(type, "resource type");
+            default -> throw new IllegalStateException("not an ownership rule: " + rule);
+        }
     }
 
     private static UrlCheck.Rule urlRule(List<ArgumentRule> rules) {
@@ -88,8 +133,7 @@ public final class ArgumentChecks {
                     }
                     ports = allowed;
                 }
-                case ArgumentRule.Under under -> throw new IllegalStateException("path rule in URL rules");
-                case ArgumentRule.NotUnder notUnder -> throw new IllegalStateException("path rule in URL rules");
+                default -> throw new IllegalStateException("not a URL rule: " + rule);
             }
         }
         return new UrlCheck.Rule(schemes, hosts, ports);
@@ -102,9 +146,7 @@ public final class ArgumentChecks {
             switch (rule) {
                 case ArgumentRule.Under(List<String> roots) -> under.addAll(roots(roots, "under"));
                 case ArgumentRule.NotUnder(List<String> roots) -> notUnder.addAll(roots(roots, "notUnder"));
-                case ArgumentRule.Hosts hosts -> throw new IllegalStateException("URL rule in path rules");
-                case ArgumentRule.Schemes schemes -> throw new IllegalStateException("URL rule in path rules");
-                case ArgumentRule.Ports ports -> throw new IllegalStateException("URL rule in path rules");
+                default -> throw new IllegalStateException("not a path rule: " + rule);
             }
         }
         return new PathCheck.Rule(under, notUnder);

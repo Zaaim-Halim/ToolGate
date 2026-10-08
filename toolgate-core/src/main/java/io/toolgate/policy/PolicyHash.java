@@ -88,6 +88,8 @@ public final class PolicyHash {
                     ports.ports().stream().sorted().map(String::valueOf).toArray(String[]::new));
             case ArgumentRule.Under(List<String> roots) -> line(text, "under", sorted(roots));
             case ArgumentRule.NotUnder(List<String> roots) -> line(text, "notUnder", sorted(roots));
+            case ArgumentRule.SameTenant(String type) -> line(text, "sameTenant", type);
+            case ArgumentRule.OwnedByPrincipal(String type) -> line(text, "ownedByPrincipal", type);
         }
         return text.toString();
     }

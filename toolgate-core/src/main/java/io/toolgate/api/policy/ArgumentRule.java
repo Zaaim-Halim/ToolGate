@@ -1,6 +1,7 @@
 package io.toolgate.api.policy;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -10,7 +11,8 @@ import java.util.Set;
  * validators will come through an extension point.
  */
 public sealed interface ArgumentRule
-        permits ArgumentRule.Hosts, ArgumentRule.Schemes, ArgumentRule.Ports, ArgumentRule.Under, ArgumentRule.NotUnder {
+        permits ArgumentRule.Hosts, ArgumentRule.Schemes, ArgumentRule.Ports, ArgumentRule.Under, ArgumentRule.NotUnder,
+                ArgumentRule.SameTenant, ArgumentRule.OwnedByPrincipal {
 
     /**
      * A URL argument must point at one of these hosts.
@@ -69,6 +71,30 @@ public sealed interface ArgumentRule
         /** Copies the roots; they are validated when the policy is built. */
         public NotUnder {
             roots = List.copyOf(roots);
+        }
+    }
+
+    /**
+     * An ID argument must name a record owned by the principal's tenant.
+     *
+     * @param resourceType the type of record, as the application's {@code OwnershipResolver} knows it
+     */
+    record SameTenant(String resourceType) implements ArgumentRule {
+        /** Requires the type. */
+        public SameTenant {
+            Objects.requireNonNull(resourceType, "resourceType");
+        }
+    }
+
+    /**
+     * An ID argument must name a record owned by the principal itself.
+     *
+     * @param resourceType the type of record, as the application's {@code OwnershipResolver} knows it
+     */
+    record OwnedByPrincipal(String resourceType) implements ArgumentRule {
+        /** Requires the type. */
+        public OwnedByPrincipal {
+            Objects.requireNonNull(resourceType, "resourceType");
         }
     }
 }
