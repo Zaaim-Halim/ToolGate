@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
  */
 class ModuleBoundaryTest {
 
-    private static final Set<String> PUBLIC_PACKAGES = Set.of("io.toolgate.api", "io.toolgate.spi");
+    private static final Set<String> PUBLIC_PACKAGES = Set.of("io.toolgate.api", "io.toolgate.api.policy", "io.toolgate.spi");
 
     private final ModuleDescriptor descriptor = ModuleBoundaryTest.class.getModule().getDescriptor();
 

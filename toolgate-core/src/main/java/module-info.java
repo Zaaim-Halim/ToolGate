@@ -6,4 +6,5 @@
  */
 module io.toolgate.core {
     exports io.toolgate.api;
+    exports io.toolgate.api.policy;
 }
