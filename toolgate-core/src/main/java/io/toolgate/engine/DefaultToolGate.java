@@ -7,6 +7,7 @@ import io.toolgate.api.ToolGate;
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.rules.BuiltInEvaluators;
+import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.CallDecided.Outcome;
 import io.toolgate.spi.SessionState;
@@ -37,9 +38,14 @@ public final class DefaultToolGate implements ToolGate {
         this.sessions = Objects.requireNonNull(sessions, "sessions");
     }
 
-    /** A gate running every built-in rule. */
+    /** A gate running every built-in rule, without resolving URL host names. */
     public static ToolGate withBuiltInRules(ToolGatePolicy policy, SessionStore sessions) {
         return new DefaultToolGate(policy, BuiltInEvaluators.forPolicy(policy), sessions);
+    }
+
+    /** A gate running every built-in rule, resolving URL host names with {@code resolver}. */
+    public static ToolGate withBuiltInRules(ToolGatePolicy policy, SessionStore sessions, HostResolver resolver) {
+        return new DefaultToolGate(policy, BuiltInEvaluators.forPolicy(policy, resolver), sessions);
     }
 
     @Override

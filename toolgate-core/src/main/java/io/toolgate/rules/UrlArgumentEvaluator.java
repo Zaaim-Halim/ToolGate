@@ -11,6 +11,7 @@ import io.toolgate.engine.Verdict;
 import io.toolgate.validate.UrlCheck;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 
 /** Applies one agent's URL rules to one argument of one tool; passes every other call. */
 final class UrlArgumentEvaluator implements Evaluator {
@@ -18,11 +19,18 @@ final class UrlArgumentEvaluator implements Evaluator {
     private final String agentId;
     private final ToolArgument argument;
     private final UrlCheck.Rule rule;
+    private final Function<String, Optional<String>> nameCheck;
 
-    UrlArgumentEvaluator(String agentId, ToolArgument argument, UrlCheck.Rule rule) {
+    /**
+     * @param nameCheck why a host name must not be used, typically after resolving it; returns
+     *                  empty for every name when no resolver is configured
+     */
+    UrlArgumentEvaluator(String agentId, ToolArgument argument, UrlCheck.Rule rule,
+                         Function<String, Optional<String>> nameCheck) {
         this.agentId = Objects.requireNonNull(agentId, "agentId");
         this.argument = Objects.requireNonNull(argument, "argument");
         this.rule = Objects.requireNonNull(rule, "rule");
+        this.nameCheck = Objects.requireNonNull(nameCheck, "nameCheck");
     }
 
     @Override
@@ -48,7 +56,9 @@ final class UrlArgumentEvaluator implements Evaluator {
             return deny("must be a string");
         }
         return switch (UrlCheck.check(url, rule)) {
-            case UrlCheck.Accepted accepted -> Verdict.PASS;
+            case UrlCheck.Accepted(UrlCheck.Target target) -> target.address().isPresent()
+                    ? Verdict.PASS
+                    : nameCheck.apply(target.host()).map(this::deny).orElse(Verdict.PASS);
             case UrlCheck.Rejected(String reason) -> deny(reason);
         };
     }

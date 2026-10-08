@@ -3,6 +3,7 @@ package io.toolgate.api;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.engine.DefaultToolGate;
 import io.toolgate.session.InMemorySessionStore;
+import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.SessionStore;
 import java.util.Objects;
 
@@ -42,6 +43,7 @@ public interface ToolGate {
 
         private final ToolGatePolicy policy;
         private SessionStore sessionStore;
+        private HostResolver hostResolver;
 
         private Builder(ToolGatePolicy policy) {
             this.policy = Objects.requireNonNull(policy, "policy");
@@ -60,13 +62,28 @@ public interface ToolGate {
         }
 
         /**
+         * Also resolves URL host names during checks, and denies names that resolve to private,
+         * loopback, link-local or other special-purpose addresses. Off by default: see
+         * {@link HostResolver} for the costs.
+         *
+         * @param resolver the resolver, such as {@link HostResolver#system()}
+         * @return this builder
+         */
+        public Builder hostResolver(HostResolver resolver) {
+            this.hostResolver = Objects.requireNonNull(resolver, "hostResolver");
+            return this;
+        }
+
+        /**
          * Builds the gate.
          *
          * @return a thread-safe gate
          */
         public ToolGate build() {
-            return DefaultToolGate.withBuiltInRules(
-                    policy, sessionStore != null ? sessionStore : new InMemorySessionStore());
+            SessionStore store = sessionStore != null ? sessionStore : new InMemorySessionStore();
+            return hostResolver != null
+                    ? DefaultToolGate.withBuiltInRules(policy, store, hostResolver)
+                    : DefaultToolGate.withBuiltInRules(policy, store);
         }
     }
 }
