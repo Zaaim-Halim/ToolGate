@@ -16,7 +16,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -573,10 +572,10 @@ public final class ToolGatePolicy {
             }
             List<ArgumentRule> existing = argumentRules.computeIfAbsent(argument, ignored -> new ArrayList<>());
             for (ArgumentRule rule : rules) {
-                var kind = ArgumentRules.kind(Objects.requireNonNull(rule, "rule"));
+                String kind = ArgumentRules.kind(Objects.requireNonNull(rule, "rule"));
                 if (existing.stream().map(ArgumentRules::kind).anyMatch(kind::equals)) {
                     throw new InvalidPolicyException("agent '" + id + "': rule '" + argument + "' gives "
-                            + kind.getSimpleName().toLowerCase(Locale.ROOT) + " twice");
+                            + kind + " twice");
                 }
                 existing.add(rule);
             }

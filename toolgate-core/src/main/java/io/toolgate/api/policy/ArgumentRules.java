@@ -1,5 +1,7 @@
 package io.toolgate.api.policy;
 
+import io.toolgate.support.Decimals;
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -26,7 +28,12 @@ import java.util.stream.Collectors;
  * {@code OwnershipResolver} who owns the record an ID names. An unknown record is denied. The
  * argument may be a text or number ID, or a list of them, every one of which must pass.
  *
- * <p>One argument takes rules of one family only: URL, path or ownership.
+ * <p>Numeric rules: {@link #atMost} and {@link #atLeast} deny a call past the limit, or with
+ * {@code .otherwise(DEFER)} hold it for review. One deny limit and one defer limit of each kind may
+ * share an argument, such as deny above 1000 and review above 200. The value may be a number or text
+ * that is a plain decimal; anything a tool might read differently, such as {@code 1e3}, is denied.
+ *
+ * <p>One argument takes rules of one family only: URL, path, ownership or numeric.
  */
 public final class ArgumentRules {
 
@@ -105,16 +112,51 @@ public final class ArgumentRules {
         return new ArgumentRule.OwnedByPrincipal(resourceType);
     }
 
-    /** The kind of a rule, so a policy can give each kind at most once per argument. */
-    static Class<? extends ArgumentRule> kind(ArgumentRule rule) {
+    /**
+     * Allows values up to a limit; above it, the call is denied.
+     *
+     * @param limit a plain decimal, such as {@code "200"} or {@code "199.99"}; never a double, so no
+     *              rounding can move the limit
+     * @return the rule; {@code .otherwise(DEFER)} reviews instead of denying
+     * @throws IllegalArgumentException if the limit is not a plain decimal
+     */
+    public static ArgumentRule.AtMost atMost(String limit) {
+        return new ArgumentRule.AtMost(decimal(limit), OnViolation.DENY);
+    }
+
+    /**
+     * Allows values down to a limit; below it, the call is denied.
+     *
+     * @param limit a plain decimal, such as {@code "1"} or {@code "-50"}
+     * @return the rule; {@code .otherwise(DEFER)} reviews instead of denying
+     * @throws IllegalArgumentException if the limit is not a plain decimal
+     */
+    public static ArgumentRule.AtLeast atLeast(String limit) {
+        return new ArgumentRule.AtLeast(decimal(limit), OnViolation.DENY);
+    }
+
+    private static BigDecimal decimal(String limit) {
+        return Decimals.parsePlain(limit).orElseThrow(() -> new IllegalArgumentException(
+                "limit must be a plain decimal such as \"200\" or \"199.99\", was " + limit));
+    }
+
+    /**
+     * The kind of a rule, so a policy can give each kind at most once per argument. A limit's kind
+     * includes its action, so one deny and one defer limit may share an argument.
+     */
+    static String kind(ArgumentRule rule) {
         return switch (rule) {
-            case ArgumentRule.Hosts hosts -> ArgumentRule.Hosts.class;
-            case ArgumentRule.Schemes schemes -> ArgumentRule.Schemes.class;
-            case ArgumentRule.Ports ports -> ArgumentRule.Ports.class;
-            case ArgumentRule.Under under -> ArgumentRule.Under.class;
-            case ArgumentRule.NotUnder notUnder -> ArgumentRule.NotUnder.class;
-            case ArgumentRule.SameTenant sameTenant -> ArgumentRule.SameTenant.class;
-            case ArgumentRule.OwnedByPrincipal owned -> ArgumentRule.OwnedByPrincipal.class;
+            case ArgumentRule.Hosts hosts -> "hosts";
+            case ArgumentRule.Schemes schemes -> "schemes";
+            case ArgumentRule.Ports ports -> "ports";
+            case ArgumentRule.Under under -> "under";
+            case ArgumentRule.NotUnder notUnder -> "notUnder";
+            case ArgumentRule.SameTenant sameTenant -> "sameTenant";
+            case ArgumentRule.OwnedByPrincipal owned -> "ownedByPrincipal";
+            case ArgumentRule.AtMost(var limit, OnViolation action) ->
+                    action == OnViolation.DENY ? "atMost" : "atMost otherwise " + action;
+            case ArgumentRule.AtLeast(var limit, OnViolation action) ->
+                    action == OnViolation.DENY ? "atLeast" : "atLeast otherwise " + action;
         };
     }
 }

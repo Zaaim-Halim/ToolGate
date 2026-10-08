@@ -100,6 +100,8 @@ public final class PolicyHash {
             case ArgumentRule.NotUnder(List<String> roots) -> line(text, "notUnder", sorted(roots));
             case ArgumentRule.SameTenant(String type) -> line(text, "sameTenant", type);
             case ArgumentRule.OwnedByPrincipal(String type) -> line(text, "ownedByPrincipal", type);
+            case ArgumentRule.AtMost(var limit, var action) -> line(text, "atMost", limit.toPlainString(), action.name());
+            case ArgumentRule.AtLeast(var limit, var action) -> line(text, "atLeast", limit.toPlainString(), action.name());
         }
         return text.toString();
     }

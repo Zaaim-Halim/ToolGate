@@ -27,7 +27,9 @@ public final class ArgumentChecks {
         /** Under and notUnder: the value is a file path. */
         PATH,
         /** SameTenant and ownedByPrincipal: the value is a record ID, or a list of them. */
-        OWNERSHIP
+        OWNERSHIP,
+        /** AtMost and atLeast: the value is a number. */
+        NUMBER
     }
 
     private ArgumentChecks() {}
@@ -43,6 +45,7 @@ public final class ArgumentChecks {
             case URL -> urlRule(rules);
             case PATH -> pathRule(rules);
             case OWNERSHIP -> rules.forEach(ArgumentChecks::requireResourceType);
+            case NUMBER -> NumericEvaluator.requireReachableLimits(rules);
         }
     }
 
@@ -54,6 +57,16 @@ public final class ArgumentChecks {
      */
     static boolean isOwnership(List<ArgumentRule> rules) {
         return family(rules) == Family.OWNERSHIP;
+    }
+
+    /**
+     * Whether the rules are numeric limits.
+     *
+     * @param rules an argument's rules
+     * @return {@code true} for atMost and atLeast
+     */
+    static boolean isNumeric(List<ArgumentRule> rules) {
+        return family(rules) == Family.NUMBER;
     }
 
     /**
@@ -83,13 +96,14 @@ public final class ArgumentChecks {
                 };
             }
             case OWNERSHIP -> throw new IllegalArgumentException("ownership rules are checked by OwnershipEvaluator");
+            case NUMBER -> throw new IllegalArgumentException("numeric rules are checked by NumericEvaluator");
         };
     }
 
     private static Family family(List<ArgumentRule> rules) {
         Set<Family> families = rules.stream().map(ArgumentChecks::family).collect(Collectors.toSet());
         if (families.size() != 1) {
-            throw new IllegalArgumentException("an argument takes URL rules, path rules or ownership rules, not a mix");
+            throw new IllegalArgumentException("an argument takes URL, path, ownership or numeric rules, not a mix");
         }
         return families.iterator().next();
     }
@@ -103,6 +117,8 @@ public final class ArgumentChecks {
             case ArgumentRule.NotUnder notUnder -> Family.PATH;
             case ArgumentRule.SameTenant sameTenant -> Family.OWNERSHIP;
             case ArgumentRule.OwnedByPrincipal owned -> Family.OWNERSHIP;
+            case ArgumentRule.AtMost atMost -> Family.NUMBER;
+            case ArgumentRule.AtLeast atLeast -> Family.NUMBER;
         };
     }
 

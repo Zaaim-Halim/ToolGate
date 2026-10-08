@@ -1,5 +1,6 @@
 package io.toolgate.api.policy;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -12,7 +13,7 @@ import java.util.Set;
  */
 public sealed interface ArgumentRule
         permits ArgumentRule.Hosts, ArgumentRule.Schemes, ArgumentRule.Ports, ArgumentRule.Under, ArgumentRule.NotUnder,
-                ArgumentRule.SameTenant, ArgumentRule.OwnedByPrincipal {
+                ArgumentRule.SameTenant, ArgumentRule.OwnedByPrincipal, ArgumentRule.AtMost, ArgumentRule.AtLeast {
 
     /**
      * A URL argument must point at one of these hosts.
@@ -95,6 +96,54 @@ public sealed interface ArgumentRule
         /** Requires the type. */
         public OwnedByPrincipal {
             Objects.requireNonNull(resourceType, "resourceType");
+        }
+    }
+
+    /**
+     * A numeric argument must be at most {@code limit}.
+     *
+     * @param limit       the largest allowed value
+     * @param onViolation what happens to a call above it
+     */
+    record AtMost(BigDecimal limit, OnViolation onViolation) implements ArgumentRule {
+        /** Requires both components. */
+        public AtMost {
+            Objects.requireNonNull(limit, "limit");
+            Objects.requireNonNull(onViolation, "onViolation");
+        }
+
+        /**
+         * The same limit with another action.
+         *
+         * @param action what happens to a call above the limit
+         * @return the rule
+         */
+        public AtMost otherwise(OnViolation action) {
+            return new AtMost(limit, action);
+        }
+    }
+
+    /**
+     * A numeric argument must be at least {@code limit}.
+     *
+     * @param limit       the smallest allowed value
+     * @param onViolation what happens to a call below it
+     */
+    record AtLeast(BigDecimal limit, OnViolation onViolation) implements ArgumentRule {
+        /** Requires both components. */
+        public AtLeast {
+            Objects.requireNonNull(limit, "limit");
+            Objects.requireNonNull(onViolation, "onViolation");
+        }
+
+        /**
+         * The same limit with another action.
+         *
+         * @param action what happens to a call below the limit
+         * @return the rule
+         */
+        public AtLeast otherwise(OnViolation action) {
+            return new AtLeast(limit, action);
         }
     }
 }

@@ -68,9 +68,15 @@ public final class BuiltInEvaluators {
                                             OwnershipResolver owners) {
         var evaluators = new ArrayList<>(all());
         policy.agents().values().forEach(agent -> {
-            agent.argumentRules().forEach((argument, rules) -> evaluators.add(ArgumentChecks.isOwnership(rules)
-                    ? new OwnershipEvaluator(agent.id(), argument, rules, owners)
-                    : new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck))));
+            agent.argumentRules().forEach((argument, rules) -> {
+                if (ArgumentChecks.isOwnership(rules)) {
+                    evaluators.add(new OwnershipEvaluator(agent.id(), argument, rules, owners));
+                } else if (ArgumentChecks.isNumeric(rules)) {
+                    evaluators.add(new NumericEvaluator(agent.id(), argument, rules));
+                } else {
+                    evaluators.add(new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck)));
+                }
+            });
             agent.taintRules().forEach(rule -> evaluators.add(new TaintRuleEvaluator(agent.id(), rule)));
             agent.requiredRoles().forEach((tool, roles) -> evaluators.add(new RoleEvaluator(agent.id(), tool, roles)));
         });
