@@ -5,7 +5,9 @@ import static io.toolgate.api.Label.PRIVATE_DATA;
 import static io.toolgate.api.Label.UNTRUSTED_CONTENT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.toolgate.api.policy.InvalidPolicyException;
 import io.toolgate.api.policy.TaintAction;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.AuditJson;
@@ -111,9 +113,11 @@ class ApprovalTest {
     @Test
     void headlessCallCannotBeApprovedByItsOwnPrincipal() {
         ToolGate gate = gate(refundPolicy(a -> { }));
+        Principal mariaInFinance = Principal.user("maria", Tenant.of("acme"), "support", "finance");
         String approvalId = deferRefund(gate, MARIA);
 
-        assertThat(gate.approve(approvalId, MARIA, MARIA)).isInstanceOf(Approval.NotPermitted.class);
+        assertThat(gate.approve(approvalId, mariaInFinance, MARIA)).isInstanceOfSatisfying(Approval.NotPermitted.class,
+                notPermitted -> assertThat(notPermitted.reason()).contains("its own call"));
         assertThat(gate.pending()).hasSize(1);
         assertThat(gate.approve(approvalId, LENA, MARIA)).isInstanceOf(Approval.Released.class);
     }
@@ -125,6 +129,49 @@ class ApprovalTest {
         String approvalId = deferRefund(gate, MARIA);
 
         assertThat(gate.approve(approvalId, MARIA, MARIA)).isInstanceOf(Approval.Released.class);
+    }
+
+    @Test
+    void onlyReviewerRolesMayApproveOrReject() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+        Principal support = Principal.user("omar", Tenant.of("acme"), "support");
+
+        assertThat(gate.approve(approvalId, support, JOB)).isInstanceOfSatisfying(Approval.NotPermitted.class,
+                notPermitted -> assertThat(notPermitted.reason()).contains("[finance]"));
+        assertThat(gate.reject(approvalId, support, "not mine to reject")).isFalse();
+        assertThat(gate.pending()).hasSize(1);
+        assertThat(gate.approve(approvalId, LENA, JOB)).isInstanceOf(Approval.Released.class);
+    }
+
+    /** Fail closed: an agent that names no reviewers has calls nobody may approve; they can only expire. */
+    @Test
+    void agentWithoutReviewersCannotHaveCallsApproved() {
+        ToolGate gate = gate(ToolGatePolicy.builder()
+                .tool("readReturnRequest", t -> t.labels(UNTRUSTED_CONTENT).effect(Effect.READ))
+                .agent("refund-agent", a -> a.allow("readReturnRequest", "issueRefund"))
+                .build());
+        String approvalId = deferRefund(gate, JOB);
+
+        assertThat(gate.approve(approvalId, LENA, JOB)).isInstanceOfSatisfying(Approval.NotPermitted.class,
+                notPermitted -> assertThat(notPermitted.reason()).contains("names no reviewers"));
+        clock.advance(Duration.ofDays(2));
+        assertThat(gate.expirePending()).isEqualTo(1);
+    }
+
+    @Test
+    void reviewersMustBeValidAndChangeTheHash() {
+        assertThatThrownBy(() -> refundPolicy(a -> a.reviewers(" ")))
+                .isInstanceOf(InvalidPolicyException.class);
+        assertThat(refundPolicy(a -> { }).hash())
+                .isNotEqualTo(ToolGatePolicy.builder()
+                        .tool("readReturnRequest", t -> t.labels(UNTRUSTED_CONTENT).effect(Effect.READ))
+                        .tool("lookupCustomer", t -> t.labels(PRIVATE_DATA).effect(Effect.READ))
+                        .tool("issueRefund", t -> t.labels(EXTERNAL_SINK))
+                        .tool("ping", t -> t.effect(Effect.READ))
+                        .agent("refund-agent", a -> a.allow("readReturnRequest", "lookupCustomer", "issueRefund")
+                                .onTrifecta(TaintAction.BLOCK).reviewers("support-lead"))
+                        .build().hash());
     }
 
     @Test
@@ -205,7 +252,8 @@ class ApprovalTest {
                 .tool("issueRefund", t -> t.labels(EXTERNAL_SINK))
                 .tool("ping", t -> t.effect(Effect.READ))
                 .agent("refund-agent", a -> {
-                    a.allow("readReturnRequest", "lookupCustomer", "issueRefund").onTrifecta(TaintAction.BLOCK);
+                    a.allow("readReturnRequest", "lookupCustomer", "issueRefund").onTrifecta(TaintAction.BLOCK)
+                            .reviewers("finance");
                     extra.accept(a);
                 })
                 .build();

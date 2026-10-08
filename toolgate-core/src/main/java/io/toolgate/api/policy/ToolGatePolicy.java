@@ -384,6 +384,7 @@ public final class ToolGatePolicy {
         private boolean interactive;
         private TaintAction onTrifecta;
         private Duration approvalExpiry;
+        private Set<String> reviewers = Set.of();
         private PendingTaintRule pending;
 
         private AgentBuilder(String id) {
@@ -446,6 +447,26 @@ public final class ToolGatePolicy {
                 throw new InvalidPolicyException("agent '" + id + "': approvalExpiry must be positive, was " + expiry);
             }
             this.approvalExpiry = expiry;
+            return this;
+        }
+
+        /**
+         * Lets principals with one of these roles approve or reject this agent's deferred calls.
+         * Without it, nobody may, fail closed: deferred calls can then only expire, except in an
+         * interactive agent, where the signed-in user confirms their own call. In a headless agent
+         * a reviewer may never approve their own call, whatever their roles.
+         *
+         * @param roles roles, any one of which is enough
+         * @return this agent builder
+         */
+        public AgentBuilder reviewers(String... roles) {
+            if (roles.length == 0 || Arrays.stream(roles).anyMatch(role -> role == null || role.isBlank())) {
+                throw new InvalidPolicyException("agent '" + id + "': reviewers needs non-blank roles");
+            }
+            if (!reviewers.isEmpty()) {
+                throw new InvalidPolicyException("agent '" + id + "': reviewers is set twice");
+            }
+            this.reviewers = Set.copyOf(Arrays.asList(roles));
             return this;
         }
 
@@ -641,7 +662,7 @@ public final class ToolGatePolicy {
                     ? approvalExpiry
                     : (interactive ? INTERACTIVE_APPROVAL_EXPIRY : HEADLESS_APPROVAL_EXPIRY);
             return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules,
-                    requiredRoles, resultRules, expiry);
+                    requiredRoles, resultRules, expiry, reviewers);
         }
     }
 

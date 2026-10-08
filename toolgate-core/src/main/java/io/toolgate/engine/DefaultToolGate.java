@@ -30,11 +30,13 @@ import io.toolgate.spi.SessionStore;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Checks calls with the engine and records each applied decision in the session, optimistically:
@@ -159,9 +161,9 @@ public final class DefaultToolGate implements ToolGate {
         if (!clock.instant().isBefore(pending.expiresAt())) {
             return expire(pending) ? new Approval.Expired() : alreadyDecided(approvalId);
         }
-        boolean interactive = policy.agent(call.agentId()).map(AgentPolicy::interactive).orElse(false);
-        if (!interactive && reviewer.id().equals(call.principal().id())) {
-            return new Approval.NotPermitted("principal " + reviewer.id() + " may not approve its own call");
+        Optional<String> notPermitted = permissionProblem(call, reviewer);
+        if (notPermitted.isPresent()) {
+            return new Approval.NotPermitted(notPermitted.get());
         }
         ToolCall released = new ToolCall(call.callId(), currentPrincipal, call.agentId(), call.sessionId(), call.tool(),
                 call.args(), call.at());
@@ -179,7 +181,8 @@ public final class DefaultToolGate implements ToolGate {
     public boolean reject(String approvalId, Principal reviewer, String reason) {
         Objects.requireNonNull(reviewer, "reviewer");
         PendingCall pending = pendingCall(approvalId);
-        if (!approvals.transition(approvalId, ApprovalStatus.PENDING, ApprovalStatus.REJECTED)) {
+        if (permissionProblem(pending.call(), reviewer).isPresent()
+                || !approvals.transition(approvalId, ApprovalStatus.PENDING, ApprovalStatus.REJECTED)) {
             return false;
         }
         auditApproval(pending, ApprovalStatus.REJECTED, reviewer.id(), reason);
@@ -202,6 +205,30 @@ public final class DefaultToolGate implements ToolGate {
             }
         }
         return expired;
+    }
+
+    /**
+     * Why this reviewer may not decide this call, if they may not. The signed-in user of an
+     * interactive agent confirms their own calls; anyone else needs one of the agent's reviewer
+     * roles, and nobody approves their own call in a headless agent.
+     */
+    private Optional<String> permissionProblem(ToolCall call, Principal reviewer) {
+        Optional<AgentPolicy> agent = policy.agent(call.agentId());
+        boolean ownCall = reviewer.id().equals(call.principal().id());
+        if (agent.isPresent() && agent.get().interactive() && ownCall) {
+            return Optional.empty();
+        }
+        Set<String> reviewers = agent.map(AgentPolicy::reviewers).orElse(Set.of());
+        if (reviewers.isEmpty()) {
+            return Optional.of("agent " + call.agentId() + " names no reviewers, so its calls cannot be approved");
+        }
+        if (Collections.disjoint(reviewers, reviewer.roles())) {
+            return Optional.of("reviewer " + reviewer.id() + " has none of the reviewer roles " + new TreeSet<>(reviewers));
+        }
+        if (ownCall) {
+            return Optional.of("principal " + reviewer.id() + " may not approve its own call");
+        }
+        return Optional.empty();
     }
 
     /**

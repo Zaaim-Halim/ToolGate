@@ -26,12 +26,14 @@ import java.util.stream.Collectors;
  * @param requiredRoles roles a principal needs to call a tool, any one of which is enough, by tool
  * @param resultRules   checks on what tools return, before the model reads it
  * @param approvalExpiry how long a deferred call waits for a decision before it expires
+ * @param reviewers     roles that may approve or reject this agent's deferred calls; empty means
+ *                      nobody, except the signed-in user confirming their own call in an interactive agent
  */
 public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
                           Map<ToolArgument, List<ArgumentRule>> argumentRules,
                           boolean interactive, Map<ToolId, ToolId> downgrades, TaintAction onTrifecta,
                           List<TaintRule> taintRules, Map<ToolId, Set<String>> requiredRoles,
-                          List<ResultRule> resultRules, Duration approvalExpiry) {
+                          List<ResultRule> resultRules, Duration approvalExpiry, Set<String> reviewers) {
 
     /** Validates and copies every component. */
     public AgentPolicy {
@@ -50,5 +52,6 @@ public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
         if (approvalExpiry.isNegative() || approvalExpiry.isZero()) {
             throw new IllegalArgumentException("approvalExpiry must be positive");
         }
+        reviewers = Set.copyOf(reviewers);
     }
 }

@@ -83,7 +83,9 @@ public interface ToolGate extends AutoCloseable {
      * this approval. Any denial, a new reason to defer, or a downgrade refuses the release.
      *
      * <p>A call is released at most once: a second approval returns {@link Approval.AlreadyDecided}.
-     * In a headless agent, a principal may not approve its own call.
+     * Only a principal with one of the agent's reviewer roles may approve, and in a headless agent
+     * never their own call; in an interactive agent, the signed-in user confirms their own calls.
+     * Anyone else gets {@link Approval.NotPermitted}, and the call stays pending.
      *
      * @param approvalId       from {@link Decision.Defer#approvalId()}
      * @param reviewer         who approves
@@ -94,12 +96,14 @@ public interface ToolGate extends AutoCloseable {
     Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal);
 
     /**
-     * Rejects a deferred call. A call that is no longer pending is left as it is.
+     * Rejects a deferred call. Rejecting needs the same permission as approving, so nobody can
+     * reject another's legitimate calls. A call that is no longer pending is left as it is.
      *
      * @param approvalId from {@link Decision.Defer#approvalId()}
      * @param reviewer   who rejects
      * @param reason     why, for the audit trail
-     * @return {@code true} if the call was pending and is now rejected
+     * @return {@code true} if the call was pending and is now rejected; {@code false} if it was
+     *         already decided, or the reviewer may not decide it
      * @throws IllegalArgumentException if no call has that ID
      */
     boolean reject(String approvalId, Principal reviewer, String reason);
