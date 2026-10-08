@@ -1,5 +1,6 @@
 package io.toolgate.spi;
 
+import io.toolgate.api.ApprovalStatus;
 import java.util.List;
 import java.util.Optional;
 

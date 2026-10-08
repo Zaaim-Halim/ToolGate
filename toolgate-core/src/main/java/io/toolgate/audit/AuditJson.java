@@ -53,6 +53,16 @@ public final class AuditJson {
                     .raw("enforced", Boolean.toString(withheld.enforced()))
                     .field("policyHash", withheld.policyHash())
                     .close();
+            case AuditEvent.ApprovalDecided decided -> new Writer()
+                    .field("event", "toolgate." + decided.status().name().toLowerCase(Locale.ROOT))
+                    .field("time", decided.time().toString())
+                    .field("approvalId", decided.approvalId())
+                    .field("session", decided.sessionId())
+                    .field("agent", decided.agentId())
+                    .field("tool", decided.tool().toString())
+                    .field("decidedBy", decided.decidedBy())
+                    .field("reason", decided.reason())
+                    .close();
             case AuditEvent.Declassified declassified -> new Writer()
                     .field("event", "toolgate.declassify")
                     .field("time", declassified.time().toString())

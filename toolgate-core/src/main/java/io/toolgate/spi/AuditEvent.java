@@ -2,6 +2,7 @@ package io.toolgate.spi;
 
 import static io.toolgate.support.Checks.requireNonBlank;
 
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
@@ -21,7 +22,8 @@ import java.util.Objects;
  * does not handle it.
  */
 public sealed interface AuditEvent
-        permits AuditEvent.Decided, AuditEvent.PolicyLoaded, AuditEvent.Declassified, AuditEvent.ResultWithheld {
+        permits AuditEvent.Decided, AuditEvent.PolicyLoaded, AuditEvent.Declassified, AuditEvent.ResultWithheld,
+                AuditEvent.ApprovalDecided {
 
     /**
      * When it happened.
@@ -105,6 +107,37 @@ public sealed interface AuditEvent
             requireNonBlank(ruleId, "ruleId");
             requireNonBlank(reason, "reason");
             requireNonBlank(policyHash, "policyHash");
+        }
+    }
+
+    /**
+     * A deferred call left the queue: released, refused on re-check, rejected or expired.
+     *
+     * @param time       when
+     * @param approvalId the call's approval ID
+     * @param sessionId  its session
+     * @param agentId    the agent that made it
+     * @param tool       the tool it calls
+     * @param status     how it was decided
+     * @param decidedBy  the reviewer's ID, or {@code toolgate} for an expiry
+     * @param reason     why: the rejection's reason, what changed for a refusal
+     */
+    record ApprovalDecided(Instant time, String approvalId, String sessionId, String agentId, ToolId tool,
+                           ApprovalStatus status, String decidedBy, String reason) implements AuditEvent {
+
+        /** Requires every component, and a final status. */
+        public ApprovalDecided {
+            Objects.requireNonNull(time, "time");
+            requireNonBlank(approvalId, "approvalId");
+            requireNonBlank(sessionId, "sessionId");
+            requireNonBlank(agentId, "agentId");
+            Objects.requireNonNull(tool, "tool");
+            Objects.requireNonNull(status, "status");
+            if (status == ApprovalStatus.PENDING) {
+                throw new IllegalArgumentException("an approval decision has a final status");
+            }
+            requireNonBlank(decidedBy, "decidedBy");
+            requireNonBlank(reason, "reason");
         }
     }
 

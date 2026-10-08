@@ -3,13 +3,13 @@ package io.toolgate.queue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
 import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolId;
-import io.toolgate.spi.ApprovalStatus;
 import io.toolgate.spi.PendingCall;
 import java.time.Duration;
 import java.time.Instant;

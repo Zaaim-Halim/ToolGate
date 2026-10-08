@@ -2,6 +2,7 @@ package io.toolgate.spi;
 
 import static io.toolgate.support.Checks.requireNonBlank;
 
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
 import io.toolgate.api.ToolCall;
 import java.time.Instant;

@@ -1,7 +1,7 @@
 package io.toolgate.queue;
 
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.spi.ApprovalQueue;
-import io.toolgate.spi.ApprovalStatus;
 import io.toolgate.spi.PendingCall;
 import java.util.Comparator;
 import java.util.List;

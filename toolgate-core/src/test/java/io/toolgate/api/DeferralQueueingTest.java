@@ -4,13 +4,13 @@ import static io.toolgate.api.Label.UNTRUSTED_CONTENT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.InvalidPolicyException;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.AuditJson;
 import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.spi.ApprovalQueue;
-import io.toolgate.spi.ApprovalStatus;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.PendingCall;
 import java.time.Clock;

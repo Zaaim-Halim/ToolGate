@@ -1,24 +1,27 @@
 package io.toolgate.engine;
 
+import io.toolgate.api.Approval;
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
+import io.toolgate.api.Principal;
 import io.toolgate.api.ResultDecision;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolResult;
-import io.toolgate.api.policy.BuiltInRules;
+import io.toolgate.api.policy.AgentPolicy;
 import io.toolgate.api.policy.Budget;
+import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.ArgumentSummary;
 import io.toolgate.audit.AuditChannel;
-import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.queue.InMemoryApprovalQueue;
+import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.rules.ResultChecker;
 import io.toolgate.spi.ApprovalQueue;
-import io.toolgate.spi.ApprovalStatus;
-import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.AuditEvent;
+import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
@@ -30,6 +33,7 @@ import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -50,6 +54,8 @@ public final class DefaultToolGate implements ToolGate {
 
     private final ToolGatePolicy policy;
     private final DecisionEngine engine;
+    /** The engine without run-ending limits, for re-checking a deferred call that was already counted. */
+    private final DecisionEngine releaseEngine;
     private final SessionStore sessions;
     private final ApprovalQueue approvals;
     private final ResultChecker results;
@@ -62,6 +68,8 @@ public final class DefaultToolGate implements ToolGate {
                            ArgumentSummary argumentSummary, Clock clock) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.engine = new DecisionEngine(policy, evaluators);
+        this.releaseEngine = new DecisionEngine(policy,
+                evaluators.stream().filter(evaluator -> evaluator.stage() != Stage.LIMITS).toList());
         this.results = Objects.requireNonNull(results, "results");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.approvals = Objects.requireNonNull(approvals, "approvals");
@@ -133,6 +141,109 @@ public final class DefaultToolGate implements ToolGate {
         Instant at = clock.instant();
         sessions.append(new Declassified(sessionId, label, justification, at));
         audit.submit(() -> new AuditEvent.Declassified(at, sessionId, label, justification));
+    }
+
+    @Override
+    public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal) {
+        Objects.requireNonNull(reviewer, "reviewer");
+        Objects.requireNonNull(currentPrincipal, "currentPrincipal");
+        PendingCall pending = pendingCall(approvalId);
+        ToolCall call = pending.call();
+        if (!currentPrincipal.id().equals(call.principal().id())) {
+            throw new IllegalArgumentException("currentPrincipal " + currentPrincipal.id()
+                    + " is not the call's principal " + call.principal().id());
+        }
+        if (pending.status() != ApprovalStatus.PENDING) {
+            return new Approval.AlreadyDecided(pending.status());
+        }
+        if (!clock.instant().isBefore(pending.expiresAt())) {
+            return expire(pending) ? new Approval.Expired() : alreadyDecided(approvalId);
+        }
+        boolean interactive = policy.agent(call.agentId()).map(AgentPolicy::interactive).orElse(false);
+        if (!interactive && reviewer.id().equals(call.principal().id())) {
+            return new Approval.NotPermitted("principal " + reviewer.id() + " may not approve its own call");
+        }
+        ToolCall released = new ToolCall(call.callId(), currentPrincipal, call.agentId(), call.sessionId(), call.tool(),
+                call.args(), call.at());
+        Optional<String> refusal = recheck(released, pending.deferral());
+        ApprovalStatus outcome = refusal.isPresent() ? ApprovalStatus.REFUSED : ApprovalStatus.RELEASED;
+        if (!approvals.transition(approvalId, ApprovalStatus.PENDING, outcome)) {
+            return alreadyDecided(approvalId);
+        }
+        auditApproval(pending, outcome, reviewer.id(), refusal.orElse("approved"));
+        return refusal.<Approval>map(Approval.Refused::new)
+                .orElseGet(() -> new Approval.Released(released, approvalId));
+    }
+
+    @Override
+    public boolean reject(String approvalId, Principal reviewer, String reason) {
+        Objects.requireNonNull(reviewer, "reviewer");
+        PendingCall pending = pendingCall(approvalId);
+        if (!approvals.transition(approvalId, ApprovalStatus.PENDING, ApprovalStatus.REJECTED)) {
+            return false;
+        }
+        auditApproval(pending, ApprovalStatus.REJECTED, reviewer.id(), reason);
+        return true;
+    }
+
+    @Override
+    public List<PendingCall> pending() {
+        Instant now = clock.instant();
+        return approvals.pending().stream().filter(call -> now.isBefore(call.expiresAt())).toList();
+    }
+
+    @Override
+    public int expirePending() {
+        Instant now = clock.instant();
+        int expired = 0;
+        for (PendingCall call : approvals.pending()) {
+            if (!now.isBefore(call.expiresAt()) && expire(call)) {
+                expired++;
+            }
+        }
+        return expired;
+    }
+
+    /**
+     * Why the call may not run now, if anything changed since it was deferred. The deferral's own
+     * rule is what the approval covers; any other objection was not seen by the reviewer.
+     */
+    private Optional<String> recheck(ToolCall call, Decision.Defer deferral) {
+        Decision now = releaseEngine.evaluate(call, sessions.state(call.sessionId())).effective();
+        return switch (now) {
+            case Decision.Allow allowed -> Optional.empty();
+            case Decision.Defer defer -> defer.ruleId().equals(deferral.ruleId())
+                    ? Optional.empty()
+                    : Optional.of("a new reason to defer, not seen by the reviewer: " + defer.ruleId() + ": " + defer.reason());
+            case Decision.Downgrade downgrade -> Optional.of("the call would now be downgraded to " + downgrade.safeTool()
+                    + " by " + downgrade.ruleId());
+            case Decision.Deny denied -> Optional.of("now denied by " + denied.ruleId() + ": " + denied.reason());
+            case Decision.Terminate ended -> Optional.of("now ended by " + ended.ruleId() + ": " + ended.reason());
+        };
+    }
+
+    private PendingCall pendingCall(String approvalId) {
+        return approvals.get(Objects.requireNonNull(approvalId, "approvalId"))
+                .orElseThrow(() -> new IllegalArgumentException("no deferred call has approval ID " + approvalId));
+    }
+
+    private Approval alreadyDecided(String approvalId) {
+        return new Approval.AlreadyDecided(pendingCall(approvalId).status());
+    }
+
+    private boolean expire(PendingCall pending) {
+        if (!approvals.transition(pending.approvalId(), ApprovalStatus.PENDING, ApprovalStatus.EXPIRED)) {
+            return false;
+        }
+        auditApproval(pending, ApprovalStatus.EXPIRED, "toolgate", "nobody decided before " + pending.expiresAt());
+        return true;
+    }
+
+    private void auditApproval(PendingCall pending, ApprovalStatus status, String decidedBy, String reason) {
+        Instant at = clock.instant();
+        ToolCall call = pending.call();
+        audit.submit(() -> new AuditEvent.ApprovalDecided(at, pending.approvalId(), call.sessionId(), call.agentId(),
+                call.tool(), status, decidedBy, reason));
     }
 
     @Override

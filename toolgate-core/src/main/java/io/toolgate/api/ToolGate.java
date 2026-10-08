@@ -5,17 +5,19 @@ import io.toolgate.audit.ArgumentSummary;
 import io.toolgate.audit.AsyncAuditDispatcher;
 import io.toolgate.audit.SystemLoggerSink;
 import io.toolgate.engine.DefaultToolGate;
+import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.rules.ResultChecker;
-import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.session.InMemorySessionStore;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
+import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionStore;
 import java.time.Clock;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -73,6 +75,49 @@ public interface ToolGate extends AutoCloseable {
      * @throws IllegalArgumentException if the label is not a source label, or the justification is blank
      */
     void declassify(String sessionId, Label label, String justification);
+
+    /**
+     * Approves a deferred call, after re-checking it against the current policy, the session's
+     * current state and the principal as it is now. The re-check skips run-ending budgets, since the
+     * call was counted when it was deferred, and treats a deferral by the same rule as covered by
+     * this approval. Any denial, a new reason to defer, or a downgrade refuses the release.
+     *
+     * <p>A call is released at most once: a second approval returns {@link Approval.AlreadyDecided}.
+     * In a headless agent, a principal may not approve its own call.
+     *
+     * @param approvalId       from {@link Decision.Defer#approvalId()}
+     * @param reviewer         who approves
+     * @param currentPrincipal the call's principal as resolved now, so that revoked roles count
+     * @return the outcome; on {@link Approval.Released}, run the tool
+     * @throws IllegalArgumentException if no call has that ID, or the principal is not the call's
+     */
+    Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal);
+
+    /**
+     * Rejects a deferred call. A call that is no longer pending is left as it is.
+     *
+     * @param approvalId from {@link Decision.Defer#approvalId()}
+     * @param reviewer   who rejects
+     * @param reason     why, for the audit trail
+     * @return {@code true} if the call was pending and is now rejected
+     * @throws IllegalArgumentException if no call has that ID
+     */
+    boolean reject(String approvalId, Principal reviewer, String reason);
+
+    /**
+     * Calls waiting for review that have not expired, oldest first, for a review screen.
+     *
+     * @return the pending calls, with their real arguments
+     */
+    List<PendingCall> pending();
+
+    /**
+     * Expires every pending call past its expiry. Approving checks expiry too, so this only keeps
+     * the queue and the audit trail current; run it on a schedule, such as every minute.
+     *
+     * @return how many calls expired
+     */
+    int expirePending();
 
     /**
      * Audit events that never reached the sink, because its queue was full, it threw, or the event

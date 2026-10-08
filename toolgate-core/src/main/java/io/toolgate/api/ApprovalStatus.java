@@ -1,4 +1,4 @@
-package io.toolgate.spi;
+package io.toolgate.api;
 
 /** Where a deferred call stands. Every status but {@link #PENDING} is final. */
 public enum ApprovalStatus {
