@@ -39,7 +39,7 @@ public final class DefaultToolGate implements ToolGate {
 
     /** A gate running every built-in rule. */
     public static ToolGate withBuiltInRules(ToolGatePolicy policy, SessionStore sessions) {
-        return new DefaultToolGate(policy, BuiltInEvaluators.all(), sessions);
+        return new DefaultToolGate(policy, BuiltInEvaluators.forPolicy(policy), sessions);
     }
 
     @Override

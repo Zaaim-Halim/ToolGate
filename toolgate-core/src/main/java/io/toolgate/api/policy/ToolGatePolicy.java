@@ -4,10 +4,14 @@ import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.Mode;
 import io.toolgate.api.ToolId;
+import io.toolgate.rules.UrlArgumentRules;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -23,7 +27,8 @@ import java.util.function.Consumer;
  *     .defaults(d -> d.denialBudget(5))
  *     .mcpServers("jira")
  *     .agent("ticket-triage", a -> a
- *         .allow("readTicket", "lookupCustomer", "mcp:jira/search_issues")
+ *         .allow("readTicket", "lookupCustomer", "fetch", "mcp:jira/search_issues")
+ *         .rule("fetch.url", hosts("*.vendor.example"), schemes("https"))
  *         .budget(b -> b.toolCalls(40)))
  *     .build();
  * }</pre>
@@ -246,6 +251,7 @@ public final class ToolGatePolicy {
 
         private final String id;
         private final Set<ToolId> allowedTools = new LinkedHashSet<>();
+        private final Map<ToolArgument, List<ArgumentRule>> argumentRules = new LinkedHashMap<>();
         private Budget budget = Budget.UNLIMITED;
 
         private AgentBuilder(String id) {
@@ -271,6 +277,39 @@ public final class ToolGatePolicy {
         }
 
         /**
+         * Restricts the values of one argument of one allowed tool. Several calls for the same
+         * argument add up, but each kind of rule may be given once per argument.
+         *
+         * <p>A call without the argument passes, since it sends nothing anywhere; a value of the
+         * wrong type, including JSON null, is denied.
+         *
+         * @param target the tool and argument, as in {@code fetchSupplierPage.url}; split at the last dot
+         * @param rules  rules from {@link ArgumentRules}
+         * @return this agent builder
+         */
+        public AgentBuilder rule(String target, ArgumentRule... rules) {
+            ToolArgument argument;
+            try {
+                argument = ToolArgument.parse(target);
+            } catch (IllegalArgumentException malformed) {
+                throw new InvalidPolicyException("agent '" + id + "': " + malformed.getMessage());
+            }
+            if (rules.length == 0) {
+                throw new InvalidPolicyException("agent '" + id + "': rule '" + argument + "' lists no rules");
+            }
+            List<ArgumentRule> existing = argumentRules.computeIfAbsent(argument, ignored -> new ArrayList<>());
+            for (ArgumentRule rule : rules) {
+                var kind = ArgumentRules.kind(Objects.requireNonNull(rule, "rule"));
+                if (existing.stream().map(ArgumentRules::kind).anyMatch(kind::equals)) {
+                    throw new InvalidPolicyException("agent '" + id + "': rule '" + argument + "' gives "
+                            + kind.getSimpleName().toLowerCase(Locale.ROOT) + " twice");
+                }
+                existing.add(rule);
+            }
+            return this;
+        }
+
+        /**
          * Limits each of this agent's sessions.
          *
          * @param configurer sets the limits
@@ -284,7 +323,19 @@ public final class ToolGatePolicy {
         }
 
         private AgentPolicy build() {
-            return new AgentPolicy(id, allowedTools, budget);
+            argumentRules.forEach((argument, rules) -> {
+                if (!allowedTools.contains(argument.tool())) {
+                    throw new InvalidPolicyException("agent '" + id + "': rule '" + argument
+                            + "' targets " + argument.tool() + ", which the agent is not allowed to call");
+                }
+                try {
+                    UrlArgumentRules.compile(rules);
+                } catch (IllegalArgumentException invalid) {
+                    throw new InvalidPolicyException("agent '" + id + "': rule '" + argument + "': "
+                            + invalid.getMessage());
+                }
+            });
+            return new AgentPolicy(id, allowedTools, budget, argumentRules);
         }
     }
 
