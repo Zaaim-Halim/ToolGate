@@ -2,6 +2,8 @@ package io.toolgate.api.policy;
 
 import static io.toolgate.support.Checks.requireNonBlank;
 
+import io.toolgate.api.Effect;
+import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.ToolId;
 import io.toolgate.policy.PolicyHash;
@@ -27,9 +29,13 @@ import java.util.function.Consumer;
  *     .mode(Mode.ENFORCE)
  *     .defaults(d -> d.denialBudget(5))
  *     .mcpServers("jira")
+ *     .tool("readTicket", t -> t.labels(UNTRUSTED_CONTENT).effect(READ))
+ *     .tool("lookupCustomer", t -> t.labels(PRIVATE_DATA).effect(READ))
+ *     .tool("replyToCustomer", t -> t.labels(EXTERNAL_SINK))
+ *     .tool("draftReply", t -> t.effect(REVERSIBLE))
  *     .agent("ticket-triage", a -> a
- *         .allow("readTicket", "lookupCustomer", "fetch", "mcp:jira/search_issues")
- *         .rule("fetch.url", hosts("*.vendor.example"), schemes("https"))
+ *         .allow("readTicket", "lookupCustomer", "replyToCustomer", "draftReply", "mcp:jira/search_issues")
+ *         .downgrade("replyToCustomer", "draftReply")
  *         .budget(b -> b.toolCalls(40)))
  *     .build();
  * }</pre>
@@ -44,6 +50,7 @@ public final class ToolGatePolicy {
     private final int denialBudget;
     private final Set<String> mcpServers;
     private final Map<String, AgentPolicy> agents;
+    private final Map<ToolId, ToolPolicy> tools;
     private final String hash;
 
     private ToolGatePolicy(Builder builder) {
@@ -52,7 +59,8 @@ public final class ToolGatePolicy {
         this.denialBudget = builder.defaults.denialBudget;
         this.mcpServers = Set.copyOf(builder.mcpServers);
         this.agents = Map.copyOf(builder.agents);
-        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, agents);
+        this.tools = Map.copyOf(builder.tools);
+        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, tools, agents);
     }
 
     /**
@@ -114,6 +122,30 @@ public final class ToolGatePolicy {
     }
 
     /**
+     * What a tool does with data: as the policy describes it, or the default for its source.
+     *
+     * @param tool the tool
+     * @return the policy's description, {@link ToolPolicy#MCP_DEFAULT} for an undescribed MCP tool,
+     *         or {@link ToolPolicy#LOCAL_DEFAULT}
+     */
+    public ToolPolicy tool(ToolId tool) {
+        ToolPolicy described = tools.get(tool);
+        if (described != null) {
+            return described;
+        }
+        return tool.isLocal() ? ToolPolicy.LOCAL_DEFAULT : ToolPolicy.MCP_DEFAULT;
+    }
+
+    /**
+     * Every tool the policy describes.
+     *
+     * @return descriptions by tool
+     */
+    public Map<ToolId, ToolPolicy> tools() {
+        return tools;
+    }
+
+    /**
      * Identifies this exact policy in audit events and replay.
      *
      * <p>Computed from a canonical form, so it does not depend on the order in which the policy was
@@ -142,6 +174,7 @@ public final class ToolGatePolicy {
         private final Defaults defaults = new Defaults();
         private final Set<String> mcpServers = new LinkedHashSet<>();
         private final Map<String, AgentPolicy> agents = new LinkedHashMap<>();
+        private final Map<ToolId, ToolPolicy> tools = new LinkedHashMap<>();
 
         private Builder() {}
 
@@ -204,6 +237,33 @@ public final class ToolGatePolicy {
         }
 
         /**
+         * Describes what one tool does with data. Each tool may be described once. Labels here
+         * override annotations in code, so a security team can correct a developer's labels.
+         *
+         * <p>An undescribed local tool has no labels; an undescribed MCP tool is untrusted content,
+         * since a third party writes its output. Either is irreversible unless its effect is given.
+         *
+         * @param toolReference the tool, as in {@code sendEmail} or {@code mcp:jira/search_issues}
+         * @param configurer    sets labels and effect
+         * @return this builder
+         */
+        public Builder tool(String toolReference, Consumer<ToolBuilder> configurer) {
+            ToolId tool;
+            try {
+                tool = ToolId.parse(toolReference);
+            } catch (IllegalArgumentException malformed) {
+                throw new InvalidPolicyException("tool '" + toolReference + "': " + malformed.getMessage());
+            }
+            if (tools.containsKey(tool)) {
+                throw new InvalidPolicyException("tool " + tool + " is described twice");
+            }
+            var builder = new ToolBuilder(tool);
+            configurer.accept(builder);
+            tools.put(tool, builder.build());
+            return this;
+        }
+
+        /**
          * Defines one agent. Each agent ID may be defined once.
          *
          * @param agentId    the agent's ID, as tool calls name it
@@ -242,6 +302,47 @@ public final class ToolGatePolicy {
         }
     }
 
+    /** Describes one tool. */
+    public static final class ToolBuilder {
+
+        private final ToolId tool;
+        private Set<Label> labels;
+        private Effect effect = Effect.IRREVERSIBLE;
+
+        private ToolBuilder(ToolId tool) {
+            this.tool = tool;
+        }
+
+        /**
+         * The tool's data labels, replacing its default ones.
+         *
+         * @param newLabels the labels; none at all is allowed, and clears an MCP tool's default
+         * @return this tool builder
+         */
+        public ToolBuilder labels(Label... newLabels) {
+            this.labels = Set.of(newLabels);
+            return this;
+        }
+
+        /**
+         * Whether the tool's action can be undone. Without this, the tool is irreversible.
+         *
+         * @param newEffect the effect
+         * @return this tool builder
+         */
+        public ToolBuilder effect(Effect newEffect) {
+            this.effect = Objects.requireNonNull(newEffect, "effect");
+            return this;
+        }
+
+        private ToolPolicy build() {
+            Set<Label> resolved = labels != null
+                    ? labels
+                    : (tool.isLocal() ? ToolPolicy.LOCAL_DEFAULT : ToolPolicy.MCP_DEFAULT).labels();
+            return new ToolPolicy(resolved, effect);
+        }
+    }
+
     /** Values that apply to every agent. */
     public static final class Defaults {
 
@@ -267,10 +368,75 @@ public final class ToolGatePolicy {
         private final String id;
         private final Set<ToolId> allowedTools = new LinkedHashSet<>();
         private final Map<ToolArgument, List<ArgumentRule>> argumentRules = new LinkedHashMap<>();
+        private final Map<ToolId, ToolId> downgrades = new LinkedHashMap<>();
+        private final List<TaintRule> taintRules = new ArrayList<>();
         private Budget budget = Budget.UNLIMITED;
+        private boolean interactive;
+        private TaintAction onTrifecta;
+        private PendingTaintRule pending;
 
         private AgentBuilder(String id) {
             this.id = id;
+        }
+
+        /**
+         * Whether a person can be present to confirm deferred calls. Defaults to {@code false}:
+         * most agents run in backends with nobody watching. It sets the trifecta's default action.
+         *
+         * @param present {@code true} for a chat assistant with a signed-in user
+         * @return this agent builder
+         */
+        public AgentBuilder interactive(boolean present) {
+            this.interactive = present;
+            return this;
+        }
+
+        /**
+         * Runs a safe tool instead of {@code tool} whenever a taint rule objects to it, such as a
+         * draft instead of a send. The safe tool gets the same arguments and is checked like any
+         * other call. Argument rules still deny outright: a draft to an outside address is no safer.
+         *
+         * @param tool     the tool to replace
+         * @param safeTool the tool to run instead; it must not be replaced itself
+         * @return this agent builder
+         */
+        public AgentBuilder downgrade(String tool, String safeTool) {
+            ToolId from = parse(tool);
+            if (downgrades.putIfAbsent(from, parse(safeTool)) != null) {
+                throw new InvalidPolicyException("agent '" + id + "': " + from + " is downgraded twice");
+            }
+            return this;
+        }
+
+        /**
+         * What the trifecta rule does when no downgrade applies. Defaults to
+         * {@link TaintAction#BLOCK} for headless agents and {@link TaintAction#DEFER} for
+         * interactive ones.
+         *
+         * @param action the action
+         * @return this agent builder
+         */
+        public AgentBuilder onTrifecta(TaintAction action) {
+            this.onTrifecta = Objects.requireNonNull(action, "action");
+            return this;
+        }
+
+        /**
+         * Starts an extra taint rule: once the session holds every given label, calls to
+         * {@code tool} get the action given to {@link PendingTaintRule#then}.
+         *
+         * @param tool   the tool
+         * @param first  a source label
+         * @param others more source labels, all of which the session must hold
+         * @return the rule, to complete with {@code then}
+         */
+        public PendingTaintRule whenTainted(String tool, Label first, Label... others) {
+            requireNoPendingRule();
+            var labels = new LinkedHashSet<Label>();
+            labels.add(Objects.requireNonNull(first, "label"));
+            labels.addAll(Arrays.asList(others));
+            pending = new PendingTaintRule(this, parse(tool), labels);
+            return pending;
         }
 
         /**
@@ -337,7 +503,42 @@ public final class ToolGatePolicy {
             return this;
         }
 
+        private ToolId parse(String toolReference) {
+            try {
+                return ToolId.parse(toolReference);
+            } catch (IllegalArgumentException malformed) {
+                throw new InvalidPolicyException("agent '" + id + "': " + malformed.getMessage());
+            }
+        }
+
+        private void requireNoPendingRule() {
+            if (pending != null) {
+                throw new InvalidPolicyException("agent '" + id + "': whenTainted(" + pending.tool
+                        + ", ...) has no action; finish it with then(BLOCK) or then(DEFER)");
+            }
+        }
+
+        private void requireAllowed(ToolId tool, String role) {
+            if (!allowedTools.contains(tool)) {
+                throw new InvalidPolicyException("agent '" + id + "': " + role + " " + tool
+                        + " is not on the agent's allow-list");
+            }
+        }
+
         private AgentPolicy build() {
+            requireNoPendingRule();
+            downgrades.forEach((tool, safeTool) -> {
+                requireAllowed(tool, "downgraded tool");
+                requireAllowed(safeTool, "safe tool");
+                if (tool.equals(safeTool)) {
+                    throw new InvalidPolicyException("agent '" + id + "': " + tool + " is downgraded to itself");
+                }
+                if (downgrades.containsKey(safeTool)) {
+                    throw new InvalidPolicyException("agent '" + id + "': safe tool " + safeTool
+                            + " is itself downgraded; a downgrade must end at a safe tool");
+                }
+            });
+            taintRules.forEach(rule -> requireAllowed(rule.tool(), "taint rule tool"));
             argumentRules.forEach((argument, rules) -> {
                 if (!allowedTools.contains(argument.tool())) {
                     throw new InvalidPolicyException("agent '" + id + "': rule '" + argument
@@ -350,7 +551,39 @@ public final class ToolGatePolicy {
                             + invalid.getMessage());
                 }
             });
-            return new AgentPolicy(id, allowedTools, budget, argumentRules);
+            TaintAction trifecta = onTrifecta != null ? onTrifecta : (interactive ? TaintAction.DEFER : TaintAction.BLOCK);
+            return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules);
+        }
+    }
+
+    /** A taint rule waiting for its action. */
+    public static final class PendingTaintRule {
+
+        private final AgentBuilder agent;
+        private final ToolId tool;
+        private final Set<Label> labels;
+
+        private PendingTaintRule(AgentBuilder agent, ToolId tool, Set<Label> labels) {
+            this.agent = agent;
+            this.tool = tool;
+            this.labels = labels;
+        }
+
+        /**
+         * Completes the rule.
+         *
+         * @param action what happens to the call, unless the agent downgrades the tool
+         * @return the agent builder, to continue
+         */
+        public AgentBuilder then(TaintAction action) {
+            try {
+                agent.taintRules.add(new TaintRule(tool, labels, action));
+            } catch (IllegalArgumentException invalid) {
+                throw new InvalidPolicyException("agent '" + agent.id + "': " + invalid.getMessage());
+            } finally {
+                agent.pending = null;
+            }
+            return agent;
         }
     }
 

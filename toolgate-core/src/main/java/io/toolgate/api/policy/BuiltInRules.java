@@ -23,6 +23,10 @@ public final class BuiltInRules {
     public static final String TOOL_CALL_BUDGET = "budget.toolCalls";
     /** The session has not used up its denial budget. */
     public static final String DENIAL_BUDGET = "budget.denials";
+    /** A session holding private data and untrusted content may not call an external sink. */
+    public static final String TAINT_TRIFECTA = "taint.trifecta";
+    /** A session holding untrusted content may not call an irreversible tool without review. */
+    public static final String TAINT_IRREVERSIBLE = "taint.irreversible";
 
     /** Not a rule: names the decision returned for every call while the policy is off. */
     public static final String MODE_OFF = "mode.off";
@@ -37,7 +41,8 @@ public final class BuiltInRules {
 
     /** Every rule whose mode a policy may set. */
     public static final Set<String> CONFIGURABLE =
-            Set.of(AGENT_KNOWN, MCP_SERVERS, ALLOW_LIST, TOOL_CALL_BUDGET, DENIAL_BUDGET);
+            Set.of(AGENT_KNOWN, MCP_SERVERS, ALLOW_LIST, TOOL_CALL_BUDGET, DENIAL_BUDGET, TAINT_TRIFECTA,
+                    TAINT_IRREVERSIBLE);
 
     private BuiltInRules() {}
 }
