@@ -96,11 +96,11 @@ final class NumericEvaluator implements Evaluator {
     private Optional<String> brokenLimit(BigDecimal number, OnViolation action) {
         Optional<BigDecimal> max = limit(rules, true, action);
         if (max.isPresent() && number.compareTo(max.get()) > 0) {
-            return Optional.of(number.toPlainString() + " is above " + max.get().toPlainString());
+            return Optional.of(Decimals.describe(number) + " is above " + Decimals.describe(max.get()));
         }
         Optional<BigDecimal> min = limit(rules, false, action);
         if (min.isPresent() && number.compareTo(min.get()) < 0) {
-            return Optional.of(number.toPlainString() + " is below " + min.get().toPlainString());
+            return Optional.of(Decimals.describe(number) + " is below " + Decimals.describe(min.get()));
         }
         return Optional.empty();
     }

@@ -13,6 +13,7 @@ import io.toolgate.engine.Evaluator;
 import io.toolgate.engine.Origin;
 import io.toolgate.engine.Stage;
 import io.toolgate.engine.Verdict;
+import io.toolgate.support.Decimals;
 import io.toolgate.spi.OwnershipResolver;
 import java.util.ArrayList;
 import java.util.List;
@@ -96,7 +97,8 @@ final class OwnershipEvaluator implements Evaluator {
     private static Optional<List<String>> ids(ArgValue value) {
         return switch (value) {
             case TextValue(String text) -> text.isBlank() ? Optional.empty() : Optional.of(List.of(text));
-            case NumberValue(var number) -> Optional.of(List.of(number.toPlainString()));
+            // A number with no reasonable plain text, such as 1e999999999, is not an ID.
+            case NumberValue(var number) -> Decimals.plainText(number).map(List::of);
             case ListValue(List<ArgValue> elements) -> {
                 var all = new ArrayList<String>();
                 for (ArgValue element : elements) {

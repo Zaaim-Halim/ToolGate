@@ -14,6 +14,7 @@ import io.toolgate.api.policy.ResultCheck;
 import io.toolgate.api.policy.ResultRule;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.OwnershipResolver;
+import io.toolgate.support.Decimals;
 import io.toolgate.validate.OutputPath;
 import java.util.List;
 import java.util.Map;
@@ -128,7 +129,7 @@ public final class ResultChecker {
     private static Optional<String> text(ArgValue value) {
         return switch (value) {
             case TextValue(String text) -> Optional.of(text);
-            case NumberValue(var number) -> Optional.of(number.toPlainString());
+            case NumberValue(var number) -> Decimals.plainText(number);
             default -> Optional.empty();
         };
     }
