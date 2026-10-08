@@ -21,6 +21,7 @@
 
     <modules>
         <module>toolgate-core</module>
+        <module>toolgate-queue-jdbc</module>
         <module>toolgate-fuzz</module>
         <module>toolgate-benchmarks</module>
     </modules>
@@ -38,6 +39,8 @@
         <jqwik.version>1.10.1</jqwik.version>
         <jazzer.version>0.30.0</jazzer.version>
         <jmh.version>1.37</jmh.version>
+        <!-- 2.5.252 is a patch released 2026-09-26; take it at the next dependency update. -->
+        <h2.version>2.5.250</h2.version>
     </properties>
 
     <dependencyManagement>
@@ -68,6 +71,11 @@
                 <groupId>org.openjdk.jmh</groupId>
                 <artifactId>jmh-core</artifactId>
                 <version>${jmh.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.h2database</groupId>
+                <artifactId>h2</artifactId>
+                <version>${h2.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
