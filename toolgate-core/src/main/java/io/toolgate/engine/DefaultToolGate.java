@@ -13,7 +13,11 @@ import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.ArgumentSummary;
 import io.toolgate.audit.AuditChannel;
 import io.toolgate.rules.BuiltInEvaluators;
+import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.rules.ResultChecker;
+import io.toolgate.spi.ApprovalQueue;
+import io.toolgate.spi.ApprovalStatus;
+import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.Declassified;
@@ -21,6 +25,7 @@ import io.toolgate.spi.SessionEvent.ResultRecorded;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
@@ -46,17 +51,20 @@ public final class DefaultToolGate implements ToolGate {
     private final ToolGatePolicy policy;
     private final DecisionEngine engine;
     private final SessionStore sessions;
+    private final ApprovalQueue approvals;
     private final ResultChecker results;
     private final AuditChannel audit;
     private final ArgumentSummary argumentSummary;
     private final Clock clock;
 
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, ResultChecker results,
-                           SessionStore sessions, AuditChannel audit, ArgumentSummary argumentSummary, Clock clock) {
+                           SessionStore sessions, ApprovalQueue approvals, AuditChannel audit,
+                           ArgumentSummary argumentSummary, Clock clock) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.engine = new DecisionEngine(policy, evaluators);
         this.results = Objects.requireNonNull(results, "results");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
+        this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.audit = Objects.requireNonNull(audit, "audit");
         this.argumentSummary = Objects.requireNonNull(argumentSummary, "argumentSummary");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -66,8 +74,8 @@ public final class DefaultToolGate implements ToolGate {
 
     /** A gate without audit, for tests of decisions alone. */
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions) {
-        this(policy, evaluators, new ResultChecker(policy, BuiltInEvaluators.NO_OWNERS), sessions, AuditChannel.NONE,
-                ArgumentSummary.typesOnly(), Clock.systemUTC());
+        this(policy, evaluators, new ResultChecker(policy, BuiltInEvaluators.NO_OWNERS), sessions,
+                new InMemoryApprovalQueue(), AuditChannel.NONE, ArgumentSummary.typesOnly(), Clock.systemUTC());
     }
 
     @Override
@@ -150,14 +158,32 @@ public final class DefaultToolGate implements ToolGate {
                 return decision;
             }
             if (sessions.append(event, state.version())) {
-                audit(call, decision, evaluation.computed(), state.apply(event).toolCalls(), state);
-                return decision;
+                Decision queued = decision instanceof Decision.Defer defer ? enqueue(call, defer) : decision;
+                audit(call, queued, evaluation.computed(), state.apply(event).toolCalls(), state);
+                return queued;
             }
         }
         var contention = new Decision.Deny(BuiltInRules.SESSION_CONTENTION,
                 "session " + call.sessionId() + " changed on each of " + MAX_APPEND_ATTEMPTS + " attempts");
         audit(call, contention, contention, 0, SessionState.empty(call.sessionId()));
         return contention;
+    }
+
+    /**
+     * Puts a deferred call in the approval queue, after the session recorded the deferral: queueing
+     * first could leave a pending call whose check, retried after a session conflict, allowed the call,
+     * and a later approval would run it twice.
+     */
+    private Decision enqueue(ToolCall call, Decision.Defer defer) {
+        Instant now = clock.instant();
+        Duration expiry = policy.agent(call.agentId()).orElseThrow().approvalExpiry();
+        try {
+            approvals.add(new PendingCall(defer.approvalId(), call, defer, now, now.plus(expiry), ApprovalStatus.PENDING));
+            return defer;
+        } catch (RuntimeException queueFailure) {
+            // Fail closed: telling the model the action is pending when nobody will see it would be a lie.
+            return new Decision.Deny(BuiltInRules.APPROVAL_UNAVAILABLE, "approval queue failed: " + queueFailure);
+        }
     }
 
     /** The engine's evaluation, with a downgrade replaced by its safe call's decision when that is stricter. */

@@ -7,7 +7,9 @@ import io.toolgate.audit.SystemLoggerSink;
 import io.toolgate.engine.DefaultToolGate;
 import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.rules.ResultChecker;
+import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.session.InMemorySessionStore;
+import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
@@ -103,6 +105,7 @@ public interface ToolGate extends AutoCloseable {
 
         private final ToolGatePolicy policy;
         private SessionStore sessionStore;
+        private ApprovalQueue approvalQueue;
         private HostResolver hostResolver;
         private OwnershipResolver ownershipResolver;
         private AuditSink auditSink;
@@ -122,6 +125,18 @@ public interface ToolGate extends AutoCloseable {
          */
         public Builder sessionStore(SessionStore store) {
             this.sessionStore = Objects.requireNonNull(store, "sessionStore");
+            return this;
+        }
+
+        /**
+         * Where deferred calls wait for review. Defaults to an in-memory queue, which loses pending
+         * calls on restart and is correct only for a single instance.
+         *
+         * @param queue the queue to use
+         * @return this builder
+         */
+        public Builder approvalQueue(ApprovalQueue queue) {
+            this.approvalQueue = Objects.requireNonNull(queue, "approvalQueue");
             return this;
         }
 
@@ -211,6 +226,7 @@ public interface ToolGate extends AutoCloseable {
                             owners),
                     new ResultChecker(policy, owners),
                     sessionStore != null ? sessionStore : new InMemorySessionStore(),
+                    approvalQueue != null ? approvalQueue : new InMemoryApprovalQueue(),
                     new AsyncAuditDispatcher(auditSink != null ? auditSink : new SystemLoggerSink(),
                             AsyncAuditDispatcher.DEFAULT_CAPACITY),
                     argumentHashKey != null ? ArgumentSummary.keyed(argumentHashKey) : ArgumentSummary.typesOnly(),

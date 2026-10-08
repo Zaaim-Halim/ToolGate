@@ -73,7 +73,7 @@ class DecisionEngineTest {
                 downgradeSendToDraft())
                 .check(call(SEND_EMAIL));
 
-        assertThat(decision).isEqualTo(new Decision.Defer("refund.amount", "over 200"));
+        assertThat(decision).isEqualTo(new Decision.Defer("refund.amount", "over 200", "job-0412:job-0412/4"));
     }
 
     @Test
@@ -145,7 +145,7 @@ class DecisionEngineTest {
                         : Verdict.PASS))
                 .check(call(SEND_EMAIL));
 
-        assertThat(decision).isEqualTo(new Decision.Defer("draft.review", "drafts need review"));
+        assertThat(decision).isEqualTo(new Decision.Defer("draft.review", "drafts need review", "job-0412:job-0412/4"));
     }
 
     @Test

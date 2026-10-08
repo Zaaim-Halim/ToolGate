@@ -3,6 +3,7 @@ package io.toolgate.api.policy;
 import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.ToolId;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,12 +25,13 @@ import java.util.stream.Collectors;
  * @param taintRules    the agent's own taint rules
  * @param requiredRoles roles a principal needs to call a tool, any one of which is enough, by tool
  * @param resultRules   checks on what tools return, before the model reads it
+ * @param approvalExpiry how long a deferred call waits for a decision before it expires
  */
 public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
                           Map<ToolArgument, List<ArgumentRule>> argumentRules,
                           boolean interactive, Map<ToolId, ToolId> downgrades, TaintAction onTrifecta,
                           List<TaintRule> taintRules, Map<ToolId, Set<String>> requiredRoles,
-                          List<ResultRule> resultRules) {
+                          List<ResultRule> resultRules, Duration approvalExpiry) {
 
     /** Validates and copies every component. */
     public AgentPolicy {
@@ -44,5 +46,9 @@ public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
         requiredRoles = requiredRoles.entrySet().stream()
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> Set.copyOf(entry.getValue())));
         resultRules = List.copyOf(resultRules);
+        Objects.requireNonNull(approvalExpiry, "approvalExpiry");
+        if (approvalExpiry.isNegative() || approvalExpiry.isZero()) {
+            throw new IllegalArgumentException("approvalExpiry must be positive");
+        }
     }
 }

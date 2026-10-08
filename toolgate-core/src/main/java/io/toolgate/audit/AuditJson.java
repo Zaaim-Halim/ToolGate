@@ -79,6 +79,9 @@ public final class AuditJson {
         if (event.applied() instanceof Decision.Downgrade downgrade) {
             json.field("downgradedTo", downgrade.safeTool().toString());
         }
+        if (event.applied() instanceof Decision.Defer defer) {
+            json.field("approvalId", defer.approvalId());
+        }
         json.field("computed", name(event.computed()))
                 .field("computedRule", event.computed().ruleId());
         if (!event.taint().isEmpty()) {
@@ -149,7 +152,7 @@ public final class AuditJson {
         return switch (decision) {
             case Decision.Allow allow -> Optional.empty();
             case Decision.Deny(String rule, String reason) -> Optional.of(reason);
-            case Decision.Defer(String rule, String reason) -> Optional.of(reason);
+            case Decision.Defer(String rule, String reason, String approvalId) -> Optional.of(reason);
             case Decision.Downgrade downgrade -> Optional.empty();
             case Decision.Terminate(String rule, String reason) -> Optional.of(reason);
         };

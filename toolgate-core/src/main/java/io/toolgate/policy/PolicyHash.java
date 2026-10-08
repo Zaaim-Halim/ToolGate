@@ -69,6 +69,7 @@ public final class PolicyHash {
         line(text, " budget.toolCalls", Integer.toString(agent.budget().toolCalls()));
         line(text, " interactive", Boolean.toString(agent.interactive()));
         line(text, " onTrifecta", agent.onTrifecta().name());
+        line(text, " approvalExpiry", agent.approvalExpiry().toString());
         agent.downgrades().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
                 .forEach(entry -> line(text, " downgrade", entry.getKey().toString(), entry.getValue().toString()));

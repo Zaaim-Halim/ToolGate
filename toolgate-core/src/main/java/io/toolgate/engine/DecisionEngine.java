@@ -114,7 +114,7 @@ public final class DecisionEngine {
         return switch (ruled.verdict()) {
             case Verdict.Terminate terminate -> new Decision.Terminate(ruleId, terminate.reason());
             case Verdict.Deny deny -> new Decision.Deny(ruleId, deny.reason());
-            case Verdict.Defer defer -> new Decision.Defer(ruleId, defer.reason());
+            case Verdict.Defer defer -> new Decision.Defer(ruleId, defer.reason(), Decision.Defer.approvalIdOf(call));
             case Verdict.Downgrade downgrade -> new Decision.Downgrade(ruleId, downgrade.safeTool(), call.args());
             case Verdict.Pass pass -> throw new IllegalStateException("passes are never collected");
         };

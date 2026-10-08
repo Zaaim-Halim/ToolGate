@@ -13,7 +13,7 @@ import java.util.Objects;
  * <p>It holds the real argument values, because a reviewer must see them. A queue that stores
  * pending calls outside memory must protect them like the data they carry.
  *
- * @param approvalId the call's ID in the queue
+ * @param approvalId the call's ID in the queue, as {@link Decision.Defer#approvalId()} gives it
  * @param call       the call as the model made it
  * @param deferral   the decision that deferred it, which names the rule the approval covers
  * @param deferredAt when it was deferred

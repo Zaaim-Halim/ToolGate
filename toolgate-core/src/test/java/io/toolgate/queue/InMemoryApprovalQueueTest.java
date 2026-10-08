@@ -95,7 +95,7 @@ class InMemoryApprovalQueueTest {
     }
 
     private static Decision.Defer defer() {
-        return new Decision.Defer("issueRefund.amount", "amount over 200");
+        return new Decision.Defer("issueRefund.amount", "amount over 200", "refunds:1");
     }
 
     private static ToolCall call() {

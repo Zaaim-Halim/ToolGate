@@ -56,7 +56,7 @@ class InMemorySessionStoreTest {
     @Test
     void outcomesSpendTheRightBudget() {
         SessionState state = SessionState.empty("s1");
-        for (Decision applied : List.of(ALLOW, DENY, new Decision.Defer("r", "review"),
+        for (Decision applied : List.of(ALLOW, DENY, new Decision.Defer("r", "review", "s1:c"),
                 new Decision.Downgrade("r", ToolId.local("draft"), ObjectValue.empty()), TERMINATE)) {
             state = state.apply(decided("s1", applied));
         }

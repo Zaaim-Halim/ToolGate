@@ -56,22 +56,33 @@ public sealed interface Decision
     }
 
     /**
-     * Do not run the tool now: queue it for review and give the model {@link #MODEL_MESSAGE}.
+     * Do not run the tool now: the call is already in the approval queue. Give the model
+     * {@link #MODEL_MESSAGE}; a reviewer, or the user in an interactive agent, decides later.
      *
-     * <p>The approval ID comes from the queue when the adapter enqueues the call, not from here.
-     *
-     * @param ruleId the rule that deferred it
-     * @param reason why, for logs, audit and the reviewer
+     * @param ruleId     the rule that deferred it; an approval covers this rule when re-checking
+     * @param reason     why, for logs, audit and the reviewer
+     * @param approvalId the call's ID in the approval queue
      */
-    record Defer(String ruleId, String reason) implements Decision {
+    record Defer(String ruleId, String reason, String approvalId) implements Decision {
 
         /** The text the model sees while the call waits for review. */
         public static final String MODEL_MESSAGE = "This action is pending review.";
 
-        /** Requires a rule ID and a reason. */
+        /** Requires every component. */
         public Defer {
             requireNonBlank(ruleId, "ruleId");
             requireNonBlank(reason, "reason");
+            requireNonBlank(approvalId, "approvalId");
+        }
+
+        /**
+         * The approval ID of a call: unique per session and call, so a retried call is queued once.
+         *
+         * @param call the call
+         * @return its approval ID
+         */
+        public static String approvalIdOf(ToolCall call) {
+            return call.sessionId() + ":" + call.callId();
         }
     }
 

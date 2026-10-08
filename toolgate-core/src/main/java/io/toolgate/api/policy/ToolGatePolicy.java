@@ -9,6 +9,7 @@ import io.toolgate.api.ToolId;
 import io.toolgate.policy.PolicyHash;
 import io.toolgate.rules.ArgumentChecks;
 import io.toolgate.validate.OutputPath;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -42,6 +43,12 @@ import java.util.function.Consumer;
  * }</pre>
  */
 public final class ToolGatePolicy {
+
+    /** How long a headless agent's deferred call waits for a reviewer, unless the agent says otherwise. */
+    public static final Duration HEADLESS_APPROVAL_EXPIRY = Duration.ofHours(24);
+
+    /** How long an interactive agent's deferred call waits for the user, unless the agent says otherwise. */
+    public static final Duration INTERACTIVE_APPROVAL_EXPIRY = Duration.ofMinutes(10);
 
     /** Denials a session may collect before its next call ends the run, unless the policy says otherwise. */
     public static final int DEFAULT_DENIAL_BUDGET = 5;
@@ -376,6 +383,7 @@ public final class ToolGatePolicy {
         private Budget budget = Budget.UNLIMITED;
         private boolean interactive;
         private TaintAction onTrifecta;
+        private Duration approvalExpiry;
         private PendingTaintRule pending;
 
         private AgentBuilder(String id) {
@@ -421,6 +429,23 @@ public final class ToolGatePolicy {
          */
         public AgentBuilder onTrifecta(TaintAction action) {
             this.onTrifecta = Objects.requireNonNull(action, "action");
+            return this;
+        }
+
+        /**
+         * How long a deferred call waits for a decision before it expires. Defaults to
+         * {@link #HEADLESS_APPROVAL_EXPIRY} for headless agents and
+         * {@link #INTERACTIVE_APPROVAL_EXPIRY} for interactive ones, whose user is right there.
+         *
+         * @param expiry a positive duration
+         * @return this agent builder
+         */
+        public AgentBuilder approvalExpiry(Duration expiry) {
+            Objects.requireNonNull(expiry, "expiry");
+            if (expiry.isNegative() || expiry.isZero()) {
+                throw new InvalidPolicyException("agent '" + id + "': approvalExpiry must be positive, was " + expiry);
+            }
+            this.approvalExpiry = expiry;
             return this;
         }
 
@@ -612,8 +637,11 @@ public final class ToolGatePolicy {
                 }
             });
             TaintAction trifecta = onTrifecta != null ? onTrifecta : (interactive ? TaintAction.DEFER : TaintAction.BLOCK);
+            Duration expiry = approvalExpiry != null
+                    ? approvalExpiry
+                    : (interactive ? INTERACTIVE_APPROVAL_EXPIRY : HEADLESS_APPROVAL_EXPIRY);
             return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules,
-                    requiredRoles, resultRules);
+                    requiredRoles, resultRules, expiry);
         }
     }
 
