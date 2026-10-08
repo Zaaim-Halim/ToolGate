@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.toolgate</groupId>
+        <artifactId>toolgate-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>toolgate-fuzz</artifactId>
+    <name>ToolGate Fuzz Tests</name>
+    <description>Coverage-guided fuzz targets for the parsers and validators in toolgate-core. Never published.</description>
+
+    <properties>
+        <!-- Test-only module: nothing here may reach users. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.install.skip>true</maven.install.skip>
+        <!-- Jazzer 0.30.0 implements ArgumentsProvider the JUnit 5.9 way, which JUnit 5.13 and later
+             reject. Pinned here only; core keeps the parent's JUnit. Remove when Jazzer catches up. -->
+        <junit.version>5.12.2</junit.version>
+    </properties>
+
+    <!--
+        Every build runs each target on its saved inputs, as ordinary tests. To fuzz for real:
+            JAZZER_FUZZ=1 ./mvnw -pl toolgate-fuzz -am test -Dtest=UrlCheckFuzzTest -Djazzer.max_duration=1h
+        This module has no module-info, so toolgate-core sits on the class path and its internal
+        validators can be called directly.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.toolgate</groupId>
+            <artifactId>toolgate-core</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Jazzer attaches its instrumentation agent to the running test JVM. Without
+                         self-attach, ByteBuddy needs an external helper process, which fails in
+                         sandboxed builds; JDK 21 also warns on dynamic agents unless enabled. -->
+                    <argLine>-Djdk.attach.allowAttachSelf=true -XX:+EnableDynamicAgentLoading</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

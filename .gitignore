@@ -6,6 +6,9 @@ CLAUDE.md
 # Build output
 target/
 
+# Jazzer's working corpus; inputs that crash are saved under src/test/resources instead
+.cifuzz-corpus/
+
 # IDEs
 .idea/
 .vscode/

@@ -16,11 +16,18 @@ Requires JDK 21 or later. The Maven wrapper downloads the right Maven version.
 ./mvnw verify
 ```
 
+Every build also replays the saved fuzz inputs. To fuzz one target for real, for example for an hour:
+
+```sh
+JAZZER_FUZZ=1 ./mvnw -pl toolgate-fuzz -am test -Dtest=UrlCheckFuzzTest -Djazzer.max_duration=1h
+```
+
 ## Modules
 
 | Module          | Contents                                                                 |
 | --------------- | ------------------------------------------------------------------------ |
 | `toolgate-core` | Policy model, decision engine, validators, session state, audit events. No runtime dependencies. |
+| `toolgate-fuzz` | Jazzer fuzz targets for the parsers and validators. Test-only, never published. |
 
 ## License
 
