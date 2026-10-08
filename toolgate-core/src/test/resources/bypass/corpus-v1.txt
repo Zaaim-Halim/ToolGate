@@ -1,0 +1,148 @@
+# ToolGate bypass corpus, format version 1.
+#
+# One case per line:  kind | expect | input | why
+#   kind    url        UrlCheck with schemes http and https, any public host, default ports
+#           url-hosts  UrlCheck with schemes https, hosts mycompany.com and *.mycompany.com
+#           path       PathCheck with under($R) and notUnder($R/secret), against a fixture:
+#                        $B/data/reports/q3.csv               a file
+#                        $B/data/reports/secret/salaries.csv  excluded by notUnder
+#                        $B/data/reports/link -> $B/outside   symlink out of the root
+#                        $B/data/reports/latest.csv -> q3.csv symlink inside the root
+#                        $B/data/reports/drop.csv -> $B/outside/missing.csv  dangling symlink
+#                        $B/data/reports/shared.csv           hard link to $B/outside/key.txt
+#                        $B/data/reports-old/x.csv            sibling with a shared prefix
+#                        $B/outside/key.txt                   outside every root
+#                      $R is $B/data/reports.
+#   expect  allow or deny
+#   input   the argument, exactly as a model would write it; \uXXXX escapes stand for one
+#           character, so this file stays ASCII and nothing in it is invisible
+#   why     the trap, or the source of the case
+#
+# Every reported bypass becomes a case here before its fix is merged. Never edit a case to make
+# it pass; add a new format version instead if the meaning of a field must change.
+
+# --- URL: cloud metadata and internal addresses, in every form the JDK or a client accepts
+url | deny  | http://169.254.169.254/latest/meta-data/iam/security-credentials/ | AWS, GCP and Azure metadata
+url | deny  | http://2852039166/ | decimal IPv4 for 169.254.169.254
+url | deny  | http://0xa9fea9fe/ | hex IPv4 for 169.254.169.254
+url | deny  | http://0xA9FEA9FE/ | upper-case hex IPv4
+url | deny  | http://0251.0376.0251.0376/ | octal IPv4 for 169.254.169.254
+url | deny  | http://0xa9.0xfe.0xa9.0xfe/ | dotted hex IPv4
+url | deny  | http://169.254.43518/ | shortened IPv4, last part fills two bytes
+url | deny  | http://169.16689662/ | shortened IPv4, last part fills three bytes
+url | deny  | http://0169.254.169.254/ | leading zero means octal to some parsers
+url | deny  | http://169.254.169.254./ | trailing dot on an IPv4 literal
+url | deny  | http://[::ffff:169.254.169.254]/ | IPv4-mapped IPv6
+url | deny  | http://[::ffff:a9fe:a9fe]/ | IPv4-mapped IPv6 in hex groups
+url | deny  | http://[0:0:0:0:0:ffff:a9fe:a9fe]/ | IPv4-mapped IPv6, uncompressed
+url | deny  | http://[::169.254.169.254]/ | IPv4-compatible IPv6
+url | deny  | http://[::ffff:0:a9fe:a9fe]/ | IPv4-translated IPv6
+url | deny  | http://[64:ff9b::a9fe:a9fe]/ | NAT64 for 169.254.169.254
+url | deny  | http://[64:ff9b:1::a9fe:a9fe]/ | local-use NAT64
+url | deny  | http://[2002:a9fe:a9fe::]/ | 6to4 carrying 169.254.169.254
+url | deny  | http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/ | Teredo
+url | deny  | http://[fd00:ec2::254]/ | AWS IPv6 metadata, which Java does not flag
+url | deny  | http://[FD00:EC2::254]/ | AWS IPv6 metadata, upper case
+url | deny  | http://[fe80::1]/ | IPv6 link-local
+url | deny  | http://[fe80::1%25eth0]/ | IPv6 zone ID
+url | deny  | http://[::1]/ | IPv6 loopback
+url | deny  | http://[::]/ | IPv6 unspecified
+url | deny  | http://[ff02::1]/ | IPv6 multicast
+url | deny  | http://[4000::1]/ | outside IPv6 global unicast
+url | deny  | http://100.100.100.200/ | Alibaba Cloud metadata, shared address space
+url | deny  | http://192.0.0.192/ | Oracle Cloud metadata
+url | deny  | http://127.0.0.1/ | loopback
+url | deny  | http://127.1/ | shortened loopback
+url | deny  | http://0.0.0.0/ | this network, reaches localhost on Linux
+url | deny  | http://0/ | single zero, this network
+url | deny  | http://10.0.0.1/ | private network
+url | deny  | http://172.16.0.1/ | private network
+url | deny  | http://172.31.255.255/ | last private address in 172.16/12
+url | deny  | http://192.168.0.1/ | private network
+url | deny  | http://198.18.0.1/ | benchmarking range
+url | deny  | http://224.0.0.1/ | multicast
+url | deny  | http://255.255.255.255/ | broadcast
+url | allow | http://172.32.0.1/ | first public address after 172.16/12
+url | allow | https://1.1.1.1/ | public IPv4 literal
+url | allow | https://[2606:4700:4700::1111]/ | public IPv6 literal
+
+# --- URL: internal names
+url | deny  | http://localhost/ | loopback name
+url | deny  | http://LOCALHOST./ | loopback name, upper case with trailing dot
+url | deny  | http://api.localhost/ | RFC 6761 .localhost
+url | deny  | http://metadata.google.internal/computeMetadata/v1/ | GCP metadata name
+url | deny  | http://printer.local/ | mDNS
+url | deny  | http://router.home.arpa/ | RFC 8375 home network
+url | deny  | http://jenkins/ | single label, completed by search domains
+
+# --- URL: parser differences and ambiguity
+url | deny  | https://good.example\u005c@evil.example/ | backslash read as '/' by some clients
+url | deny  | https://good.example@evil.example/ | user info hides the real host
+url | deny  | https://good.example%40evil.example/ | percent-encoded '@' in the authority
+url | deny  | https://%65vil.example/ | percent-encoded host
+url | deny  | https://evil%2eexample/ | percent-encoded dot in the host
+url | deny  | https://good.example\u0009.evil.example/ | tab, stripped by WHATWG parsers
+url | deny  | https://good.example\u000a.evil.example/ | newline, stripped by WHATWG parsers
+url | deny  | https://good.example /x | space in the authority
+url | deny  | https://g\u043eod.example/ | Cyrillic o, internationalized look-alike
+url | deny  | https://good.example\u3002evil.example/ | ideographic full stop, a dot to IDNA
+url | deny  | https://good\uff0eexample/ | fullwidth full stop
+url | deny  | https:evil.example | no authority, opaque URI
+url | deny  | https:/evil.example | one slash, no authority
+url | deny  | //evil.example/ | scheme-relative
+url | deny  | https:///evil.example | empty authority
+url | deny  | https://under_score.example/ | URI cannot parse the host
+url | deny  | https://a..example/ | empty label
+url | deny  | https://-lead.example/ | label starts with a hyphen
+url | deny  | https://good.example:0/ | port zero
+url | deny  | https://good.example:8443/ | non-default port without a ports rule
+url | deny  | https://good.example:80/ | http's port on https
+url | deny  | ftp://files.example/ | scheme other than http(s)
+url | deny  | file:///etc/passwd | local file through a URL tool
+url | deny  | jar:https://x.example/a.jar!/ | nested scheme
+url | deny  | gopher://evil.example:6379/_SET | gopher smuggling to Redis
+url | deny  | javascript:alert(1) | script scheme
+url | deny  | data:text/plain,hello | data scheme
+url | allow | HTTPS://Status.Vendor.Example./api?x=1#top | case and one trailing dot are normalized
+
+# --- URL with hosts mycompany.com and *.mycompany.com, https only
+url-hosts | deny  | https://docs.mycompany.com@evil.example/ | user info: the host is evil.example
+url-hosts | deny  | https://evilmycompany.com/ | endsWith("mycompany.com") is true
+url-hosts | deny  | https://mycompany.com.evil.example/ | allowed name as a prefix
+url-hosts | deny  | https://docs.mycompany.com.evil.example/ | allowed name as a label prefix
+url-hosts | deny  | http://docs.mycompany.com/ | http where only https is allowed
+url-hosts | deny  | https://10.0.0.1/ | bare address when hosts are listed
+url-hosts | deny  | https://xn--dcs-tdd.mycompany.com.evil.example/ | punycode look-alike prefix
+url-hosts | allow | https://mycompany.com/ | exact name
+url-hosts | allow | https://docs.mycompany.com/a | one subdomain
+url-hosts | allow | https://a.b.mycompany.com/ | nested subdomain
+url-hosts | allow | https://DOCS.MyCompany.com./ | case and trailing dot
+
+# --- Path: under $R, not under $R/secret
+path | allow | $R/q3.csv | file inside the root
+path | allow | $R | the root itself
+path | allow | $R/q4.csv | new file in an existing folder
+path | allow | $R/latest.csv | symlink that stays inside
+path | allow | q3.csv | relative, resolved against the single root
+path | deny  | $R/../../outside/key.txt | dot-dot escape
+path | deny  | ../../outside/key.txt | relative dot-dot escape
+path | deny  | $R/link/key.txt | symlink escape, which normalize() misses
+path | deny  | link/key.txt | relative symlink escape
+path | deny  | $B/data/reports-old/x.csv | sibling folder, String.startsWith accepts it
+path | deny  | ../reports-old/x.csv | relative sibling folder
+path | deny  | $R/secret/salaries.csv | excluded folder
+path | deny  | $R/./secret/salaries.csv | excluded folder through a dot segment
+path | deny  | $R/secret/../secret/salaries.csv | excluded folder through dot-dot
+path | deny  | $R/drop.csv | dangling symlink, a write creates its target anywhere
+path | deny  | $R/shared.csv | hard link to a file outside the root
+path | deny  | $R/2027/q1.csv | parent folder does not exist
+path | deny  | $B/outside/key.txt | outside every root
+path | deny  | /etc/passwd | system file
+path | deny  | ~/.ssh/id_rsa | home folder expansion
+path | deny  | ~root/.ssh/id_rsa | another user's home folder
+path | deny  | file:///etc/passwd | file URI
+path | deny  | ..\u005c..\u005coutside\u005ckey.txt | Windows separators
+path | deny  | %2e%2e/%2e%2e/outside/key.txt | percent-encoded dot-dot
+path | deny  | q3.csv\u0000.txt | NUL truncation
+path | deny  | q3\u000a.csv | newline in a name
+path | deny  |  | empty path
