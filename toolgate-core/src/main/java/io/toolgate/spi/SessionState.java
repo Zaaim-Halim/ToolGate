@@ -64,7 +64,10 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
                 case Decision.Deny denied -> next(toolCalls, denials + 1, taint);
                 case Decision.Terminate terminated -> next(toolCalls, denials, taint);
             };
-            case ResultRecorded recorded -> next(toolCalls, denials, withLabels(recorded));
+            // A withheld output counts as a denial, so probing through search results ends the run too.
+            case ResultRecorded recorded -> recorded.withheld()
+                    ? next(toolCalls, denials + 1, taint)
+                    : next(toolCalls, denials, withLabels(recorded));
             case Declassified declassified -> next(toolCalls, denials, without(declassified.label()));
         };
     }

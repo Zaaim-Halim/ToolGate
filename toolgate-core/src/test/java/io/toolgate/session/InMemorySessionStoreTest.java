@@ -90,8 +90,18 @@ class InMemorySessionStoreTest {
                 .containsEntry(Label.UNTRUSTED_CONTENT, new TaintSource("s1/2", ToolId.local("fetch")));
     }
 
+    /** Withheld output never reached the model: no taint, but a denial, so probing by search ends the run. */
+    @Test
+    void withheldResultCountsAsADenialAndAddsNoTaint() {
+        SessionState state = SessionState.empty("s1")
+                .apply(new ResultRecorded("s1", "s1/1", ToolId.local("searchInvoices"), true, true, Set.of(), Instant.EPOCH));
+
+        assertThat(state.denials()).isEqualTo(1);
+        assertThat(state.taint()).isEmpty();
+    }
+
     private static ResultRecorded result(String callId, String tool, Label... labels) {
-        return new ResultRecorded("s1", callId, ToolId.local(tool), true, Set.of(labels), Instant.EPOCH);
+        return new ResultRecorded("s1", callId, ToolId.local(tool), true, false, Set.of(labels), Instant.EPOCH);
     }
 
     private static final Decision ALLOW = new Decision.Allow("allow-list");

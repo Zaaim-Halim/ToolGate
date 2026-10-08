@@ -20,7 +20,8 @@ import java.util.Objects;
  * <p>Sealed so that sinks can switch over every kind; a new kind is a compile error in a sink that
  * does not handle it.
  */
-public sealed interface AuditEvent permits AuditEvent.Decided, AuditEvent.PolicyLoaded, AuditEvent.Declassified {
+public sealed interface AuditEvent
+        permits AuditEvent.Decided, AuditEvent.PolicyLoaded, AuditEvent.Declassified, AuditEvent.ResultWithheld {
 
     /**
      * When it happened.
@@ -70,6 +71,39 @@ public sealed interface AuditEvent permits AuditEvent.Decided, AuditEvent.Policy
             Objects.requireNonNull(computed, "computed");
             Objects.requireNonNull(mode, "mode");
             taint = taint.isEmpty() ? Map.of() : Collections.unmodifiableMap(new EnumMap<>(taint));
+            requireNonBlank(policyHash, "policyHash");
+        }
+    }
+
+    /**
+     * A tool's output broke a result rule. In enforce mode the model got a generic message instead;
+     * in monitor mode it got the output, and this event records what enforcement would have done.
+     *
+     * @param time       when the result was checked
+     * @param callId     the call whose tool ran
+     * @param sessionId  its session
+     * @param agentId    the agent
+     * @param principal  who the agent acted for
+     * @param tool       the tool that ran
+     * @param ruleId     the result rule broken
+     * @param reason     why; may quote values from the output
+     * @param enforced   whether the output was actually withheld
+     * @param policyHash the policy that decided
+     */
+    record ResultWithheld(Instant time, String callId, String sessionId, String agentId, Principal principal,
+                          ToolId tool, String ruleId, String reason, boolean enforced, String policyHash)
+            implements AuditEvent {
+
+        /** Requires every component. */
+        public ResultWithheld {
+            Objects.requireNonNull(time, "time");
+            requireNonBlank(callId, "callId");
+            requireNonBlank(sessionId, "sessionId");
+            requireNonBlank(agentId, "agentId");
+            Objects.requireNonNull(principal, "principal");
+            Objects.requireNonNull(tool, "tool");
+            requireNonBlank(ruleId, "ruleId");
+            requireNonBlank(reason, "reason");
             requireNonBlank(policyHash, "policyHash");
         }
     }

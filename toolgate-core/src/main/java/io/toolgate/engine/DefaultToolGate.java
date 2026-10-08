@@ -3,6 +3,7 @@ package io.toolgate.engine;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
+import io.toolgate.api.ResultDecision;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolResult;
@@ -11,6 +12,8 @@ import io.toolgate.api.policy.Budget;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.ArgumentSummary;
 import io.toolgate.audit.AuditChannel;
+import io.toolgate.rules.BuiltInEvaluators;
+import io.toolgate.rules.ResultChecker;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.Declassified;
@@ -43,14 +46,16 @@ public final class DefaultToolGate implements ToolGate {
     private final ToolGatePolicy policy;
     private final DecisionEngine engine;
     private final SessionStore sessions;
+    private final ResultChecker results;
     private final AuditChannel audit;
     private final ArgumentSummary argumentSummary;
     private final Clock clock;
 
-    public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions,
-                           AuditChannel audit, ArgumentSummary argumentSummary, Clock clock) {
+    public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, ResultChecker results,
+                           SessionStore sessions, AuditChannel audit, ArgumentSummary argumentSummary, Clock clock) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.engine = new DecisionEngine(policy, evaluators);
+        this.results = Objects.requireNonNull(results, "results");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.audit = Objects.requireNonNull(audit, "audit");
         this.argumentSummary = Objects.requireNonNull(argumentSummary, "argumentSummary");
@@ -61,7 +66,8 @@ public final class DefaultToolGate implements ToolGate {
 
     /** A gate without audit, for tests of decisions alone. */
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions) {
-        this(policy, evaluators, sessions, AuditChannel.NONE, ArgumentSummary.typesOnly(), Clock.systemUTC());
+        this(policy, evaluators, new ResultChecker(policy, BuiltInEvaluators.NO_OWNERS), sessions, AuditChannel.NONE,
+                ArgumentSummary.typesOnly(), Clock.systemUTC());
     }
 
     @Override
@@ -82,18 +88,32 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     @Override
-    public void recordResult(ToolCall callThatRan, ToolResult result) {
+    public ResultDecision recordResult(ToolCall callThatRan, ToolResult result) {
         Objects.requireNonNull(callThatRan, "callThatRan");
         Objects.requireNonNull(result, "result");
         if (policy.mode() == Mode.OFF) {
-            return;
+            return ResultDecision.RELEASE;
         }
+        ResultDecision computed = results.check(callThatRan, result);
+        // Result rules follow the policy-wide mode: in monitor mode the output is released and the
+        // audit event records what enforcement would have done.
+        ResultDecision applied = policy.mode() == Mode.ENFORCE ? computed : ResultDecision.RELEASE;
+        boolean withheld = applied instanceof ResultDecision.Withhold;
         var labels = EnumSet.noneOf(Label.class);
-        labels.addAll(policy.tool(callThatRan.tool()).labels());
-        labels.retainAll(SOURCE_LABELS);
-        // Taint only grows, so the event stays valid whatever was appended in between.
+        if (!withheld) {
+            labels.addAll(policy.tool(callThatRan.tool()).labels());
+            labels.retainAll(SOURCE_LABELS);
+        }
+        // Taint only grows and denials only count up, so the event stays valid whatever was appended in between.
         sessions.append(new ResultRecorded(callThatRan.sessionId(), callThatRan.callId(), callThatRan.tool(),
-                result instanceof ToolResult.Succeeded, labels, callThatRan.at()));
+                result instanceof ToolResult.Succeeded, withheld, labels, callThatRan.at()));
+        if (computed instanceof ResultDecision.Withhold(String ruleId, String reason)) {
+            Instant checkedAt = clock.instant();
+            audit.submit(() -> new AuditEvent.ResultWithheld(checkedAt, callThatRan.callId(), callThatRan.sessionId(),
+                    callThatRan.agentId(), callThatRan.principal(), callThatRan.tool(), ruleId, reason, withheld,
+                    policy.hash()));
+        }
+        return applied;
     }
 
     @Override

@@ -74,11 +74,13 @@ public sealed interface SessionEvent
      * @param callId    the call whose tool ran
      * @param tool      the tool that ran, which for a downgrade is the safe tool
      * @param succeeded whether the tool returned normally
-     * @param labels    the source labels its output carries; may be empty
+     * @param withheld  whether a result rule kept the output from the model; then it adds no
+     *                  labels and counts as a denial
+     * @param labels    the source labels its output brought in; empty when withheld
      * @param at        when the call was captured
      */
-    record ResultRecorded(String sessionId, String callId, ToolId tool, boolean succeeded, Set<Label> labels,
-                          Instant at) implements SessionEvent {
+    record ResultRecorded(String sessionId, String callId, ToolId tool, boolean succeeded, boolean withheld,
+                          Set<Label> labels, Instant at) implements SessionEvent {
 
         /** Requires every component and copies the labels. */
         public ResultRecorded {
@@ -87,6 +89,9 @@ public sealed interface SessionEvent
             Objects.requireNonNull(tool, "tool");
             labels = Set.copyOf(labels);
             Objects.requireNonNull(at, "at");
+            if (withheld && !labels.isEmpty()) {
+                throw new IllegalArgumentException("a withheld output never reached the model, so it adds no labels");
+            }
         }
     }
 

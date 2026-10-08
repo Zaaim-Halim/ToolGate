@@ -6,6 +6,7 @@ import io.toolgate.audit.AsyncAuditDispatcher;
 import io.toolgate.audit.SystemLoggerSink;
 import io.toolgate.engine.DefaultToolGate;
 import io.toolgate.rules.BuiltInEvaluators;
+import io.toolgate.rules.ResultChecker;
 import io.toolgate.session.InMemorySessionStore;
 import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.HostResolver;
@@ -40,21 +41,24 @@ public interface ToolGate extends AutoCloseable {
     Decision check(ToolCall call);
 
     /**
-     * Records that a tool ran and its output, or its error, reached the model. The tool's source
-     * labels, {@link Label#PRIVATE_DATA} and {@link Label#UNTRUSTED_CONTENT}, then taint the session,
-     * and later checks see them.
+     * Checks what a tool returned against the agent's result rules, and records it. Call it for
+     * every tool that ran, with the call that actually ran (for a downgrade, the safe tool), before
+     * handing the output to the model. Calls that were denied, deferred or ended the run did not run.
      *
-     * <p>Call it for every tool that ran, with the call that actually ran: for a downgrade, the call
-     * to the safe tool. Calls that were denied, deferred or ended the run did not run, so they are
-     * not recorded.
+     * <p>On {@link ResultDecision.Release}, the adapter hands the output to the model, and the
+     * tool's source labels, {@link Label#PRIVATE_DATA} and {@link Label#UNTRUSTED_CONTENT}, taint the
+     * session. On {@link ResultDecision.Withhold}, the adapter gives the model
+     * {@link ResultDecision.Withhold#MODEL_MESSAGE} instead; the session gains no labels, since the
+     * model saw nothing, and counts a denial.
      *
      * <p>Unlike {@link #check}, this throws if the session store fails: a lost taint record would
      * make later decisions more lenient than they should be, so the adapter must end the run.
      *
      * @param callThatRan the call whose tool ran
-     * @param result      what the model received
+     * @param result      what the tool returned, or the error it failed with
+     * @return whether the model may see it
      */
-    void recordResult(ToolCall callThatRan, ToolResult result);
+    ResultDecision recordResult(ToolCall callThatRan, ToolResult result);
 
     /**
      * Removes a source label from a session, after application code checked the data, for example
@@ -199,11 +203,13 @@ public interface ToolGate extends AutoCloseable {
                 throw new IllegalStateException(
                         "the policy uses sameTenant or ownedByPrincipal rules; set an ownershipResolver");
             }
+            OwnershipResolver owners = ownershipResolver != null ? ownershipResolver : BuiltInEvaluators.NO_OWNERS;
             return new DefaultToolGate(
                     policy,
                     BuiltInEvaluators.forPolicy(policy,
                             hostResolver != null ? BuiltInEvaluators.resolving(hostResolver) : BuiltInEvaluators.NO_NAME_CHECK,
-                            ownershipResolver != null ? ownershipResolver : BuiltInEvaluators.NO_OWNERS),
+                            owners),
+                    new ResultChecker(policy, owners),
                     sessionStore != null ? sessionStore : new InMemorySessionStore(),
                     new AsyncAuditDispatcher(auditSink != null ? auditSink : new SystemLoggerSink(),
                             AsyncAuditDispatcher.DEFAULT_CAPACITY),
