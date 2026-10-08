@@ -86,22 +86,22 @@ public final class ArgumentRules {
     }
 
     /**
-     * Allows only IDs of records that the principal's tenant owns.
+     * Allows only IDs of records that the principal's tenant owns. Also usable as a result check.
      *
      * @param resourceType the type of record, such as {@code invoice}, passed to the resolver
      * @return the rule
      */
-    public static ArgumentRule sameTenant(String resourceType) {
+    public static ArgumentRule.SameTenant sameTenant(String resourceType) {
         return new ArgumentRule.SameTenant(resourceType);
     }
 
     /**
-     * Allows only IDs of records that the principal itself owns.
+     * Allows only IDs of records that the principal itself owns. Also usable as a result check.
      *
      * @param resourceType the type of record, such as {@code customer}, passed to the resolver
      * @return the rule
      */
-    public static ArgumentRule ownedByPrincipal(String resourceType) {
+    public static ArgumentRule.OwnedByPrincipal ownedByPrincipal(String resourceType) {
         return new ArgumentRule.OwnedByPrincipal(resourceType);
     }
 

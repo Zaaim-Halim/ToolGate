@@ -79,7 +79,7 @@ public sealed interface ArgumentRule
      *
      * @param resourceType the type of record, as the application's {@code OwnershipResolver} knows it
      */
-    record SameTenant(String resourceType) implements ArgumentRule {
+    record SameTenant(String resourceType) implements ArgumentRule, ResultCheck {
         /** Requires the type. */
         public SameTenant {
             Objects.requireNonNull(resourceType, "resourceType");
@@ -91,7 +91,7 @@ public sealed interface ArgumentRule
      *
      * @param resourceType the type of record, as the application's {@code OwnershipResolver} knows it
      */
-    record OwnedByPrincipal(String resourceType) implements ArgumentRule {
+    record OwnedByPrincipal(String resourceType) implements ArgumentRule, ResultCheck {
         /** Requires the type. */
         public OwnedByPrincipal {
             Objects.requireNonNull(resourceType, "resourceType");

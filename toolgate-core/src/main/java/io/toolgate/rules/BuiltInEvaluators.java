@@ -1,5 +1,6 @@
 package io.toolgate.rules;
 
+import io.toolgate.api.policy.ArgumentRule;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.engine.Evaluator;
 import io.toolgate.spi.HostResolver;
@@ -38,9 +39,10 @@ public final class BuiltInEvaluators {
      * @return {@code true} if any agent uses sameTenant or ownedByPrincipal
      */
     public static boolean usesOwnership(ToolGatePolicy policy) {
-        return policy.agents().values().stream()
-                .flatMap(agent -> agent.argumentRules().values().stream())
-                .anyMatch(ArgumentChecks::isOwnership);
+        return policy.agents().values().stream().anyMatch(agent ->
+                agent.argumentRules().values().stream().anyMatch(ArgumentChecks::isOwnership)
+                        || agent.resultRules().stream().anyMatch(rule -> rule.check() instanceof ArgumentRule.SameTenant
+                                || rule.check() instanceof ArgumentRule.OwnedByPrincipal));
     }
 
     /**

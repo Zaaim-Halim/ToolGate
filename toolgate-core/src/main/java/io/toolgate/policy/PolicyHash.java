@@ -4,6 +4,8 @@ import io.toolgate.api.Mode;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.policy.AgentPolicy;
 import io.toolgate.api.policy.ArgumentRule;
+import io.toolgate.api.policy.ResultCheck;
+import io.toolgate.api.policy.ResultRule;
 import io.toolgate.api.policy.TaintRule;
 import io.toolgate.api.policy.ToolPolicy;
 import io.toolgate.api.policy.ToolArgument;
@@ -71,6 +73,7 @@ public final class PolicyHash {
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
                 .forEach(entry -> line(text, " downgrade", entry.getKey().toString(), entry.getValue().toString()));
         agent.taintRules().stream().map(PolicyHash::taintRule).sorted().forEach(rule -> text.append(' ').append(rule));
+        agent.resultRules().stream().map(PolicyHash::resultRule).sorted().forEach(rule -> text.append(' ').append(rule));
         agent.requiredRoles().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
                 .forEach(entry -> line(text, " requireRole",
@@ -96,6 +99,18 @@ public final class PolicyHash {
             case ArgumentRule.SameTenant(String type) -> line(text, "sameTenant", type);
             case ArgumentRule.OwnedByPrincipal(String type) -> line(text, "ownedByPrincipal", type);
         }
+        return text.toString();
+    }
+
+    private static String resultRule(ResultRule rule) {
+        String check = switch (rule.check()) {
+            case ResultCheck.MatchesTenant matches -> "matchesTenant";
+            case ResultCheck.MatchesPrincipal matches -> "matchesPrincipal";
+            case ArgumentRule.SameTenant(String type) -> "sameTenant " + type.length() + ":" + type;
+            case ArgumentRule.OwnedByPrincipal(String type) -> "ownedByPrincipal " + type.length() + ":" + type;
+        };
+        var text = new StringBuilder();
+        line(text, "result", rule.tool().toString(), rule.path(), check);
         return text.toString();
     }
 

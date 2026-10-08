@@ -8,6 +8,7 @@ import io.toolgate.api.Mode;
 import io.toolgate.api.ToolId;
 import io.toolgate.policy.PolicyHash;
 import io.toolgate.rules.ArgumentChecks;
+import io.toolgate.validate.OutputPath;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -371,6 +372,7 @@ public final class ToolGatePolicy {
         private final Map<ToolId, ToolId> downgrades = new LinkedHashMap<>();
         private final List<TaintRule> taintRules = new ArrayList<>();
         private final Map<ToolId, Set<String>> requiredRoles = new LinkedHashMap<>();
+        private final List<ResultRule> resultRules = new ArrayList<>();
         private Budget budget = Budget.UNLIMITED;
         private boolean interactive;
         private TaintAction onTrifecta;
@@ -437,6 +439,31 @@ public final class ToolGatePolicy {
             }
             if (requiredRoles.putIfAbsent(target, Set.copyOf(Arrays.asList(roles))) != null) {
                 throw new InvalidPolicyException("agent '" + id + "': " + target + " has requireRole twice");
+            }
+            return this;
+        }
+
+        /**
+         * Checks what a tool returned before the model reads it. Every value the path reaches must
+         * pass the check, or the whole output is withheld and the model is told the result is not
+         * available. Withheld output does not taint the session and counts as a denial.
+         *
+         * <p>An output that does not have the path's shape, such as a missing field, an error, or
+         * plain text, is withheld too: it cannot be checked. An empty array along the path is a
+         * normal empty result and passes. Several rules on one tool must all pass.
+         *
+         * @param tool  the tool
+         * @param path  field names, dots and {@code [*]}, such as {@code items[*].tenantId}
+         * @param check {@link ResultRules#matchesTenant()}, {@link ResultRules#matchesPrincipal()},
+         *              {@link ArgumentRules#sameTenant} or {@link ArgumentRules#ownedByPrincipal}
+         * @return this agent builder
+         */
+        public AgentBuilder result(String tool, String path, ResultCheck check) {
+            try {
+                OutputPath.parse(path);
+                resultRules.add(new ResultRule(parse(tool), path, check));
+            } catch (IllegalArgumentException | NullPointerException invalid) {
+                throw new InvalidPolicyException("agent '" + id + "': " + invalid.getMessage());
             }
             return this;
         }
@@ -560,6 +587,18 @@ public final class ToolGatePolicy {
             });
             taintRules.forEach(rule -> requireAllowed(rule.tool(), "taint rule tool"));
             requiredRoles.keySet().forEach(tool -> requireAllowed(tool, "role-restricted tool"));
+            resultRules.forEach(rule -> {
+                requireAllowed(rule.tool(), "result-checked tool");
+                String resourceType = switch (rule.check()) {
+                    case ArgumentRule.SameTenant(String type) -> type;
+                    case ArgumentRule.OwnedByPrincipal(String type) -> type;
+                    case ResultCheck.MatchesTenant matches -> "-";
+                    case ResultCheck.MatchesPrincipal matches -> "-";
+                };
+                if (resourceType.isBlank()) {
+                    throw new InvalidPolicyException("agent '" + id + "': " + rule.ruleId() + " needs a resource type");
+                }
+            });
             argumentRules.forEach((argument, rules) -> {
                 if (!allowedTools.contains(argument.tool())) {
                     throw new InvalidPolicyException("agent '" + id + "': rule '" + argument
@@ -574,7 +613,7 @@ public final class ToolGatePolicy {
             });
             TaintAction trifecta = onTrifecta != null ? onTrifecta : (interactive ? TaintAction.DEFER : TaintAction.BLOCK);
             return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules,
-                    requiredRoles);
+                    requiredRoles, resultRules);
         }
     }
 
