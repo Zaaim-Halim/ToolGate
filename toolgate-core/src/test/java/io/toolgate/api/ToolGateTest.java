@@ -4,10 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.spi.SessionEvent;
+import io.toolgate.spi.SessionState;
+import io.toolgate.spi.SessionStore;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -154,6 +159,33 @@ class ToolGateTest {
         assertThat(decisions).allMatch(Decision.Allow.class::isInstance);
     }
 
+    /** Without session state no budget can be checked, so every later call would be decided blind. */
+    @Test
+    void failingSessionStoreEndsTheRun() {
+        var unreadable = new FailingStore(true, false, false);
+        var unwritable = new FailingStore(false, true, false);
+
+        for (FailingStore store : List.of(unreadable, unwritable)) {
+            ToolGate gate = ToolGate.builder(policy(a -> a.allow("readInvoice"))).sessionStore(store).build();
+
+            assertThat(gate.check(call("agent", "s1", ToolId.local("readInvoice"))))
+                    .isInstanceOfSatisfying(Decision.Terminate.class, end -> {
+                        assertThat(end.ruleId()).isEqualTo(BuiltInRules.SESSION_UNAVAILABLE);
+                        assertThat(end.reason()).contains("store down");
+                    });
+        }
+    }
+
+    @Test
+    void runStillEndsWhenRecordingItsEndFails() {
+        ToolGate gate = ToolGate.builder(policy(a -> a.allow("readInvoice").budget(b -> b.toolCalls(1))))
+                .sessionStore(new FailingStore(false, false, true))
+                .build();
+        gate.check(call("agent", "s1", ToolId.local("readInvoice")));
+
+        assertThat(gate.check(call("agent", "s1", ToolId.local("readInvoice")))).isInstanceOf(Decision.Terminate.class);
+    }
+
     @Test
     void monitorModeAllowsButNamesTheMonitor() {
         ToolGate gate = gate(ToolGatePolicy.builder()
@@ -203,6 +235,49 @@ class ToolGateTest {
             }
         }
         return decisions;
+    }
+
+    /** A single-threaded store that throws from the chosen operations. */
+    private static final class FailingStore implements SessionStore {
+
+        private final Map<String, SessionState> sessions = new ConcurrentHashMap<>();
+        private final boolean failState;
+        private final boolean failConditionalAppend;
+        private final boolean failUnconditionalAppend;
+
+        FailingStore(boolean failState, boolean failConditionalAppend, boolean failUnconditionalAppend) {
+            this.failState = failState;
+            this.failConditionalAppend = failConditionalAppend;
+            this.failUnconditionalAppend = failUnconditionalAppend;
+        }
+
+        @Override
+        public SessionState state(String sessionId) {
+            failIf(failState);
+            return sessions.getOrDefault(sessionId, SessionState.empty(sessionId));
+        }
+
+        @Override
+        public boolean append(SessionEvent event, long expectedVersion) {
+            failIf(failConditionalAppend);
+            if (state(event.sessionId()).version() != expectedVersion) {
+                return false;
+            }
+            sessions.put(event.sessionId(), state(event.sessionId()).apply(event));
+            return true;
+        }
+
+        @Override
+        public void append(SessionEvent event) {
+            failIf(failUnconditionalAppend);
+            sessions.put(event.sessionId(), state(event.sessionId()).apply(event));
+        }
+
+        private static void failIf(boolean fail) {
+            if (fail) {
+                throw new IllegalStateException("store down");
+            }
+        }
     }
 
     private static ToolGate gate(ToolGatePolicy policy) {

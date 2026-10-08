@@ -18,7 +18,10 @@ public interface ToolGate {
     /**
      * Decides whether a call may run, and records the decision in the call's session.
      *
-     * <p>Never throws for a call it cannot decide: anything it cannot evaluate is denied.
+     * <p>Fails closed instead of throwing: a rule that cannot be evaluated denies the call, and a
+     * failing session store ends the run, because without session state no budget can be checked.
+     *
+     * @throws NullPointerException if {@code call} is null
      */
     Decision check(ToolCall call);
 

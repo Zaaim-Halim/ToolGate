@@ -25,6 +25,8 @@ public final class BuiltInRules {
     public static final String MODE_MONITOR = "mode.monitor";
     /** Not a rule: the session store kept rejecting appends, so the call was denied. */
     public static final String SESSION_CONTENTION = "session.contention";
+    /** Not a rule: the session store failed, so the run was ended rather than decided without state. */
+    public static final String SESSION_UNAVAILABLE = "session.unavailable";
     /** Not a rule: a downgrade's safe tool would itself have been downgraded, so the call was denied. */
     public static final String DOWNGRADE_CHAIN = "downgrade.chain";
 

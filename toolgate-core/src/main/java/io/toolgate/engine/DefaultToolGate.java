@@ -48,6 +48,16 @@ public final class DefaultToolGate implements ToolGate {
         if (policy.mode() == Mode.OFF) {
             return new Decision.Allow(BuiltInRules.MODE_OFF);
         }
+        try {
+            return decideAndRecord(call);
+        } catch (RuntimeException storeFailure) {
+            // Evaluators cannot throw past the engine, so this is the store. Without session state
+            // every later call would be decided blind, so the run ends rather than this call alone.
+            return new Decision.Terminate(BuiltInRules.SESSION_UNAVAILABLE, "session store failed: " + storeFailure);
+        }
+    }
+
+    private Decision decideAndRecord(ToolCall call) {
         for (int attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt++) {
             SessionState state = sessions.state(call.sessionId());
             Decision decision = decide(call, state);
