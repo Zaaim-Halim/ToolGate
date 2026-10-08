@@ -22,12 +22,20 @@ Every build also replays the saved fuzz inputs. To fuzz one target for real, for
 JAZZER_FUZZ=1 ./mvnw -pl toolgate-fuzz -am test -Dtest=UrlCheckFuzzTest -Djazzer.max_duration=1h
 ```
 
+To measure `check` with JMH:
+
+```sh
+./mvnw -pl toolgate-benchmarks -am package -DskipTests
+java -jar toolgate-benchmarks/target/benchmarks.jar
+```
+
 ## Modules
 
 | Module          | Contents                                                                 |
 | --------------- | ------------------------------------------------------------------------ |
 | `toolgate-core` | Policy model, decision engine, validators, session state, audit events. No runtime dependencies. |
 | `toolgate-fuzz` | Jazzer fuzz targets for the parsers and validators. Test-only, never published. |
+| `toolgate-benchmarks` | JMH benchmarks for `check`. Never published. |
 
 ## License
 

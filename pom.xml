@@ -22,6 +22,7 @@
     <modules>
         <module>toolgate-core</module>
         <module>toolgate-fuzz</module>
+        <module>toolgate-benchmarks</module>
     </modules>
 
     <properties>
@@ -36,6 +37,7 @@
         <assertj.version>3.27.7</assertj.version>
         <jqwik.version>1.10.1</jqwik.version>
         <jazzer.version>0.30.0</jazzer.version>
+        <jmh.version>1.37</jmh.version>
     </properties>
 
     <dependencyManagement>
@@ -61,6 +63,11 @@
                 <groupId>com.code-intelligence</groupId>
                 <artifactId>jazzer-junit</artifactId>
                 <version>${jazzer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openjdk.jmh</groupId>
+                <artifactId>jmh-core</artifactId>
+                <version>${jmh.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -118,6 +125,11 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-enforcer-plugin</artifactId>
                     <version>3.6.3</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>3.6.2</version>
                 </plugin>
             </plugins>
         </pluginManagement>
