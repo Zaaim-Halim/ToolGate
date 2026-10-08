@@ -62,6 +62,7 @@ public final class DecisionEngine {
         for (Evaluator evaluator : evaluators) {
             Mode mode = policy.modeFor(evaluator.id());
             if (mode == Mode.OFF) {
+                // Only a policy that is OFF as a whole gets here; single rules cannot be turned off.
                 continue;
             }
             Verdict verdict = evaluateFailingClosed(evaluator, context);

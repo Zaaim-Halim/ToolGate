@@ -106,14 +106,23 @@ public final class ToolGatePolicy {
          * Runs one built-in rule in its own mode, for example monitoring a new rule while the rest
          * of the policy is enforced.
          *
+         * <p>A single rule cannot be turned {@link Mode#OFF}: a skipped rule lets calls through
+         * without a trace, and some rules guard others, as an unknown agent has no budgets to check.
+         * {@code OFF} is only a policy-wide emergency switch.
+         *
          * @param ruleId one of {@link BuiltInRules#CONFIGURABLE}
+         * @param ruleMode {@link Mode#MONITOR} or {@link Mode#ENFORCE}
          */
         public Builder ruleMode(String ruleId, Mode ruleMode) {
             if (!BuiltInRules.CONFIGURABLE.contains(ruleId)) {
                 throw new InvalidPolicyException("unknown rule '" + ruleId + "'; known rules: "
                         + BuiltInRules.CONFIGURABLE);
             }
-            ruleModes.put(ruleId, Objects.requireNonNull(ruleMode, "mode"));
+            if (Objects.requireNonNull(ruleMode, "mode") == Mode.OFF) {
+                throw new InvalidPolicyException("rule '" + ruleId + "' cannot be OFF; use MONITOR, or turn the"
+                        + " whole policy OFF in an emergency");
+            }
+            ruleModes.put(ruleId, ruleMode);
             return this;
         }
 

@@ -39,6 +39,16 @@ class ToolGatePolicyTest {
         assertThat(policy.modeFor(BuiltInRules.ALLOW_LIST)).isEqualTo(Mode.OFF);
     }
 
+    /** Turning one rule off would silently skip it: off agent.known even skipped both budgets. */
+    @Test
+    void rejectsTurningOneRuleOff() {
+        assertThatThrownBy(() -> ToolGatePolicy.builder().ruleMode(BuiltInRules.AGENT_KNOWN, Mode.OFF))
+                .isInstanceOf(InvalidPolicyException.class)
+                .hasMessageContaining("OFF");
+        assertThatThrownBy(() -> ToolGatePolicy.builder().ruleMode(BuiltInRules.ALLOW_LIST, Mode.OFF))
+                .isInstanceOf(InvalidPolicyException.class);
+    }
+
     @Test
     void rejectsUnknownRuleId() {
         assertThatThrownBy(() -> ToolGatePolicy.builder().ruleMode("allowlist", Mode.MONITOR))
