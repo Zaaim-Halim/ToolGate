@@ -2,6 +2,7 @@ package io.toolgate.api;
 
 import static io.toolgate.support.Checks.requireNonBlank;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
 
@@ -33,9 +34,9 @@ public record Principal(Kind kind, String id, Tenant tenant, Set<String> roles) 
         roles = Set.copyOf(roles);
     }
 
-    /** A user principal. */
+    /** A user principal. Repeated roles collapse into one. */
     public static Principal user(String id, Tenant tenant, String... roles) {
-        return new Principal(Kind.USER, id, tenant, Set.of(roles));
+        return new Principal(Kind.USER, id, tenant, Set.copyOf(Arrays.asList(roles)));
     }
 
     /** A service principal with no roles. */
