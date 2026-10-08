@@ -3,14 +3,20 @@ package io.toolgate.session;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.toolgate.api.Decision;
+import io.toolgate.api.Label;
 import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolId;
 import io.toolgate.spi.SessionEvent.CallDecided;
+import io.toolgate.spi.SessionEvent.Declassified;
+import io.toolgate.spi.SessionEvent.ResultRecorded;
 import io.toolgate.spi.SessionState;
+import io.toolgate.spi.TaintSource;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class InMemorySessionStoreTest {
@@ -27,7 +33,7 @@ class InMemorySessionStoreTest {
         assertThat(store.append(decided("s1", ALLOW), 0)).isTrue();
         assertThat(store.append(decided("s1", DENY), 1)).isTrue();
 
-        assertThat(store.state("s1")).isEqualTo(new SessionState("s1", 2, 1, 1));
+        assertThat(store.state("s1")).isEqualTo(new SessionState("s1", 2, 1, 1, Map.of()));
     }
 
     @Test
@@ -56,7 +62,36 @@ class InMemorySessionStoreTest {
         }
 
         // Allowed, deferred and downgraded calls use tool-call budget; a denial uses denial budget.
-        assertThat(state).isEqualTo(new SessionState("s1", 5, 3, 1));
+        assertThat(state).isEqualTo(new SessionState("s1", 5, 3, 1, Map.of()));
+    }
+
+    @Test
+    void taintKeepsTheFirstSourceOfEachLabel() {
+        SessionState state = SessionState.empty("s1")
+                .apply(result("s1/1", "readInvoice", Label.PRIVATE_DATA))
+                .apply(result("s1/2", "fetchSupplierPage", Label.UNTRUSTED_CONTENT))
+                .apply(result("s1/3", "readOtherInvoice", Label.PRIVATE_DATA));
+
+        assertThat(state.taint()).containsExactly(
+                Map.entry(Label.PRIVATE_DATA, new TaintSource("s1/1", ToolId.local("readInvoice"))),
+                Map.entry(Label.UNTRUSTED_CONTENT, new TaintSource("s1/2", ToolId.local("fetchSupplierPage"))));
+        assertThat(state.toolCalls()).as("results do not spend budget").isZero();
+        assertThat(state.version()).isEqualTo(3);
+    }
+
+    @Test
+    void declassifyRemovesOneLabelAndALaterSourceBringsItBack() {
+        SessionState state = SessionState.empty("s1")
+                .apply(result("s1/1", "fetch", Label.UNTRUSTED_CONTENT))
+                .apply(new Declassified("s1", Label.UNTRUSTED_CONTENT, "parsed into a strict schema", Instant.EPOCH));
+
+        assertThat(state.holds(Label.UNTRUSTED_CONTENT)).isFalse();
+        assertThat(state.apply(result("s1/2", "fetch", Label.UNTRUSTED_CONTENT)).taint())
+                .containsEntry(Label.UNTRUSTED_CONTENT, new TaintSource("s1/2", ToolId.local("fetch")));
+    }
+
+    private static ResultRecorded result(String callId, String tool, Label... labels) {
+        return new ResultRecorded("s1", callId, ToolId.local(tool), true, Set.of(labels), Instant.EPOCH);
     }
 
     private static final Decision ALLOW = new Decision.Allow("allow-list");

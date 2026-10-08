@@ -1,9 +1,11 @@
 package io.toolgate.engine;
 
 import io.toolgate.api.Decision;
+import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
+import io.toolgate.api.ToolResult;
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.Budget;
 import io.toolgate.api.policy.ToolGatePolicy;
@@ -11,12 +13,16 @@ import io.toolgate.audit.ArgumentSummary;
 import io.toolgate.audit.AuditChannel;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.SessionEvent.CallDecided;
+import io.toolgate.spi.SessionEvent.Declassified;
+import io.toolgate.spi.SessionEvent.ResultRecorded;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Checks calls with the engine and records each applied decision in the session, optimistically:
@@ -30,6 +36,9 @@ public final class DefaultToolGate implements ToolGate {
      * by the number of parallel calls. Far past any real burst, the store is broken, not busy.
      */
     private static final int MAX_APPEND_ATTEMPTS = 1024;
+
+    /** The labels a session can hold; EXTERNAL_SINK describes tools, not data. */
+    private static final Set<Label> SOURCE_LABELS = EnumSet.of(Label.PRIVATE_DATA, Label.UNTRUSTED_CONTENT);
 
     private final ToolGatePolicy policy;
     private final DecisionEngine engine;
@@ -70,6 +79,30 @@ public final class DefaultToolGate implements ToolGate {
             audit(call, ended, ended, 0);
             return ended;
         }
+    }
+
+    @Override
+    public void recordResult(ToolCall callThatRan, ToolResult result) {
+        Objects.requireNonNull(callThatRan, "callThatRan");
+        Objects.requireNonNull(result, "result");
+        if (policy.mode() == Mode.OFF) {
+            return;
+        }
+        var labels = EnumSet.noneOf(Label.class);
+        labels.addAll(policy.tool(callThatRan.tool()).labels());
+        labels.retainAll(SOURCE_LABELS);
+        // Taint only grows, so the event stays valid whatever was appended in between.
+        sessions.append(new ResultRecorded(callThatRan.sessionId(), callThatRan.callId(), callThatRan.tool(),
+                result instanceof ToolResult.Succeeded, labels, callThatRan.at()));
+    }
+
+    @Override
+    public void declassify(String sessionId, Label label, String justification) {
+        Objects.requireNonNull(label, "label");
+        if (!SOURCE_LABELS.contains(label)) {
+            throw new IllegalArgumentException(label + " marks tools, not sessions, and cannot be declassified");
+        }
+        sessions.append(new Declassified(sessionId, label, justification, clock.instant()));
     }
 
     @Override

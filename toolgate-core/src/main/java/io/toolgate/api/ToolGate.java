@@ -39,6 +39,35 @@ public interface ToolGate extends AutoCloseable {
     Decision check(ToolCall call);
 
     /**
+     * Records that a tool ran and its output, or its error, reached the model. The tool's source
+     * labels, {@link Label#PRIVATE_DATA} and {@link Label#UNTRUSTED_CONTENT}, then taint the session,
+     * and later checks see them.
+     *
+     * <p>Call it for every tool that ran, with the call that actually ran: for a downgrade, the call
+     * to the safe tool. Calls that were denied, deferred or ended the run did not run, so they are
+     * not recorded.
+     *
+     * <p>Unlike {@link #check}, this throws if the session store fails: a lost taint record would
+     * make later decisions more lenient than they should be, so the adapter must end the run.
+     *
+     * @param callThatRan the call whose tool ran
+     * @param result      what the model received
+     */
+    void recordResult(ToolCall callThatRan, ToolResult result);
+
+    /**
+     * Removes a source label from a session, after application code checked the data, for example
+     * by parsing a fetched page into a strict schema. Every declassification is recorded with its
+     * justification. Never let a tool result or the model trigger it.
+     *
+     * @param sessionId     the session
+     * @param label         {@link Label#PRIVATE_DATA} or {@link Label#UNTRUSTED_CONTENT}
+     * @param justification why the data is now safe
+     * @throws IllegalArgumentException if the label is not a source label, or the justification is blank
+     */
+    void declassify(String sessionId, Label label, String justification);
+
+    /**
      * Audit events that never reached the sink, because its queue was full, it threw, or the event
      * came after {@link #close}. Worth a metric and an alert: enforcement is unaffected, but the
      * audit trail has gaps.

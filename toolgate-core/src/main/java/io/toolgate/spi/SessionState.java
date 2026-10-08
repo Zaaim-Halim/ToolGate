@@ -3,7 +3,13 @@ package io.toolgate.spi;
 import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.Decision;
+import io.toolgate.api.Label;
 import io.toolgate.spi.SessionEvent.CallDecided;
+import io.toolgate.spi.SessionEvent.Declassified;
+import io.toolgate.spi.SessionEvent.ResultRecorded;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.Map;
 
 /**
  * An immutable snapshot of one session, built by folding its events in order.
@@ -15,8 +21,9 @@ import io.toolgate.spi.SessionEvent.CallDecided;
  * @param version   the number of events applied; stores use it for optimistic concurrency
  * @param toolCalls calls that used tool-call budget: allowed, deferred or downgraded ones
  * @param denials   calls that were denied, for the denial budget
+ * @param taint     the source labels the session holds, each with the call that first brought it in
  */
-public record SessionState(String sessionId, long version, int toolCalls, int denials) {
+public record SessionState(String sessionId, long version, int toolCalls, int denials, Map<Label, TaintSource> taint) {
 
     /** Rejects negative counters, which only a corrupt store could produce. */
     public SessionState {
@@ -24,6 +31,7 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         if (version < 0 || toolCalls < 0 || denials < 0) {
             throw new IllegalArgumentException("session counters must not be negative");
         }
+        taint = taint.isEmpty() ? Map.of() : Collections.unmodifiableMap(new EnumMap<>(taint));
     }
 
     /**
@@ -33,7 +41,7 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
      * @return the state at version zero
      */
     public static SessionState empty(String sessionId) {
-        return new SessionState(sessionId, 0, 0, 0);
+        return new SessionState(sessionId, 0, 0, 0, Map.of());
     }
 
     /**
@@ -50,12 +58,43 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         return switch (event) {
             case CallDecided decided -> switch (decided.applied()) {
                 // A denied call releases the budget it would have used, so probing costs denials, not calls.
-                case Decision.Allow allowed -> new SessionState(sessionId, version + 1, toolCalls + 1, denials);
-                case Decision.Defer deferred -> new SessionState(sessionId, version + 1, toolCalls + 1, denials);
-                case Decision.Downgrade downgraded -> new SessionState(sessionId, version + 1, toolCalls + 1, denials);
-                case Decision.Deny denied -> new SessionState(sessionId, version + 1, toolCalls, denials + 1);
-                case Decision.Terminate terminated -> new SessionState(sessionId, version + 1, toolCalls, denials);
+                case Decision.Allow allowed -> next(toolCalls + 1, denials, taint);
+                case Decision.Defer deferred -> next(toolCalls + 1, denials, taint);
+                case Decision.Downgrade downgraded -> next(toolCalls + 1, denials, taint);
+                case Decision.Deny denied -> next(toolCalls, denials + 1, taint);
+                case Decision.Terminate terminated -> next(toolCalls, denials, taint);
             };
+            case ResultRecorded recorded -> next(toolCalls, denials, withLabels(recorded));
+            case Declassified declassified -> next(toolCalls, denials, without(declassified.label()));
         };
+    }
+
+    /**
+     * Whether the session holds a label.
+     *
+     * @param label a source label
+     * @return {@code true} if some call brought it in and it was not declassified since
+     */
+    public boolean holds(Label label) {
+        return taint.containsKey(label);
+    }
+
+    private SessionState next(int newToolCalls, int newDenials, Map<Label, TaintSource> newTaint) {
+        return new SessionState(sessionId, version + 1, newToolCalls, newDenials, newTaint);
+    }
+
+    /** The first source of each label is kept: it is where the session became tainted. */
+    private Map<Label, TaintSource> withLabels(ResultRecorded recorded) {
+        var updated = new EnumMap<Label, TaintSource>(Label.class);
+        updated.putAll(taint);
+        recorded.labels().forEach(label -> updated.putIfAbsent(label, new TaintSource(recorded.callId(), recorded.tool())));
+        return updated;
+    }
+
+    private Map<Label, TaintSource> without(Label label) {
+        var updated = new EnumMap<Label, TaintSource>(Label.class);
+        updated.putAll(taint);
+        updated.remove(label);
+        return updated;
     }
 }
