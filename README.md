@@ -34,7 +34,7 @@ java -jar toolgate-benchmarks/target/benchmarks.jar
 | Module          | Contents                                                                 |
 | --------------- | ------------------------------------------------------------------------ |
 | `toolgate-core` | Policy model, decision engine, validators, session state, audit events. No runtime dependencies. |
-| `toolgate-jdbc` | Approval queue in the application's database, through plain JDBC. Ships DDL for H2, PostgreSQL and MySQL. |
+| `toolgate-jdbc` | Approval queue and session store in the application's database, through plain JDBC, for applications with more than one instance. Ships DDL for H2, PostgreSQL and MySQL. |
 | `toolgate-fuzz` | Jazzer fuzz targets for the parsers and validators. Test-only, never published. |
 | `toolgate-benchmarks` | JMH benchmarks for `check`. Never published. |
 

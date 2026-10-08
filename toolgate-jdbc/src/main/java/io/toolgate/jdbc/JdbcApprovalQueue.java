@@ -239,7 +239,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
         return Set.copyOf(roles);
     }
 
-    private static boolean isIntegrityViolation(SQLException failure) {
+    static boolean isIntegrityViolation(SQLException failure) {
         return failure instanceof SQLIntegrityConstraintViolationException
                 || (failure.getSQLState() != null && failure.getSQLState().startsWith(INTEGRITY_VIOLATION_CLASS));
     }

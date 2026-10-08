@@ -1,0 +1,118 @@
+package io.toolgate.jdbc;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.toolgate.api.ArgValue;
+import io.toolgate.api.Decision;
+import io.toolgate.api.Label;
+import io.toolgate.api.ObjectValue;
+import io.toolgate.api.Principal;
+import io.toolgate.api.Tenant;
+import io.toolgate.api.ToolId;
+import io.toolgate.spi.SessionEvent;
+import io.toolgate.spi.SessionState;
+import io.toolgate.spi.TaintSource;
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+
+class JdbcSessionStoreTest {
+
+    private static final Instant T0 = Instant.parse("2026-10-09T08:00:00.123456Z");
+    private static final Principal MARIA = Principal.user("maria", Tenant.of("acme"), "support");
+
+    private final H2 database = H2.withQueueTable();
+    private final JdbcSessionStore store = new JdbcSessionStore(database, Clock.fixed(T0, ZoneOffset.UTC));
+
+    @Test
+    void unknownSessionIsEmpty() {
+        assertThat(store.state("s1")).isEqualTo(SessionState.empty("s1"));
+        assertThat(store.events("s1")).isEmpty();
+    }
+
+    @Test
+    void foldsEventsIntoTheSnapshotWithTaint() {
+        store.append(decided("s1/1", new Decision.Allow("allow-list")), 0);
+        store.append(result("s1/1", "readInvoice", Label.PRIVATE_DATA), 1);
+        store.append(decided("s1/2", new Decision.Deny("allow-list", "not listed")), 2);
+
+        assertThat(store.state("s1")).isEqualTo(new SessionState("s1", 3, 1, 1,
+                Map.of(Label.PRIVATE_DATA, new TaintSource("s1/1", ToolId.local("readInvoice")))));
+    }
+
+    @Test
+    void conditionalAppendLosesToAnotherWriter() {
+        store.append(decided("s1/1", new Decision.Allow("allow-list")), 0);
+
+        assertThat(store.append(decided("s1/2", new Decision.Allow("allow-list")), 0)).isFalse();
+        assertThat(store.state("s1").toolCalls()).isEqualTo(1);
+        assertThat(store.events("s1")).hasSize(1);
+    }
+
+    @Test
+    void unconditionalAppendLandsOnWhateverIsThere() {
+        store.append(decided("s1/1", new Decision.Allow("allow-list")), 0);
+
+        store.append(result("s1/1", "fetch", Label.UNTRUSTED_CONTENT));
+
+        assertThat(store.state("s1").holds(Label.UNTRUSTED_CONTENT)).isTrue();
+        assertThat(store.state("s1").version()).isEqualTo(2);
+    }
+
+    /** The log is what replay will read, so every kind of event must come back exactly. */
+    @Test
+    void eventLogReadsBackEveryKindOfEvent() {
+        ObjectValue args = ObjectValue.of(Map.of("to", ArgValue.text("billing@mycompany.com"),
+                "amount", ArgValue.number(new BigDecimal("480.5")),
+                "lines", ArgValue.list(List.of(ArgValue.nullValue(), ArgValue.bool(false)))));
+        List<SessionEvent> events = List.of(
+                new SessionEvent.CallDecided("s1", "s1/1", "agent", MARIA, ToolId.mcp("mail", "send"), args,
+                        new Decision.Downgrade("taint.trifecta", ToolId.local("draftEmail"), args),
+                        new Decision.Deny("taint.trifecta", "trifecta"), "sha256:abc", T0),
+                new SessionEvent.CallDecided("s1", "s1/2", "agent", Principal.service("job", Tenant.none()),
+                        ToolId.local("issueRefund"), ObjectValue.empty(),
+                        new Decision.Defer("issueRefund.amount", "480 is above 200", "s1:s1/2"),
+                        new Decision.Terminate("budget.toolCalls", "used up"), "sha256:abc", T0.plusSeconds(1)),
+                new SessionEvent.ResultRecorded("s1", "s1/1", ToolId.local("draftEmail"), false, true, Set.of(),
+                        T0.plusSeconds(2)),
+                new SessionEvent.ResultRecorded("s1", "s1/3", ToolId.local("fetch"), true, false,
+                        Set.of(Label.UNTRUSTED_CONTENT, Label.PRIVATE_DATA), T0.plusSeconds(3)),
+                new SessionEvent.Declassified("s1", Label.UNTRUSTED_CONTENT, "parsed into a schema", T0.plusSeconds(4)));
+        for (SessionEvent event : events) {
+            store.append(event);
+        }
+
+        assertThat(store.events("s1")).containsExactlyElementsOf(events);
+    }
+
+    @Test
+    void purgeIdleDeletesOnlyOldSessionsAndTheirEvents() {
+        new JdbcSessionStore(database, Clock.fixed(T0.minus(Duration.ofDays(40)), ZoneOffset.UTC))
+                .append(decided("old/1", new Decision.Allow("allow-list"), "old"));
+        store.append(decided("s1/1", new Decision.Allow("allow-list")));
+
+        assertThat(store.purgeIdle(Duration.ofDays(30))).isEqualTo(1);
+        assertThat(store.state("old")).isEqualTo(SessionState.empty("old"));
+        assertThat(store.events("old")).isEmpty();
+        assertThat(store.state("s1").version()).isEqualTo(1);
+    }
+
+    private static SessionEvent decided(String callId, Decision applied) {
+        return decided(callId, applied, "s1");
+    }
+
+    private static SessionEvent decided(String callId, Decision applied, String sessionId) {
+        return new SessionEvent.CallDecided(sessionId, callId, "agent", MARIA, ToolId.local("t"), ObjectValue.empty(),
+                applied, applied, "sha256:abc", T0);
+    }
+
+    private static SessionEvent result(String callId, String tool, Label label) {
+        return new SessionEvent.ResultRecorded("s1", callId, ToolId.local(tool), true, false, Set.of(label), T0);
+    }
+}

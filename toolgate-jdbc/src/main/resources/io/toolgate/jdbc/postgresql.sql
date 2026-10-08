@@ -20,3 +20,24 @@ CREATE TABLE toolgate_pending_call (
     expires_at       BIGINT        NOT NULL
 );
 CREATE INDEX toolgate_pending_call_status ON toolgate_pending_call (status, deferred_at);
+
+-- ToolGate session store. One row per session: the state every check reads. The event log keeps
+-- every session event, including the calls' REAL ARGUMENT VALUES, unencrypted: protect it like the
+-- data it carries, and purge idle sessions (JdbcSessionStore.purgeIdle) to bound how long it is kept.
+CREATE TABLE toolgate_session (
+    session_id  VARCHAR(512)  NOT NULL PRIMARY KEY,
+    version     BIGINT        NOT NULL,
+    tool_calls  INT           NOT NULL,
+    denials     INT           NOT NULL,
+    taint       TEXT          NOT NULL,
+    updated_at  BIGINT        NOT NULL
+);
+CREATE INDEX toolgate_session_updated ON toolgate_session (updated_at);
+CREATE TABLE toolgate_session_event (
+    session_id  VARCHAR(512)  NOT NULL,
+    version     BIGINT        NOT NULL,
+    event_type  VARCHAR(32)   NOT NULL,
+    event       TEXT          NOT NULL,
+    recorded_at BIGINT        NOT NULL,
+    PRIMARY KEY (session_id, version)
+);
