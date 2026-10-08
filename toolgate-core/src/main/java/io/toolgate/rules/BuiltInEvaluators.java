@@ -15,7 +15,8 @@ public final class BuiltInEvaluators {
     private BuiltInEvaluators() {}
 
     /**
-     * Every built-in evaluator, plus one for each argument rule in the policy, without resolving names.
+     * Every built-in evaluator, plus one for each argument and taint rule in the policy, without
+     * resolving names.
      *
      * @param policy the policy whose argument rules to apply
      * @return the evaluators, built-ins first
@@ -38,8 +39,11 @@ public final class BuiltInEvaluators {
 
     private static List<Evaluator> withNameCheck(ToolGatePolicy policy, Function<String, Optional<String>> nameCheck) {
         var evaluators = new ArrayList<>(all());
-        policy.agents().values().forEach(agent -> agent.argumentRules().forEach((argument, rules) ->
-                evaluators.add(new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck)))));
+        policy.agents().values().forEach(agent -> {
+            agent.argumentRules().forEach((argument, rules) ->
+                    evaluators.add(new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck))));
+            agent.taintRules().forEach(rule -> evaluators.add(new TaintRuleEvaluator(agent.id(), rule)));
+        });
         return List.copyOf(evaluators);
     }
 
@@ -49,6 +53,8 @@ public final class BuiltInEvaluators {
                 new DenialBudgetEvaluator(),
                 new ToolCallBudgetEvaluator(),
                 new McpServerEvaluator(),
-                new AllowListEvaluator());
+                new AllowListEvaluator(),
+                new TrifectaEvaluator(),
+                new IrreversibleEvaluator());
     }
 }
