@@ -1,0 +1,16 @@
+# Private working material
+docs/
+.claude/
+CLAUDE.md
+
+# Build output
+target/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS clutter
+.DS_Store
+Thumbs.db
