@@ -1,10 +1,17 @@
 package io.toolgate.api;
 
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.audit.ArgumentSummary;
+import io.toolgate.audit.AsyncAuditDispatcher;
+import io.toolgate.audit.SystemLoggerSink;
 import io.toolgate.engine.DefaultToolGate;
+import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.session.InMemorySessionStore;
+import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.SessionStore;
+import java.time.Clock;
+import java.util.Arrays;
 import java.util.Objects;
 
 /**
@@ -13,8 +20,11 @@ import java.util.Objects;
  * <p>Adapters call {@link #check} for each tool call before the tool runs and apply the returned
  * {@link Decision}. Implementations are thread-safe; parallel calls in one session are checked
  * against consistent session state, so they cannot overshoot a budget together.
+ *
+ * <p>Every decision is also sent to the audit sink, off the request path. {@link #close} delivers
+ * the events still queued; call it when the application shuts down.
  */
-public interface ToolGate {
+public interface ToolGate extends AutoCloseable {
 
     /**
      * Decides whether a call may run, and records the decision in the call's session.
@@ -27,6 +37,22 @@ public interface ToolGate {
      * @throws NullPointerException if {@code call} is null
      */
     Decision check(ToolCall call);
+
+    /**
+     * Audit events that never reached the sink, because its queue was full, it threw, or the event
+     * came after {@link #close}. Worth a metric and an alert: enforcement is unaffected, but the
+     * audit trail has gaps.
+     *
+     * @return how many were dropped since the gate was built
+     */
+    long droppedAuditEvents();
+
+    /**
+     * Delivers queued audit events, waiting a few seconds at most, and stops auditing. Checks still
+     * work afterwards, so a call racing shutdown is still decided; its audit event is dropped.
+     */
+    @Override
+    void close();
 
     /**
      * Starts building a gate.
@@ -44,6 +70,9 @@ public interface ToolGate {
         private final ToolGatePolicy policy;
         private SessionStore sessionStore;
         private HostResolver hostResolver;
+        private AuditSink auditSink;
+        private byte[] argumentHashKey;
+        private Clock clock = Clock.systemUTC();
 
         private Builder(ToolGatePolicy policy) {
             this.policy = Objects.requireNonNull(policy, "policy");
@@ -75,15 +104,62 @@ public interface ToolGate {
         }
 
         /**
-         * Builds the gate.
+         * Where audit events go. Defaults to one JSON line per event on the JDK logger
+         * {@code toolgate.audit}, which Spring Boot routes to SLF4J.
          *
-         * @return a thread-safe gate
+         * @param sink the sink, called from one background thread
+         * @return this builder
+         */
+        public Builder auditSink(AuditSink sink) {
+            this.auditSink = Objects.requireNonNull(sink, "auditSink");
+            return this;
+        }
+
+        /**
+         * Logs arguments as keyed hashes, so equal values can be correlated across calls and
+         * instances without being readable. Without a key, only each argument's type and size are
+         * logged.
+         *
+         * @param key at least 32 secret bytes, the same on every instance; copied
+         * @return this builder
+         * @throws IllegalArgumentException if the key is shorter than 32 bytes
+         */
+        public Builder argumentHashKey(byte[] key) {
+            if (key.length < ArgumentSummary.MIN_KEY_BYTES) {
+                throw new IllegalArgumentException(
+                        "argument hash key needs at least " + ArgumentSummary.MIN_KEY_BYTES + " bytes");
+            }
+            this.argumentHashKey = Arrays.copyOf(key, key.length);
+            return this;
+        }
+
+        /**
+         * The clock for audit event times. Defaults to the system clock in UTC.
+         *
+         * @param newClock the clock
+         * @return this builder
+         */
+        public Builder clock(Clock newClock) {
+            this.clock = Objects.requireNonNull(newClock, "clock");
+            return this;
+        }
+
+        /**
+         * Builds the gate and starts its audit thread.
+         *
+         * @return a thread-safe gate; close it at shutdown
          */
         public ToolGate build() {
-            SessionStore store = sessionStore != null ? sessionStore : new InMemorySessionStore();
-            return hostResolver != null
-                    ? DefaultToolGate.withBuiltInRules(policy, store, hostResolver)
-                    : DefaultToolGate.withBuiltInRules(policy, store);
+            return new DefaultToolGate(
+                    policy,
+                    hostResolver != null
+                            ? BuiltInEvaluators.forPolicy(policy, hostResolver)
+                            : BuiltInEvaluators.forPolicy(policy),
+                    sessionStore != null ? sessionStore : new InMemorySessionStore(),
+                    new AsyncAuditDispatcher(auditSink != null ? auditSink : new SystemLoggerSink(),
+                            AsyncAuditDispatcher.DEFAULT_CAPACITY),
+                    argumentHashKey != null ? ArgumentSummary.keyed(argumentHashKey) : ArgumentSummary.typesOnly(),
+                    clock);
         }
     }
 }

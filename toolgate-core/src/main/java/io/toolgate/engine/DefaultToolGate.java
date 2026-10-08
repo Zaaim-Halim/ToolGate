@@ -5,19 +5,23 @@ import io.toolgate.api.Mode;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.policy.BuiltInRules;
+import io.toolgate.api.policy.Budget;
 import io.toolgate.api.policy.ToolGatePolicy;
-import io.toolgate.rules.BuiltInEvaluators;
-import io.toolgate.spi.HostResolver;
+import io.toolgate.audit.ArgumentSummary;
+import io.toolgate.audit.AuditChannel;
+import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
 /**
  * Checks calls with the engine and records each applied decision in the session, optimistically:
  * if another call in the same session was recorded in between, the check runs again on the new
- * state, so parallel calls can never overshoot a budget together.
+ * state, so parallel calls can never overshoot a budget together. Every decision is then audited.
  */
 public final class DefaultToolGate implements ToolGate {
 
@@ -30,21 +34,25 @@ public final class DefaultToolGate implements ToolGate {
     private final ToolGatePolicy policy;
     private final DecisionEngine engine;
     private final SessionStore sessions;
+    private final AuditChannel audit;
+    private final ArgumentSummary argumentSummary;
+    private final Clock clock;
 
-    public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions) {
+    public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions,
+                           AuditChannel audit, ArgumentSummary argumentSummary, Clock clock) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.engine = new DecisionEngine(policy, evaluators);
         this.sessions = Objects.requireNonNull(sessions, "sessions");
+        this.audit = Objects.requireNonNull(audit, "audit");
+        this.argumentSummary = Objects.requireNonNull(argumentSummary, "argumentSummary");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        Instant loadedAt = clock.instant();
+        audit.submit(() -> new AuditEvent.PolicyLoaded(loadedAt, policy.hash(), policy.mode(), policy.agents().size()));
     }
 
-    /** A gate running every built-in rule, without resolving URL host names. */
-    public static ToolGate withBuiltInRules(ToolGatePolicy policy, SessionStore sessions) {
-        return new DefaultToolGate(policy, BuiltInEvaluators.forPolicy(policy), sessions);
-    }
-
-    /** A gate running every built-in rule, resolving URL host names with {@code resolver}. */
-    public static ToolGate withBuiltInRules(ToolGatePolicy policy, SessionStore sessions, HostResolver resolver) {
-        return new DefaultToolGate(policy, BuiltInEvaluators.forPolicy(policy, resolver), sessions);
+    /** A gate without audit, for tests of decisions alone. */
+    public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions) {
+        this(policy, evaluators, sessions, AuditChannel.NONE, ArgumentSummary.typesOnly(), Clock.systemUTC());
     }
 
     @Override
@@ -58,8 +66,20 @@ public final class DefaultToolGate implements ToolGate {
         } catch (RuntimeException storeFailure) {
             // Evaluators cannot throw past the engine, so this is the store. Without session state
             // every later call would be decided blind, so the run ends rather than this call alone.
-            return new Decision.Terminate(BuiltInRules.SESSION_UNAVAILABLE, "session store failed: " + storeFailure);
+            var ended = new Decision.Terminate(BuiltInRules.SESSION_UNAVAILABLE, "session store failed: " + storeFailure);
+            audit(call, ended, ended, 0);
+            return ended;
         }
+    }
+
+    @Override
+    public long droppedAuditEvents() {
+        return audit.dropped();
+    }
+
+    @Override
+    public void close() {
+        audit.close();
     }
 
     private Decision decideAndRecord(ToolCall call) {
@@ -71,14 +91,18 @@ public final class DefaultToolGate implements ToolGate {
                     call.args(), decision, evaluation.computed(), policy.hash(), call.at());
             if (decision instanceof Decision.Terminate) {
                 sessions.append(event);
+                audit(call, decision, evaluation.computed(), state.apply(event).toolCalls());
                 return decision;
             }
             if (sessions.append(event, state.version())) {
+                audit(call, decision, evaluation.computed(), state.apply(event).toolCalls());
                 return decision;
             }
         }
-        return new Decision.Deny(BuiltInRules.SESSION_CONTENTION,
+        var contention = new Decision.Deny(BuiltInRules.SESSION_CONTENTION,
                 "session " + call.sessionId() + " changed on each of " + MAX_APPEND_ATTEMPTS + " attempts");
+        audit(call, contention, contention, 0);
+        return contention;
     }
 
     /** The engine's evaluation, with a downgrade replaced by its safe call's decision when that is stricter. */
@@ -102,5 +126,15 @@ public final class DefaultToolGate implements ToolGate {
             case Decision.Defer deferred -> deferred;
             case Decision.Terminate terminated -> terminated;
         };
+    }
+
+    /** Queues the audit event; the time is taken now, and the arguments are summarized off this thread. */
+    private void audit(ToolCall call, Decision applied, Decision computed, int toolCalls) {
+        Instant decidedAt = clock.instant();
+        int limit = policy.agent(call.agentId()).map(agent -> agent.budget().toolCalls())
+                .orElse(Budget.UNLIMITED.toolCalls());
+        audit.submit(() -> new AuditEvent.Decided(decidedAt, call.callId(), call.sessionId(), call.agentId(),
+                call.principal(), call.tool(), argumentSummary.summarize(call.args()), applied, computed,
+                policy.mode(), toolCalls, limit, policy.hash()));
     }
 }
