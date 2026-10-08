@@ -70,6 +70,7 @@ public final class BuiltInEvaluators {
                     ? new OwnershipEvaluator(agent.id(), argument, rules, owners)
                     : new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck))));
             agent.taintRules().forEach(rule -> evaluators.add(new TaintRuleEvaluator(agent.id(), rule)));
+            agent.requiredRoles().forEach((tool, roles) -> evaluators.add(new RoleEvaluator(agent.id(), tool, roles)));
         });
         return List.copyOf(evaluators);
     }

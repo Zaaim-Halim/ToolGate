@@ -71,6 +71,11 @@ public final class PolicyHash {
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
                 .forEach(entry -> line(text, " downgrade", entry.getKey().toString(), entry.getValue().toString()));
         agent.taintRules().stream().map(PolicyHash::taintRule).sorted().forEach(rule -> text.append(' ').append(rule));
+        agent.requiredRoles().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
+                .forEach(entry -> line(text, " requireRole",
+                        Stream.concat(Stream.of(entry.getKey().toString()), entry.getValue().stream().sorted())
+                                .toArray(String[]::new)));
         agent.argumentRules().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolArgument::ruleId)))
                 .forEach(entry -> {

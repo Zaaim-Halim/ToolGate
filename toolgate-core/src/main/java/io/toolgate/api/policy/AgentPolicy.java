@@ -22,11 +22,12 @@ import java.util.stream.Collectors;
  * @param downgrades    safe tools to run instead, by tool, when a taint rule objects; all allowed
  * @param onTrifecta    what the trifecta rule does when no downgrade applies
  * @param taintRules    the agent's own taint rules
+ * @param requiredRoles roles a principal needs to call a tool, any one of which is enough, by tool
  */
 public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
                           Map<ToolArgument, List<ArgumentRule>> argumentRules,
                           boolean interactive, Map<ToolId, ToolId> downgrades, TaintAction onTrifecta,
-                          List<TaintRule> taintRules) {
+                          List<TaintRule> taintRules, Map<ToolId, Set<String>> requiredRoles) {
 
     /** Validates and copies every component. */
     public AgentPolicy {
@@ -38,5 +39,7 @@ public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
         downgrades = Collections.unmodifiableMap(new LinkedHashMap<>(downgrades));
         Objects.requireNonNull(onTrifecta, "onTrifecta");
         taintRules = List.copyOf(taintRules);
+        requiredRoles = requiredRoles.entrySet().stream()
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> Set.copyOf(entry.getValue())));
     }
 }

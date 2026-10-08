@@ -370,6 +370,7 @@ public final class ToolGatePolicy {
         private final Map<ToolArgument, List<ArgumentRule>> argumentRules = new LinkedHashMap<>();
         private final Map<ToolId, ToolId> downgrades = new LinkedHashMap<>();
         private final List<TaintRule> taintRules = new ArrayList<>();
+        private final Map<ToolId, Set<String>> requiredRoles = new LinkedHashMap<>();
         private Budget budget = Budget.UNLIMITED;
         private boolean interactive;
         private TaintAction onTrifecta;
@@ -418,6 +419,25 @@ public final class ToolGatePolicy {
          */
         public AgentBuilder onTrifecta(TaintAction action) {
             this.onTrifecta = Objects.requireNonNull(action, "action");
+            return this;
+        }
+
+        /**
+         * Lets only principals with one of these roles call a tool, such as refunds for finance.
+         * Checked right after the allow-list, before any lookup.
+         *
+         * @param tool  the tool
+         * @param roles roles, any one of which is enough
+         * @return this agent builder
+         */
+        public AgentBuilder requireRole(String tool, String... roles) {
+            ToolId target = parse(tool);
+            if (roles.length == 0 || Arrays.stream(roles).anyMatch(role -> role == null || role.isBlank())) {
+                throw new InvalidPolicyException("agent '" + id + "': requireRole(" + target + ") needs non-blank roles");
+            }
+            if (requiredRoles.putIfAbsent(target, Set.copyOf(Arrays.asList(roles))) != null) {
+                throw new InvalidPolicyException("agent '" + id + "': " + target + " has requireRole twice");
+            }
             return this;
         }
 
@@ -539,6 +559,7 @@ public final class ToolGatePolicy {
                 }
             });
             taintRules.forEach(rule -> requireAllowed(rule.tool(), "taint rule tool"));
+            requiredRoles.keySet().forEach(tool -> requireAllowed(tool, "role-restricted tool"));
             argumentRules.forEach((argument, rules) -> {
                 if (!allowedTools.contains(argument.tool())) {
                     throw new InvalidPolicyException("agent '" + id + "': rule '" + argument
@@ -552,7 +573,8 @@ public final class ToolGatePolicy {
                 }
             });
             TaintAction trifecta = onTrifecta != null ? onTrifecta : (interactive ? TaintAction.DEFER : TaintAction.BLOCK);
-            return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules);
+            return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules,
+                    requiredRoles);
         }
     }
 
