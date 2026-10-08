@@ -4,6 +4,7 @@ import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.Mode;
 import io.toolgate.api.ToolId;
+import io.toolgate.policy.PolicyHash;
 import io.toolgate.rules.ArgumentChecks;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -43,6 +44,7 @@ public final class ToolGatePolicy {
     private final int denialBudget;
     private final Set<String> mcpServers;
     private final Map<String, AgentPolicy> agents;
+    private final String hash;
 
     private ToolGatePolicy(Builder builder) {
         this.mode = builder.mode;
@@ -50,6 +52,7 @@ public final class ToolGatePolicy {
         this.denialBudget = builder.defaults.denialBudget;
         this.mcpServers = Set.copyOf(builder.mcpServers);
         this.agents = Map.copyOf(builder.agents);
+        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, agents);
     }
 
     /**
@@ -108,6 +111,18 @@ public final class ToolGatePolicy {
      */
     public Optional<AgentPolicy> agent(String agentId) {
         return Optional.ofNullable(agents.get(agentId));
+    }
+
+    /**
+     * Identifies this exact policy in audit events and replay.
+     *
+     * <p>Computed from a canonical form, so it does not depend on the order in which the policy was
+     * built, and two JVMs running the same policy agree on it.
+     *
+     * @return {@code sha256:} followed by 64 hex digits
+     */
+    public String hash() {
+        return hash;
     }
 
     /**
