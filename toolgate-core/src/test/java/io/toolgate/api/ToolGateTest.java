@@ -214,6 +214,36 @@ class ToolGateTest {
                 .isInstanceOf(Decision.Deny.class);
     }
 
+    /** Replay and audit need the whole call, and monitor mode needs the decision it did not apply. */
+    @Test
+    void sessionEventKeepsTheCallAndBothDecisions() {
+        ToolGatePolicy monitored = ToolGatePolicy.builder()
+                .mode(Mode.MONITOR)
+                .agent("agent", a -> a.allow("readInvoice"))
+                .build();
+        var events = new ArrayList<SessionEvent>();
+        var store = new FailingStore(false, false, false) {
+            @Override
+            public boolean append(SessionEvent event, long expectedVersion) {
+                events.add(event);
+                return super.append(event, expectedVersion);
+            }
+        };
+        ToolGate gate = ToolGate.builder(monitored).sessionStore(store).build();
+        var args = ObjectValue.of(Map.of("id", ArgValue.text("INV-900")));
+
+        gate.check(new ToolCall("s1/1", MARIA, "agent", "s1", ToolId.local("exportCustomers"), args, NOW));
+
+        assertThat(events).singleElement().isInstanceOfSatisfying(SessionEvent.CallDecided.class, decided -> {
+            assertThat(decided.agentId()).isEqualTo("agent");
+            assertThat(decided.principal()).isEqualTo(MARIA);
+            assertThat(decided.args()).isEqualTo(args);
+            assertThat(decided.applied()).isEqualTo(new Decision.Allow(BuiltInRules.MODE_MONITOR));
+            assertThat(decided.computed()).isInstanceOf(Decision.Deny.class);
+            assertThat(decided.policyHash()).isEqualTo(monitored.hash());
+        });
+    }
+
     @Test
     void offAllowsEverything() {
         ToolGate gate = gate(ToolGatePolicy.builder().mode(Mode.OFF).build());
@@ -238,7 +268,7 @@ class ToolGateTest {
     }
 
     /** A single-threaded store that throws from the chosen operations. */
-    private static final class FailingStore implements SessionStore {
+    private static class FailingStore implements SessionStore {
 
         private final Map<String, SessionState> sessions = new ConcurrentHashMap<>();
         private final boolean failState;

@@ -2,6 +2,7 @@ package io.toolgate.spi;
 
 import static io.toolgate.support.Checks.requireNonBlank;
 
+import io.toolgate.api.Decision;
 import io.toolgate.spi.SessionEvent.CallDecided;
 
 /**
@@ -47,11 +48,13 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
                     "event for session " + event.sessionId() + " applied to session " + sessionId);
         }
         return switch (event) {
-            case CallDecided decided -> switch (decided.outcome()) {
+            case CallDecided decided -> switch (decided.applied()) {
                 // A denied call releases the budget it would have used, so probing costs denials, not calls.
-                case ALLOWED, DEFERRED, DOWNGRADED -> new SessionState(sessionId, version + 1, toolCalls + 1, denials);
-                case DENIED -> new SessionState(sessionId, version + 1, toolCalls, denials + 1);
-                case TERMINATED -> new SessionState(sessionId, version + 1, toolCalls, denials);
+                case Decision.Allow allowed -> new SessionState(sessionId, version + 1, toolCalls + 1, denials);
+                case Decision.Defer deferred -> new SessionState(sessionId, version + 1, toolCalls + 1, denials);
+                case Decision.Downgrade downgraded -> new SessionState(sessionId, version + 1, toolCalls + 1, denials);
+                case Decision.Deny denied -> new SessionState(sessionId, version + 1, toolCalls, denials + 1);
+                case Decision.Terminate terminated -> new SessionState(sessionId, version + 1, toolCalls, denials);
             };
         };
     }

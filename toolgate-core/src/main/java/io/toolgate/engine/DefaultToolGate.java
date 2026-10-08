@@ -9,7 +9,6 @@ import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.SessionEvent.CallDecided;
-import io.toolgate.spi.SessionEvent.CallDecided.Outcome;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
 import java.util.List;
@@ -66,8 +65,10 @@ public final class DefaultToolGate implements ToolGate {
     private Decision decideAndRecord(ToolCall call) {
         for (int attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt++) {
             SessionState state = sessions.state(call.sessionId());
-            Decision decision = decide(call, state);
-            var event = new CallDecided(call.sessionId(), call.callId(), call.tool(), outcomeOf(decision), call.at());
+            Evaluation evaluation = decide(call, state);
+            Decision decision = evaluation.effective();
+            var event = new CallDecided(call.sessionId(), call.callId(), call.agentId(), call.principal(), call.tool(),
+                    call.args(), decision, evaluation.computed(), policy.hash(), call.at());
             if (decision instanceof Decision.Terminate) {
                 sessions.append(event);
                 return decision;
@@ -80,11 +81,16 @@ public final class DefaultToolGate implements ToolGate {
                 "session " + call.sessionId() + " changed on each of " + MAX_APPEND_ATTEMPTS + " attempts");
     }
 
-    private Decision decide(ToolCall call, SessionState state) {
-        Decision decision = engine.evaluate(call, state).effective();
-        if (!(decision instanceof Decision.Downgrade downgrade)) {
-            return decision;
+    /** The engine's evaluation, with a downgrade replaced by its safe call's decision when that is stricter. */
+    private Evaluation decide(ToolCall call, SessionState state) {
+        Evaluation evaluation = engine.evaluate(call, state);
+        if (!(evaluation.effective() instanceof Decision.Downgrade downgrade)) {
+            return evaluation;
         }
+        return new Evaluation(checkSafeCall(call, state, downgrade), evaluation.computed());
+    }
+
+    private Decision checkSafeCall(ToolCall call, SessionState state, Decision.Downgrade downgrade) {
         // The safe tool is checked like any other call, once, against the same state, so a downgrade
         // can never reach a tool the agent may not call. Its own decision wins unless it allows.
         Decision safe = engine.evaluate(call.withTool(downgrade.safeTool(), downgrade.safeArgs()), state).effective();
@@ -95,16 +101,6 @@ public final class DefaultToolGate implements ToolGate {
             case Decision.Deny denied -> denied;
             case Decision.Defer deferred -> deferred;
             case Decision.Terminate terminated -> terminated;
-        };
-    }
-
-    private static Outcome outcomeOf(Decision decision) {
-        return switch (decision) {
-            case Decision.Allow allowed -> Outcome.ALLOWED;
-            case Decision.Deny denied -> Outcome.DENIED;
-            case Decision.Defer deferred -> Outcome.DEFERRED;
-            case Decision.Downgrade downgraded -> Outcome.DOWNGRADED;
-            case Decision.Terminate terminated -> Outcome.TERMINATED;
         };
     }
 }

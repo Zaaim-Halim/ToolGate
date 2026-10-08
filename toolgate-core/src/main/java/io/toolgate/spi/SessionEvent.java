@@ -2,6 +2,9 @@ package io.toolgate.spi;
 
 import static io.toolgate.support.Checks.requireNonBlank;
 
+import io.toolgate.api.Decision;
+import io.toolgate.api.ObjectValue;
+import io.toolgate.api.Principal;
 import io.toolgate.api.ToolId;
 import java.time.Instant;
 import java.util.Objects;
@@ -22,37 +25,38 @@ public sealed interface SessionEvent permits SessionEvent.CallDecided {
     String sessionId();
 
     /**
-     * A call was checked and this decision applied.
+     * A call was checked and a decision applied.
      *
-     * @param sessionId the session
-     * @param callId    the call
-     * @param tool      the tool the model asked for
-     * @param outcome   the decision that was applied
-     * @param at        when the call was captured
+     * <p>Carries the whole call, so the call can be replayed against another policy, and both the
+     * applied and the computed decision, so monitor mode keeps what it would have done. The
+     * arguments are the real values: stores that persist events must protect them.
+     *
+     * @param sessionId  the session
+     * @param callId     the call
+     * @param agentId    the agent that made it
+     * @param principal  who the agent acted for
+     * @param tool       the tool the model asked for
+     * @param args       the arguments the model gave
+     * @param applied    the decision that took effect
+     * @param computed   the decision a fully enforced policy would have made
+     * @param policyHash the policy that decided, as {@code ToolGatePolicy.hash()} gives it
+     * @param at         when the call was captured
      */
-    record CallDecided(String sessionId, String callId, ToolId tool, Outcome outcome, Instant at)
+    record CallDecided(String sessionId, String callId, String agentId, Principal principal, ToolId tool,
+                       ObjectValue args, Decision applied, Decision computed, String policyHash, Instant at)
             implements SessionEvent {
-
-        /** The kinds of decision, as recorded in the session. */
-        public enum Outcome {
-            /** The tool ran. */
-            ALLOWED,
-            /** The tool did not run. */
-            DENIED,
-            /** The call went to review. */
-            DEFERRED,
-            /** A safe tool ran instead. */
-            DOWNGRADED,
-            /** The run ended. */
-            TERMINATED
-        }
 
         /** Requires every component. */
         public CallDecided {
             requireNonBlank(sessionId, "sessionId");
             requireNonBlank(callId, "callId");
+            requireNonBlank(agentId, "agentId");
+            Objects.requireNonNull(principal, "principal");
             Objects.requireNonNull(tool, "tool");
-            Objects.requireNonNull(outcome, "outcome");
+            Objects.requireNonNull(args, "args");
+            Objects.requireNonNull(applied, "applied");
+            Objects.requireNonNull(computed, "computed");
+            requireNonBlank(policyHash, "policyHash");
             Objects.requireNonNull(at, "at");
         }
     }
