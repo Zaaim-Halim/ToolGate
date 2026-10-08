@@ -1,9 +1,11 @@
 package io.toolgate.audit;
 
 import io.toolgate.api.Decision;
+import io.toolgate.api.Label;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.spi.AuditEvent;
+import io.toolgate.spi.TaintSource;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -38,6 +40,13 @@ public final class AuditJson {
                     .field("mode", loaded.mode().name().toLowerCase(Locale.ROOT))
                     .number("agents", loaded.agents())
                     .close();
+            case AuditEvent.Declassified declassified -> new Writer()
+                    .field("event", "toolgate.declassify")
+                    .field("time", declassified.time().toString())
+                    .field("session", declassified.sessionId())
+                    .field("label", declassified.label().name())
+                    .field("justification", declassified.justification())
+                    .close();
         };
     }
 
@@ -59,6 +68,9 @@ public final class AuditJson {
         }
         json.field("computed", name(event.computed()))
                 .field("computedRule", event.computed().ruleId());
+        if (!event.taint().isEmpty()) {
+            json.raw("because", because(event.taint()));
+        }
         return json.field("mode", event.mode().name().toLowerCase(Locale.ROOT))
                 .raw("budget", new Writer()
                         .number("toolCalls", event.toolCalls())
@@ -86,6 +98,22 @@ public final class AuditJson {
                 .raw("tenant", tenant)
                 .raw("roles", roles.append(']').toString())
                 .close();
+    }
+
+    /** The taint behind a decision, in label order, as [{"label", "addedBy", "tool"}, ...]. */
+    private static String because(Map<Label, TaintSource> taint) {
+        var json = new StringBuilder("[");
+        taint.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+            if (json.length() > 1) {
+                json.append(',');
+            }
+            json.append(new Writer()
+                    .field("label", entry.getKey().name())
+                    .field("addedBy", entry.getValue().callId())
+                    .field("tool", entry.getValue().tool().toString())
+                    .close());
+        });
+        return json.append(']').toString();
     }
 
     private static String strings(Map<String, String> values) {

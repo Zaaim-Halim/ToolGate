@@ -3,13 +3,16 @@ package io.toolgate.audit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.toolgate.api.Decision;
+import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolId;
 import io.toolgate.spi.AuditEvent;
+import io.toolgate.spi.TaintSource;
 import java.time.Instant;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import net.jqwik.api.ForAll;
@@ -29,7 +32,7 @@ class AuditJsonTest {
                 Principal.service("invoice-processor", Tenant.of("acme")), ToolId.local("sendEmail"), args,
                 new Decision.Downgrade("sendEmail.whenTainted", ToolId.local("draftEmail"), ObjectValue.empty()),
                 new Decision.Downgrade("sendEmail.whenTainted", ToolId.local("draftEmail"), ObjectValue.empty()),
-                Mode.ENFORCE, 4, 200, "sha256:4c2e");
+                Mode.ENFORCE, 4, 200, Map.of(), "sha256:4c2e");
 
         assertThat(AuditJson.format(event)).isEqualTo("""
                 {"event":"toolgate.decision","time":"2026-10-07T19:42:11.318Z","callId":"job-0412/4",\
@@ -46,13 +49,37 @@ class AuditJsonTest {
         var event = new AuditEvent.Decided(TIME, "c1", "s1", "agent",
                 Principal.user("maria", Tenant.none(), "support", "admin"), ToolId.mcp("jira", "delete"), Map.of(),
                 new Decision.Allow("mode.monitor"), new Decision.Deny("allow-list", "not allowed"),
-                Mode.MONITOR, 1, Integer.MAX_VALUE, "sha256:x");
+                Mode.MONITOR, 1, Integer.MAX_VALUE, Map.of(), "sha256:x");
 
         assertThat(AuditJson.format(event))
                 .contains("\"principal\":{\"kind\":\"USER\",\"id\":\"maria\",\"tenant\":null,\"roles\":[\"admin\",\"support\"]}")
                 .contains("\"decision\":\"allow\",\"rule\":\"mode.monitor\",\"computed\":\"deny\",\"computedRule\":\"allow-list\"")
                 .contains("\"budget\":{\"toolCalls\":1,\"limit\":null}")
                 .doesNotContain("\"reason\"");
+    }
+
+    @Test
+    void namesTheTaintBehindADecision() {
+        var taint = new EnumMap<Label, TaintSource>(Label.class);
+        taint.put(Label.UNTRUSTED_CONTENT, new TaintSource("job-0412/2", ToolId.local("fetchSupplierPage")));
+        taint.put(Label.PRIVATE_DATA, new TaintSource("job-0412/1", ToolId.local("readInvoice")));
+        var event = new AuditEvent.Decided(TIME, "job-0412/4", "job-0412", "invoice-processor",
+                Principal.service("invoice-processor", Tenant.of("acme")), ToolId.local("sendEmail"), Map.of(),
+                new Decision.Downgrade("taint.trifecta", ToolId.local("draftEmail"), ObjectValue.empty()),
+                new Decision.Downgrade("taint.trifecta", ToolId.local("draftEmail"), ObjectValue.empty()),
+                Mode.ENFORCE, 4, 200, taint, "sha256:4c2e");
+
+        assertThat(AuditJson.format(event)).contains("""
+                "because":[{"label":"PRIVATE_DATA","addedBy":"job-0412/1","tool":"local/readInvoice"},\
+                {"label":"UNTRUSTED_CONTENT","addedBy":"job-0412/2","tool":"local/fetchSupplierPage"}]""");
+    }
+
+    @Test
+    void formatsDeclassified() {
+        assertThat(AuditJson.format(new AuditEvent.Declassified(TIME, "job-0412", Label.UNTRUSTED_CONTENT,
+                "parsed into SupplierTerms"))).isEqualTo("""
+                {"event":"toolgate.declassify","time":"2026-10-07T19:42:11.318Z","session":"job-0412",\
+                "label":"UNTRUSTED_CONTENT","justification":"parsed into SupplierTerms"}""");
     }
 
     @Test
@@ -67,7 +94,7 @@ class AuditJsonTest {
     void anyReasonStaysInsideOneLineAndOneString(@ForAll String reason) {
         var event = new AuditEvent.Decided(TIME, "c1", "s1", "agent", Principal.service("svc", Tenant.none()),
                 ToolId.local("fetch"), Map.of(), new Decision.Deny("fetch.url", "host '" + reason + "'"),
-                new Decision.Deny("fetch.url", "host '" + reason + "'"), Mode.ENFORCE, 0, 5, "sha256:x");
+                new Decision.Deny("fetch.url", "host '" + reason + "'"), Mode.ENFORCE, 0, 5, Map.of(), "sha256:x");
 
         String line = AuditJson.format(event);
 

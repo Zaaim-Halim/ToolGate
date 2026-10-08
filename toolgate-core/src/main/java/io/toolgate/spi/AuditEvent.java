@@ -3,11 +3,13 @@ package io.toolgate.spi;
 import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.Decision;
+import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ToolId;
 import java.time.Instant;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -18,7 +20,7 @@ import java.util.Objects;
  * <p>Sealed so that sinks can switch over every kind; a new kind is a compile error in a sink that
  * does not handle it.
  */
-public sealed interface AuditEvent permits AuditEvent.Decided, AuditEvent.PolicyLoaded {
+public sealed interface AuditEvent permits AuditEvent.Decided, AuditEvent.PolicyLoaded, AuditEvent.Declassified {
 
     /**
      * When it happened.
@@ -46,11 +48,14 @@ public sealed interface AuditEvent permits AuditEvent.Decided, AuditEvent.Policy
      * @param mode          the policy-wide mode
      * @param toolCalls     tool calls the session has used, after this one
      * @param toolCallLimit the agent's tool-call budget; {@link Integer#MAX_VALUE} when unlimited
+     * @param taint         the labels the session held when the call was checked, each with the call
+     *                      that brought it in: why a taint rule decided as it did
      * @param policyHash    the policy that decided
      */
     record Decided(Instant time, String callId, String sessionId, String agentId, Principal principal, ToolId tool,
                    Map<String, String> args, Decision applied, Decision computed, Mode mode,
-                   int toolCalls, int toolCallLimit, String policyHash) implements AuditEvent {
+                   int toolCalls, int toolCallLimit, Map<Label, TaintSource> taint, String policyHash)
+            implements AuditEvent {
 
         /** Requires every component and copies the summaries, keeping their order. */
         public Decided {
@@ -64,7 +69,27 @@ public sealed interface AuditEvent permits AuditEvent.Decided, AuditEvent.Policy
             Objects.requireNonNull(applied, "applied");
             Objects.requireNonNull(computed, "computed");
             Objects.requireNonNull(mode, "mode");
+            taint = taint.isEmpty() ? Map.of() : Collections.unmodifiableMap(new EnumMap<>(taint));
             requireNonBlank(policyHash, "policyHash");
+        }
+    }
+
+    /**
+     * Application code removed a label from a session.
+     *
+     * @param time          when
+     * @param sessionId     the session
+     * @param label         the label removed
+     * @param justification why the code judged the data safe
+     */
+    record Declassified(Instant time, String sessionId, Label label, String justification) implements AuditEvent {
+
+        /** Requires every component. */
+        public Declassified {
+            Objects.requireNonNull(time, "time");
+            requireNonBlank(sessionId, "sessionId");
+            Objects.requireNonNull(label, "label");
+            requireNonBlank(justification, "justification");
         }
     }
 

@@ -106,6 +106,33 @@ class AuditTest {
         assertThat(decided(2).toolCalls()).isEqualTo(1);
     }
 
+    /** The design's "because": a taint decision names the calls that tainted the session. */
+    @Test
+    void taintDecisionsNameTheirSources() {
+        ToolGatePolicy tainted = ToolGatePolicy.builder()
+                .tool("readInvoice", t -> t.labels(Label.PRIVATE_DATA).effect(Effect.READ))
+                .tool("fetch", t -> t.labels(Label.UNTRUSTED_CONTENT, Label.EXTERNAL_SINK).effect(Effect.READ))
+                .agent("support-chat", a -> a.allow("readInvoice", "fetch"))
+                .build();
+        try (ToolGate gate = gate(tainted)) {
+            ToolCall read = new ToolCall("c1", MARIA, "support-chat", "s1", ToolId.local("readInvoice"),
+                    ObjectValue.empty(), NOW);
+            gate.check(read);
+            gate.recordResult(read, new ToolResult.Succeeded(ArgValue.text("invoice")));
+            ToolCall page = fetch("c2", "https://docs.example/a");
+            gate.check(page);
+            gate.recordResult(page, new ToolResult.Succeeded(ArgValue.text("page")));
+            gate.check(fetch("c3", "https://docs.example/b"));
+            gate.declassify("s1", Label.UNTRUSTED_CONTENT, "page parsed into a strict schema");
+        }
+
+        assertThat(decided(3).applied().ruleId()).isEqualTo("taint.trifecta");
+        assertThat(decided(3).taint()).containsOnlyKeys(Label.PRIVATE_DATA, Label.UNTRUSTED_CONTENT);
+        assertThat(decided(3).taint().get(Label.UNTRUSTED_CONTENT).callId()).isEqualTo("c2");
+        assertThat(events.getLast()).isInstanceOfSatisfying(AuditEvent.Declassified.class,
+                declassified -> assertThat(declassified.label()).isEqualTo(Label.UNTRUSTED_CONTENT));
+    }
+
     @Test
     void offModeAuditsNothingButTheLoad() {
         try (ToolGate gate = gate(ToolGatePolicy.builder().mode(Mode.OFF).build())) {

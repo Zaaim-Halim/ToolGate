@@ -76,7 +76,7 @@ public final class DefaultToolGate implements ToolGate {
             // Evaluators cannot throw past the engine, so this is the store. Without session state
             // every later call would be decided blind, so the run ends rather than this call alone.
             var ended = new Decision.Terminate(BuiltInRules.SESSION_UNAVAILABLE, "session store failed: " + storeFailure);
-            audit(call, ended, ended, 0);
+            audit(call, ended, ended, 0, SessionState.empty(call.sessionId()));
             return ended;
         }
     }
@@ -102,7 +102,9 @@ public final class DefaultToolGate implements ToolGate {
         if (!SOURCE_LABELS.contains(label)) {
             throw new IllegalArgumentException(label + " marks tools, not sessions, and cannot be declassified");
         }
-        sessions.append(new Declassified(sessionId, label, justification, clock.instant()));
+        Instant at = clock.instant();
+        sessions.append(new Declassified(sessionId, label, justification, at));
+        audit.submit(() -> new AuditEvent.Declassified(at, sessionId, label, justification));
     }
 
     @Override
@@ -124,17 +126,17 @@ public final class DefaultToolGate implements ToolGate {
                     call.args(), decision, evaluation.computed(), policy.hash(), call.at());
             if (decision instanceof Decision.Terminate) {
                 sessions.append(event);
-                audit(call, decision, evaluation.computed(), state.apply(event).toolCalls());
+                audit(call, decision, evaluation.computed(), state.apply(event).toolCalls(), state);
                 return decision;
             }
             if (sessions.append(event, state.version())) {
-                audit(call, decision, evaluation.computed(), state.apply(event).toolCalls());
+                audit(call, decision, evaluation.computed(), state.apply(event).toolCalls(), state);
                 return decision;
             }
         }
         var contention = new Decision.Deny(BuiltInRules.SESSION_CONTENTION,
                 "session " + call.sessionId() + " changed on each of " + MAX_APPEND_ATTEMPTS + " attempts");
-        audit(call, contention, contention, 0);
+        audit(call, contention, contention, 0, SessionState.empty(call.sessionId()));
         return contention;
     }
 
@@ -162,12 +164,12 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     /** Queues the audit event; the time is taken now, and the arguments are summarized off this thread. */
-    private void audit(ToolCall call, Decision applied, Decision computed, int toolCalls) {
+    private void audit(ToolCall call, Decision applied, Decision computed, int toolCalls, SessionState before) {
         Instant decidedAt = clock.instant();
         int limit = policy.agent(call.agentId()).map(agent -> agent.budget().toolCalls())
                 .orElse(Budget.UNLIMITED.toolCalls());
         audit.submit(() -> new AuditEvent.Decided(decidedAt, call.callId(), call.sessionId(), call.agentId(),
                 call.principal(), call.tool(), argumentSummary.summarize(call.args()), applied, computed,
-                policy.mode(), toolCalls, limit, policy.hash()));
+                policy.mode(), toolCalls, limit, before.taint(), policy.hash()));
     }
 }
