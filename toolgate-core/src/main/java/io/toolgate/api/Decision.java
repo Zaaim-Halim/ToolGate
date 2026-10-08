@@ -15,7 +15,11 @@ import java.util.Objects;
 public sealed interface Decision
         permits Decision.Allow, Decision.Deny, Decision.Defer, Decision.Downgrade, Decision.Terminate {
 
-    /** The rule that produced this decision, as named in audit events. */
+    /**
+     * The rule that produced this decision.
+     *
+     * @return the rule ID, as named in audit events
+     */
     String ruleId();
 
     /**

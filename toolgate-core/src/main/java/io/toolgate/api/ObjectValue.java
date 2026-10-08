@@ -27,17 +27,31 @@ public record ObjectValue(Map<String, ArgValue> fields) implements ArgValue {
         fields = Collections.unmodifiableMap(copy);
     }
 
-    /** An object with no fields, for tools that take no arguments. */
+    /**
+     * An object with no fields, for tools that take no arguments.
+     *
+     * @return the empty object
+     */
     public static ObjectValue empty() {
         return EMPTY;
     }
 
-    /** An object with the given fields, in the map's iteration order. */
+    /**
+     * An object with the given fields, in the map's iteration order.
+     *
+     * @param fields the fields by name
+     * @return the object, holding a copy of the fields
+     */
     public static ObjectValue of(Map<String, ? extends ArgValue> fields) {
         return new ObjectValue(new LinkedHashMap<String, ArgValue>(fields));
     }
 
-    /** The value of one field, if present. */
+    /**
+     * The value of one field.
+     *
+     * @param name the field's name
+     * @return the value, or empty if the object has no such field
+     */
     public Optional<ArgValue> field(String name) {
         return Optional.ofNullable(fields.get(name));
     }

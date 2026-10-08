@@ -25,12 +25,22 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         }
     }
 
-    /** The state of a session that has no events yet. */
+    /**
+     * The state of a session that has no events yet.
+     *
+     * @param sessionId the session
+     * @return the state at version zero
+     */
     public static SessionState empty(String sessionId) {
         return new SessionState(sessionId, 0, 0, 0);
     }
 
-    /** The state after one more event. */
+    /**
+     * The state after one more event.
+     *
+     * @param event an event of this session
+     * @return the new state, one version later
+     */
     public SessionState apply(SessionEvent event) {
         if (!event.sessionId().equals(sessionId)) {
             throw new IllegalArgumentException(

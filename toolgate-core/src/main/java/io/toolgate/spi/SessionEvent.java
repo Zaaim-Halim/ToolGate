@@ -14,7 +14,11 @@ import java.util.Objects;
  */
 public sealed interface SessionEvent permits SessionEvent.CallDecided {
 
-    /** The session this event belongs to. */
+    /**
+     * The session this event belongs to.
+     *
+     * @return the session's ID
+     */
     String sessionId();
 
     /**

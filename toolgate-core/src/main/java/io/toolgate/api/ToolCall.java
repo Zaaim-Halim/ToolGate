@@ -34,7 +34,13 @@ public record ToolCall(String callId, Principal principal, String agentId, Strin
         Objects.requireNonNull(at, "at");
     }
 
-    /** The same call aimed at another tool with other arguments, as a downgrade runs it. */
+    /**
+     * The same call aimed at another tool with other arguments, as a downgrade runs it.
+     *
+     * @param otherTool the tool to call instead
+     * @param otherArgs the arguments for that tool
+     * @return a call with the same ID, principal, agent, session and time
+     */
     public ToolCall withTool(ToolId otherTool, ObjectValue otherArgs) {
         return new ToolCall(callId, principal, agentId, sessionId, otherTool, otherArgs, at);
     }

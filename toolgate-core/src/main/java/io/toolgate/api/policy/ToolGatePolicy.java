@@ -47,12 +47,20 @@ public final class ToolGatePolicy {
         this.agents = Map.copyOf(builder.agents);
     }
 
-    /** Starts a policy in {@link Mode#ENFORCE} with no agents, so it denies every call. */
+    /**
+     * Starts a policy in {@link Mode#ENFORCE} with no agents, so it denies every call.
+     *
+     * @return a new builder
+     */
     public static Builder builder() {
         return new Builder();
     }
 
-    /** The policy-wide mode. */
+    /**
+     * The policy-wide mode.
+     *
+     * @return the mode every rule runs in unless set per rule
+     */
     public Mode mode() {
         return mode;
     }
@@ -60,6 +68,9 @@ public final class ToolGatePolicy {
     /**
      * The mode one rule runs in: its own setting, or the policy-wide mode. A policy that is
      * {@link Mode#OFF} turns every rule off.
+     *
+     * @param ruleId the rule
+     * @return the mode the rule runs in
      */
     public Mode modeFor(String ruleId) {
         return mode == Mode.OFF ? Mode.OFF : ruleModes.getOrDefault(ruleId, mode);
@@ -68,22 +79,37 @@ public final class ToolGatePolicy {
     /**
      * Denials a session may collect before its next call ends the run. Like {@link Budget}, it
      * counts per session and never resets.
+     *
+     * @return the denial budget
      */
     public int denialBudget() {
         return denialBudget;
     }
 
-    /** MCP servers whose tools may be allowed at all. */
+    /**
+     * MCP servers whose tools may be allowed at all.
+     *
+     * @return the server names
+     */
     public Set<String> mcpServers() {
         return mcpServers;
     }
 
-    /** The rules for one agent, if the policy defines it. */
+    /**
+     * The rules for one agent.
+     *
+     * @param agentId the agent
+     * @return its rules, or empty if the policy does not define it
+     */
     public Optional<AgentPolicy> agent(String agentId) {
         return Optional.ofNullable(agents.get(agentId));
     }
 
-    /** Every agent the policy defines, by ID. */
+    /**
+     * Every agent the policy defines.
+     *
+     * @return the agents' rules by agent ID
+     */
     public Map<String, AgentPolicy> agents() {
         return agents;
     }
@@ -99,7 +125,12 @@ public final class ToolGatePolicy {
 
         private Builder() {}
 
-        /** Sets the policy-wide mode. */
+        /**
+         * Sets the policy-wide mode.
+         *
+         * @param newMode the mode
+         * @return this builder
+         */
         public Builder mode(Mode newMode) {
             this.mode = Objects.requireNonNull(newMode, "mode");
             return this;
@@ -115,6 +146,7 @@ public final class ToolGatePolicy {
          *
          * @param ruleId one of {@link BuiltInRules#CONFIGURABLE}
          * @param ruleMode {@link Mode#MONITOR} or {@link Mode#ENFORCE}
+         * @return this builder
          */
         public Builder ruleMode(String ruleId, Mode ruleMode) {
             if (!BuiltInRules.CONFIGURABLE.contains(ruleId)) {
@@ -129,19 +161,35 @@ public final class ToolGatePolicy {
             return this;
         }
 
-        /** Sets values that apply to every agent. */
+        /**
+         * Sets values that apply to every agent.
+         *
+         * @param configurer sets the values
+         * @return this builder
+         */
         public Builder defaults(Consumer<Defaults> configurer) {
             configurer.accept(defaults);
             return this;
         }
 
-        /** Allows tools from these MCP servers to be listed at all; tools from others are always denied. */
+        /**
+         * Allows tools from these MCP servers to be listed at all; tools from others are always denied.
+         *
+         * @param servers the servers' names
+         * @return this builder
+         */
         public Builder mcpServers(String... servers) {
             Arrays.stream(servers).forEach(server -> mcpServers.add(requireNonBlank(server, "MCP server")));
             return this;
         }
 
-        /** Defines one agent. Each agent ID may be defined once. */
+        /**
+         * Defines one agent. Each agent ID may be defined once.
+         *
+         * @param agentId    the agent's ID, as tool calls name it
+         * @param configurer sets the agent's rules
+         * @return this builder
+         */
         public Builder agent(String agentId, Consumer<AgentBuilder> configurer) {
             requireNonBlank(agentId, "agent id");
             if (agents.containsKey(agentId)) {
@@ -156,6 +204,7 @@ public final class ToolGatePolicy {
         /**
          * Validates and builds the policy.
          *
+         * @return the immutable policy
          * @throws InvalidPolicyException if any part of the policy is inconsistent
          */
         public ToolGatePolicy build() {
@@ -180,7 +229,12 @@ public final class ToolGatePolicy {
 
         private Defaults() {}
 
-        /** Denials a session may collect; the next call after that ends the run. */
+        /**
+         * Denials a session may collect; the next call after that ends the run.
+         *
+         * @param denials at least one
+         * @return these defaults
+         */
         public Defaults denialBudget(int denials) {
             this.denialBudget = requirePositive(denials, "denialBudget");
             return this;
@@ -201,6 +255,9 @@ public final class ToolGatePolicy {
         /**
          * Allows tools by reference: a bare name such as {@code sendEmail} is the application's own
          * tool, and remote tools are named with their server, as in {@code mcp:jira/search_issues}.
+         *
+         * @param toolReferences the tools
+         * @return this agent builder
          */
         public AgentBuilder allow(String... toolReferences) {
             for (String reference : toolReferences) {
@@ -213,7 +270,12 @@ public final class ToolGatePolicy {
             return this;
         }
 
-        /** Limits each of this agent's sessions. */
+        /**
+         * Limits each of this agent's sessions.
+         *
+         * @param configurer sets the limits
+         * @return this agent builder
+         */
         public AgentBuilder budget(Consumer<BudgetBuilder> configurer) {
             var builder = new BudgetBuilder();
             configurer.accept(builder);
@@ -240,7 +302,12 @@ public final class ToolGatePolicy {
 
         private BudgetBuilder() {}
 
-        /** Tool calls each session may make; denied calls do not count. */
+        /**
+         * Tool calls each session may make; denied calls do not count.
+         *
+         * @param calls at least one
+         * @return this budget builder
+         */
         public BudgetBuilder toolCalls(int calls) {
             this.toolCalls = requirePositive(calls, "toolCalls");
             return this;

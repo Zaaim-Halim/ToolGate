@@ -10,12 +10,19 @@ package io.toolgate.spi;
  */
 public interface SessionStore {
 
-    /** The current state of a session; an empty state if the session has no events. */
+    /**
+     * The current state of a session.
+     *
+     * @param sessionId the session
+     * @return its state, or an empty state if the session has no events
+     */
     SessionState state(String sessionId);
 
     /**
      * Appends an event if the session is still at {@code expectedVersion}.
      *
+     * @param event           the event
+     * @param expectedVersion the version the caller decided on
      * @return {@code true} if appended, {@code false} if another event was appended first
      */
     boolean append(SessionEvent event, long expectedVersion);
@@ -24,9 +31,11 @@ public interface SessionStore {
      * Appends an event whatever the session's version.
      *
      * <p>Used only for decisions no later event can invalidate, such as ending a run: counters only
-     * grow, so a run that was over stays over. Session scopes that reset counters must revisit
-     * this. Skipping the version check keeps the calls of an
-     * ended run from crowding out the ones still competing for budget.
+     * grow, so a run that was over stays over. Skipping the version check keeps the calls of an
+     * ended run from crowding out the ones still competing for budget. Session scopes that reset
+     * counters must revisit this.
+     *
+     * @param event the event
      */
     void append(SessionEvent event);
 }

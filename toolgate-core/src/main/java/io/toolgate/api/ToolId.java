@@ -35,12 +35,23 @@ public record ToolId(String source, String name) {
         }
     }
 
-    /** A tool defined in the application. */
+    /**
+     * A tool defined in the application.
+     *
+     * @param name the tool's name
+     * @return the tool's identity
+     */
     public static ToolId local(String name) {
         return new ToolId(LOCAL, name);
     }
 
-    /** A tool registered by the named MCP server. */
+    /**
+     * A tool registered by an MCP server.
+     *
+     * @param server the server's name, as the policy lists it
+     * @param name   the tool's name on that server
+     * @return the tool's identity
+     */
     public static ToolId mcp(String server, String name) {
         return new ToolId(MCP_PREFIX + server, name);
     }
@@ -52,6 +63,8 @@ public record ToolId(String source, String name) {
      * application author means by it; a remote tool must always be named with its server, as in
      * {@code mcp:jira/search_issues}. {@code local/sendEmail} is also accepted.
      *
+     * @param reference the reference as written in a policy
+     * @return the tool's identity
      * @throws IllegalArgumentException if the reference is malformed
      */
     public static ToolId parse(String reference) {
@@ -67,12 +80,20 @@ public record ToolId(String source, String name) {
         return new ToolId(reference.substring(0, separator), reference.substring(separator + 1));
     }
 
-    /** Whether the application itself defines this tool. */
+    /**
+     * Whether the application itself defines this tool.
+     *
+     * @return {@code true} for a local tool
+     */
     public boolean isLocal() {
         return source.equals(LOCAL);
     }
 
-    /** The MCP server that registered this tool, if it is a remote tool. */
+    /**
+     * The MCP server that registered this tool.
+     *
+     * @return the server's name, or empty for a local tool
+     */
     public Optional<String> mcpServer() {
         return isLocal() ? Optional.empty() : Optional.of(source.substring(MCP_PREFIX.length()));
     }

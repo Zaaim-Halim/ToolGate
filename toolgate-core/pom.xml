@@ -32,4 +32,26 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <!-- Main sources only: everything users can see must be documented, and -Werror
+                         makes a missing tag fail the build now instead of at release. -->
+                    <execution>
+                        <id>default-compile</id>
+                        <configuration>
+                            <compilerArgs combine.children="append">
+                                <arg>-Xdoclint:all/protected</arg>
+                                <arg>-Xdoclint/package:io.toolgate.api,io.toolgate.api.policy,io.toolgate.spi</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

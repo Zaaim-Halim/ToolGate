@@ -13,12 +13,21 @@ public sealed interface Tenant permits Tenant.Scoped, Tenant.Unscoped {
     /** The value for principals that belong to no tenant. */
     Tenant NONE = new Unscoped();
 
-    /** A principal scoped to the tenant with this ID. */
+    /**
+     * A principal scoped to the tenant with this ID.
+     *
+     * @param id the tenant's ID
+     * @return the tenant
+     */
     static Tenant of(String id) {
         return new Scoped(id);
     }
 
-    /** A principal that belongs to no tenant. */
+    /**
+     * A principal that belongs to no tenant.
+     *
+     * @return {@link #NONE}
+     */
     static Tenant none() {
         return NONE;
     }

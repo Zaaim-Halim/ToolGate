@@ -21,11 +21,18 @@ public interface ToolGate {
      * <p>Fails closed instead of throwing: a rule that cannot be evaluated denies the call, and a
      * failing session store ends the run, because without session state no budget can be checked.
      *
+     * @param call the call the model asked for
+     * @return the decision to apply
      * @throws NullPointerException if {@code call} is null
      */
     Decision check(ToolCall call);
 
-    /** Starts building a gate that enforces {@code policy}. */
+    /**
+     * Starts building a gate.
+     *
+     * @param policy the policy the gate enforces
+     * @return a builder with defaults for everything else
+     */
     static Builder builder(ToolGatePolicy policy) {
         return new Builder(policy);
     }
@@ -43,13 +50,20 @@ public interface ToolGate {
         /**
          * Where session state is kept. Defaults to an in-memory store, which is correct only when
          * every call of a session reaches the same instance.
+         *
+         * @param store the store to use
+         * @return this builder
          */
         public Builder sessionStore(SessionStore store) {
             this.sessionStore = Objects.requireNonNull(store, "sessionStore");
             return this;
         }
 
-        /** Builds the gate. */
+        /**
+         * Builds the gate.
+         *
+         * @return a thread-safe gate
+         */
         public ToolGate build() {
             return DefaultToolGate.withBuiltInRules(
                     policy, sessionStore != null ? sessionStore : new InMemorySessionStore());
