@@ -4,7 +4,7 @@ import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.Mode;
 import io.toolgate.api.ToolId;
-import io.toolgate.rules.UrlArgumentRules;
+import io.toolgate.rules.ArgumentChecks;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -329,7 +329,7 @@ public final class ToolGatePolicy {
                             + "' targets " + argument.tool() + ", which the agent is not allowed to call");
                 }
                 try {
-                    UrlArgumentRules.compile(rules);
+                    ArgumentChecks.validate(rules);
                 } catch (IllegalArgumentException invalid) {
                     throw new InvalidPolicyException("agent '" + id + "': rule '" + argument + "': "
                             + invalid.getMessage());

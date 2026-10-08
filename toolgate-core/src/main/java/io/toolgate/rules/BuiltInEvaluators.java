@@ -39,8 +39,7 @@ public final class BuiltInEvaluators {
     private static List<Evaluator> withNameCheck(ToolGatePolicy policy, Function<String, Optional<String>> nameCheck) {
         var evaluators = new ArrayList<>(all());
         policy.agents().values().forEach(agent -> agent.argumentRules().forEach((argument, rules) ->
-                evaluators.add(new UrlArgumentEvaluator(
-                        agent.id(), argument, UrlArgumentRules.compile(rules), nameCheck))));
+                evaluators.add(new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck)))));
         return List.copyOf(evaluators);
     }
 

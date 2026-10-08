@@ -12,9 +12,16 @@ import java.util.stream.Collectors;
  * .rule("fetchSupplierPage.url", hosts("*.suppliers.example"), schemes("https"))
  * }</pre>
  *
- * <p>Without {@link #schemes}, a URL may use {@code http} or {@code https}; without {@link #ports},
- * only the scheme's default port; without {@link #hosts}, any public host. Private, loopback,
- * link-local and cloud metadata addresses, and names such as {@code localhost}, are always denied.
+ * <p>URL rules: without {@link #schemes}, a URL may use {@code http} or {@code https}; without
+ * {@link #ports}, only the scheme's default port; without {@link #hosts}, any public host. Private,
+ * loopback, link-local and cloud metadata addresses, and names such as {@code localhost}, are always
+ * denied.
+ *
+ * <p>Path rules: {@link #under} and {@link #notUnder} compare real paths, after following symlinks.
+ * A relative path is resolved against the single {@code under} root, so the tool must resolve it the
+ * same way; with several roots it is denied. A new file is checked through its folder, which must
+ * exist, and a file with several hard links is denied. One argument takes URL rules or path rules,
+ * not both.
  */
 public final class ArgumentRules {
 
@@ -53,12 +60,34 @@ public final class ArgumentRules {
         return new ArgumentRule.Ports(Arrays.stream(ports).boxed().collect(Collectors.toUnmodifiableSet()));
     }
 
+    /**
+     * Allows only paths inside these folders.
+     *
+     * @param roots absolute folders, without {@code .} or {@code ..}
+     * @return the rule
+     */
+    public static ArgumentRule under(String... roots) {
+        return new ArgumentRule.Under(List.of(roots));
+    }
+
+    /**
+     * Denies paths inside these folders, even when an {@link #under} root contains them.
+     *
+     * @param roots absolute folders, without {@code .} or {@code ..}
+     * @return the rule
+     */
+    public static ArgumentRule notUnder(String... roots) {
+        return new ArgumentRule.NotUnder(List.of(roots));
+    }
+
     /** The kind of a rule, so a policy can give each kind at most once per argument. */
     static Class<? extends ArgumentRule> kind(ArgumentRule rule) {
         return switch (rule) {
             case ArgumentRule.Hosts hosts -> ArgumentRule.Hosts.class;
             case ArgumentRule.Schemes schemes -> ArgumentRule.Schemes.class;
             case ArgumentRule.Ports ports -> ArgumentRule.Ports.class;
+            case ArgumentRule.Under under -> ArgumentRule.Under.class;
+            case ArgumentRule.NotUnder notUnder -> ArgumentRule.NotUnder.class;
         };
     }
 }

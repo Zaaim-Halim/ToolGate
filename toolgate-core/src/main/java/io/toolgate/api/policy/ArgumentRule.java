@@ -9,7 +9,8 @@ import java.util.Set;
  * <p>Sealed for now: every kind needs a validator that has been tested against bypasses. Custom
  * validators will come through an extension point.
  */
-public sealed interface ArgumentRule permits ArgumentRule.Hosts, ArgumentRule.Schemes, ArgumentRule.Ports {
+public sealed interface ArgumentRule
+        permits ArgumentRule.Hosts, ArgumentRule.Schemes, ArgumentRule.Ports, ArgumentRule.Under, ArgumentRule.NotUnder {
 
     /**
      * A URL argument must point at one of these hosts.
@@ -44,6 +45,30 @@ public sealed interface ArgumentRule permits ArgumentRule.Hosts, ArgumentRule.Sc
         /** Copies the ports; they are validated when the policy is built. */
         public Ports {
             ports = Set.copyOf(ports);
+        }
+    }
+
+    /**
+     * A path argument must lead, once symlinks are followed, inside one of these folders.
+     *
+     * @param roots absolute folders
+     */
+    record Under(List<String> roots) implements ArgumentRule {
+        /** Copies the roots; they are validated when the policy is built. */
+        public Under {
+            roots = List.copyOf(roots);
+        }
+    }
+
+    /**
+     * A path argument must not lead, once symlinks are followed, inside any of these folders.
+     *
+     * @param roots absolute folders
+     */
+    record NotUnder(List<String> roots) implements ArgumentRule {
+        /** Copies the roots; they are validated when the policy is built. */
+        public NotUnder {
+            roots = List.copyOf(roots);
         }
     }
 }
