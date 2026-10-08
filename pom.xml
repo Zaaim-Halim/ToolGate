@@ -21,7 +21,7 @@
 
     <modules>
         <module>toolgate-core</module>
-        <module>toolgate-queue-jdbc</module>
+        <module>toolgate-jdbc</module>
         <module>toolgate-fuzz</module>
         <module>toolgate-benchmarks</module>
     </modules>

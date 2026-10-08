@@ -10,9 +10,9 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>toolgate-queue-jdbc</artifactId>
-    <name>ToolGate JDBC Approval Queue</name>
-    <description>An approval queue stored in the application's database, through plain JDBC.</description>
+    <artifactId>toolgate-jdbc</artifactId>
+    <name>ToolGate JDBC Stores</name>
+    <description>ToolGate's stores in the application's database, through plain JDBC.</description>
 
     <!-- Runtime: core and the JDK's java.sql only. H2 is for tests. -->
     <dependencies>

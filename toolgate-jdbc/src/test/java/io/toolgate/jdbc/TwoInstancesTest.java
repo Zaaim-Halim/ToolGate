@@ -1,4 +1,4 @@
-package io.toolgate.queue.jdbc;
+package io.toolgate.jdbc;
 
 import static io.toolgate.api.policy.ArgumentRules.atMost;
 import static io.toolgate.api.policy.OnViolation.DEFER;

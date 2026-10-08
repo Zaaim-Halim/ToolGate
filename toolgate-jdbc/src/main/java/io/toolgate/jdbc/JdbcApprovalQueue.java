@@ -1,4 +1,4 @@
-package io.toolgate.queue.jdbc;
+package io.toolgate.jdbc;
 
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.ArgValue;
@@ -154,7 +154,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             if (isIntegrityViolation(failure) && get(call.approvalId()).isPresent()) {
                 return;
             }
-            throw new JdbcApprovalQueueException("could not queue " + call.approvalId(), failure);
+            throw new JdbcStoreException("could not queue " + call.approvalId(), failure);
         }
     }
 
@@ -168,7 +168,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
                 return row.next() ? Optional.of(read(row)) : Optional.empty();
             }
         } catch (SQLException failure) {
-            throw new JdbcApprovalQueueException("could not read " + approvalId, failure);
+            throw new JdbcStoreException("could not read " + approvalId, failure);
         }
     }
 
@@ -182,7 +182,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             update.setString(3, from.name());
             return update.executeUpdate() == 1;
         } catch (SQLException failure) {
-            throw new JdbcApprovalQueueException("could not move " + approvalId + " to " + to, failure);
+            throw new JdbcStoreException("could not move " + approvalId + " to " + to, failure);
         }
     }
 
@@ -200,7 +200,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
                 return calls;
             }
         } catch (SQLException failure) {
-            throw new JdbcApprovalQueueException("could not list pending calls", failure);
+            throw new JdbcStoreException("could not list pending calls", failure);
         }
     }
 
@@ -221,7 +221,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             return new PendingCall(approvalId, call, deferral, instant(row.getLong("deferred_at")),
                     instant(row.getLong("expires_at")), ApprovalStatus.valueOf(row.getString("status")));
         } catch (IllegalArgumentException | NullPointerException corrupt) {
-            throw new JdbcApprovalQueueException("unreadable queue row " + approvalId, corrupt);
+            throw new JdbcStoreException("unreadable queue row " + approvalId, corrupt);
         }
     }
 

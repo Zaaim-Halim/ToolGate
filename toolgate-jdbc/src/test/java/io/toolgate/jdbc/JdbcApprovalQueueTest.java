@@ -1,4 +1,4 @@
-package io.toolgate.queue.jdbc;
+package io.toolgate.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
@@ -108,7 +108,7 @@ class JdbcApprovalQueueTest {
     /** An ID too long for its column is not silently dropped: the failure reaches ToolGate, which denies the call. */
     @Test
     void anIdTooLongForItsColumnFailsLoudly() {
-        assertThatThrownBy(() -> queue.add(refund("x".repeat(600), T0))).isInstanceOf(JdbcApprovalQueueException.class);
+        assertThatThrownBy(() -> queue.add(refund("x".repeat(600), T0))).isInstanceOf(JdbcStoreException.class);
     }
 
     @Test

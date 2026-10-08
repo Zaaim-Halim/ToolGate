@@ -1,4 +1,4 @@
-package io.toolgate.queue.jdbc;
+package io.toolgate.jdbc;
 
 import java.io.PrintWriter;
 import java.sql.Connection;

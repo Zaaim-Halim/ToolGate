@@ -1,4 +1,4 @@
-package io.toolgate.queue.jdbc;
+package io.toolgate.jdbc;
 
 import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionState;
