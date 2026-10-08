@@ -14,7 +14,9 @@ import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.session.InMemorySessionStore;
+import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionState;
+import io.toolgate.spi.SessionStore;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -122,6 +124,66 @@ class DecisionEngineTest {
 
         assertThat(decision).isInstanceOfSatisfying(Decision.Deny.class,
                 deny -> assertThat(deny.ruleId()).isEqualTo(BuiltInRules.ALLOW_LIST));
+    }
+
+    @Test
+    void downgradeWhoseSafeToolIsAlsoDowngradedDenies() {
+        Decision decision = gate(evaluator("everything.downgrades", Stage.SESSION, context ->
+                new Verdict.Downgrade(context.call().tool().equals(SEND_EMAIL) ? DRAFT_EMAIL : SEND_EMAIL)))
+                .check(call(SEND_EMAIL));
+
+        assertThat(decision).isInstanceOfSatisfying(Decision.Deny.class,
+                deny -> assertThat(deny.ruleId()).isEqualTo(BuiltInRules.DOWNGRADE_CHAIN));
+    }
+
+    @Test
+    void downgradeWhoseSafeToolIsDeferredDefers() {
+        Decision decision = gate(
+                downgradeSendToDraft(),
+                evaluator("draft.review", Stage.ARGUMENTS, context -> context.call().tool().equals(DRAFT_EMAIL)
+                        ? new Verdict.Defer("drafts need review", Origin.ACCESS)
+                        : Verdict.PASS))
+                .check(call(SEND_EMAIL));
+
+        assertThat(decision).isEqualTo(new Decision.Defer("draft.review", "drafts need review"));
+    }
+
+    @Test
+    void downgradeWhoseSafeToolEndsTheRunEndsIt() {
+        Decision decision = gate(
+                downgradeSendToDraft(),
+                evaluator("draft.limit", Stage.LIMITS, context -> context.call().tool().equals(DRAFT_EMAIL)
+                        ? new Verdict.Terminate("draft limit reached")
+                        : Verdict.PASS))
+                .check(call(SEND_EMAIL));
+
+        assertThat(decision).isEqualTo(new Decision.Terminate("draft.limit", "draft limit reached"));
+    }
+
+    @Test
+    void storeThatNeverAcceptsAnAppendDeniesWithoutRecording() {
+        var unconditionalAppends = new ArrayList<SessionEvent>();
+        SessionStore alwaysConflicting = new SessionStore() {
+            @Override
+            public SessionState state(String sessionId) {
+                return SessionState.empty(sessionId);
+            }
+
+            @Override
+            public boolean append(SessionEvent event, long expectedVersion) {
+                return false;
+            }
+
+            @Override
+            public void append(SessionEvent event) {
+                unconditionalAppends.add(event);
+            }
+        };
+        var gate = new DefaultToolGate(policy, BuiltInEvaluators.all(), alwaysConflicting);
+
+        assertThat(gate.check(call(SEND_EMAIL))).isInstanceOfSatisfying(Decision.Deny.class,
+                deny -> assertThat(deny.ruleId()).isEqualTo(BuiltInRules.SESSION_CONTENTION));
+        assertThat(unconditionalAppends).isEmpty();
     }
 
     @Test

@@ -135,6 +135,17 @@ class ToolGateTest {
     }
 
     @RepeatedTest(20)
+    void parallelDenialsCannotOvershootTheDenialBudget() throws InterruptedException, ExecutionException {
+        ToolGate gate = gate(policy(a -> a.allow("lookupCustomer")));
+
+        List<Decision> decisions = checkInParallel(gate, 200, ToolId.local("exportCustomers"));
+
+        assertThat(decisions).filteredOn(Decision.Deny.class::isInstance).hasSize(ToolGatePolicy.DEFAULT_DENIAL_BUDGET);
+        assertThat(decisions).filteredOn(Decision.Terminate.class::isInstance)
+                .hasSize(200 - ToolGatePolicy.DEFAULT_DENIAL_BUDGET);
+    }
+
+    @RepeatedTest(20)
     void parallelCallsWithoutBudgetAreAllAllowed() throws InterruptedException, ExecutionException {
         ToolGate gate = gate(policy(a -> a.allow("lookupCustomer")));
 
