@@ -24,7 +24,8 @@ public interface SessionStore {
      * Appends an event whatever the session's version.
      *
      * <p>Used only for decisions no later event can invalidate, such as ending a run: counters only
-     * grow, so a run that was over stays over. Skipping the version check keeps the calls of an
+     * grow, so a run that was over stays over. Session scopes that reset counters must revisit
+     * this. Skipping the version check keeps the calls of an
      * ended run from crowding out the ones still competing for budget.
      */
     void append(SessionEvent event);

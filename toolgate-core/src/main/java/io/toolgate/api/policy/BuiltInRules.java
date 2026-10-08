@@ -8,7 +8,12 @@ import java.util.Set;
  */
 public final class BuiltInRules {
 
-    /** The call names an agent the policy defines. */
+    /**
+     * The call names an agent the policy defines.
+     *
+     * <p>Known limit: calls from an unknown agent are denied but never count toward the denial
+     * budget, which is configured per agent. The application, not the model, sets the agent ID.
+     */
     public static final String AGENT_KNOWN = "agent.known";
     /** A remote tool's MCP server is on the policy's server allow-list. */
     public static final String MCP_SERVERS = "mcp.servers";

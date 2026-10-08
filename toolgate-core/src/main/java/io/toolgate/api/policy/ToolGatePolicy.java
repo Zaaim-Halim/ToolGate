@@ -65,7 +65,10 @@ public final class ToolGatePolicy {
         return mode == Mode.OFF ? Mode.OFF : ruleModes.getOrDefault(ruleId, mode);
     }
 
-    /** Denials a session may collect before its next call ends the run. */
+    /**
+     * Denials a session may collect before its next call ends the run. Like {@link Budget}, it
+     * counts per session and never resets.
+     */
     public int denialBudget() {
         return denialBudget;
     }

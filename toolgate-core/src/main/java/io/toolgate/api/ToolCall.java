@@ -8,6 +8,10 @@ import java.util.Objects;
 /**
  * One tool call the model asked for, as an adapter captured it before the tool runs.
  *
+ * <p>Known limit: every check counts against the session's budgets, even when a framework retries
+ * a call with the same {@code callId}. Calls are not deduplicated by ID, because some providers
+ * reuse IDs, and a cached decision for one call would then apply to a different tool.
+ *
  * @param callId    unique within the session; links audit events and makes releases idempotent
  * @param principal who the agent acts for
  * @param agentId   the agent, as named in the policy
