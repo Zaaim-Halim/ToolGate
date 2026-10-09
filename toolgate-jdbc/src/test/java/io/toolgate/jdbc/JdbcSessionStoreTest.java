@@ -12,6 +12,7 @@ import io.toolgate.api.ToolId;
 import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.TaintSource;
+import io.toolgate.spi.ValueCodec;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -28,7 +29,7 @@ class JdbcSessionStoreTest {
     private static final Principal MARIA = Principal.user("maria", Tenant.of("acme"), "support");
 
     private final H2 database = H2.withQueueTable();
-    private final JdbcSessionStore store = new JdbcSessionStore(database, Clock.fixed(T0, ZoneOffset.UTC));
+    private final JdbcSessionStore store = new JdbcSessionStore(database, ValueCodec.unencrypted(), Clock.fixed(T0, ZoneOffset.UTC));
 
     @Test
     void unknownSessionIsEmpty() {
@@ -93,7 +94,7 @@ class JdbcSessionStoreTest {
 
     @Test
     void purgeIdleDeletesOnlyOldSessionsAndTheirEvents() {
-        new JdbcSessionStore(database, Clock.fixed(T0.minus(Duration.ofDays(40)), ZoneOffset.UTC))
+        new JdbcSessionStore(database, ValueCodec.unencrypted(), Clock.fixed(T0.minus(Duration.ofDays(40)), ZoneOffset.UTC))
                 .append(decided("old/1", new Decision.Allow("allow-list"), "old"));
         store.append(decided("s1/1", new Decision.Allow("allow-list")));
 

@@ -3,6 +3,7 @@ package io.toolgate.jdbc;
 import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
+import io.toolgate.spi.ValueCodec;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -24,9 +25,11 @@ import javax.sql.DataSource;
  * snapshot, and insert the event into the log. Two instances racing on one session cannot both
  * commit, so budgets hold across instances.
  *
- * <p>The event log keeps every session event, including the calls' real argument values,
- * unencrypted for now: protect the table like the data it carries, and bound how long it is kept
- * with {@link #purgeIdle}. Every check costs a database round trip, which is the price of
+ * <p>The event log keeps every session event, including the calls' real argument values. Give the
+ * store a {@link ValueCodec} to seal each event, bound to its session and version; without one,
+ * events are stored in clear, and the store says so once in the log. Snapshots hold only counters
+ * and labels with call IDs, so they stay in clear. Bound how long events are kept with
+ * {@link #purgeIdle}. Every check costs a database round trip, which is the price of
  * consistent decisions across instances; the in-memory store remains the fast choice for one
  * instance.
  */
@@ -36,25 +39,38 @@ public final class JdbcSessionStore implements SessionStore {
     private static final int MAX_UNCONDITIONAL_ATTEMPTS = 100;
 
     private final DataSource dataSource;
+    private final ValueCodec codec;
     private final Clock clock;
 
     /**
-     * A store in the tables the shipped DDL creates, timing writes with the system clock.
+     * A store in the tables the shipped DDL creates, keeping events in clear, timed by the system clock.
      *
      * @param dataSource where the tables are
      */
     public JdbcSessionStore(DataSource dataSource) {
-        this(dataSource, Clock.systemUTC());
+        this(dataSource, Unsealed.warnOnce("toolgate_session_event"), Clock.systemUTC());
+    }
+
+    /**
+     * A store in the tables the shipped DDL creates, timed by the system clock.
+     *
+     * @param dataSource where the tables are
+     * @param codec      seals each event, bound to its session and version; {@link ValueCodec#unencrypted()} for clear
+     */
+    public JdbcSessionStore(DataSource dataSource, ValueCodec codec) {
+        this(dataSource, codec, Clock.systemUTC());
     }
 
     /**
      * A store in the tables the shipped DDL creates.
      *
      * @param dataSource where the tables are
+     * @param codec      seals each event, bound to its session and version; {@link ValueCodec#unencrypted()} for clear
      * @param clock      times writes, for {@link #purgeIdle}
      */
-    public JdbcSessionStore(DataSource dataSource, Clock clock) {
+    public JdbcSessionStore(DataSource dataSource, ValueCodec codec, Clock clock) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
+        this.codec = Objects.requireNonNull(codec, "codec");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -115,14 +131,14 @@ public final class JdbcSessionStore implements SessionStore {
      * @return its events, oldest first; empty for an unknown or purged session
      */
     public List<SessionEvent> events(String sessionId) {
-        String sql = "SELECT event FROM toolgate_session_event WHERE session_id = ? ORDER BY version";
+        String sql = "SELECT version, event FROM toolgate_session_event WHERE session_id = ? ORDER BY version";
         try (Connection connection = dataSource.getConnection();
              PreparedStatement select = connection.prepareStatement(sql)) {
             select.setString(1, sessionId);
             try (ResultSet rows = select.executeQuery()) {
                 var events = new ArrayList<SessionEvent>();
                 while (rows.next()) {
-                    events.add(Codec.event(rows.getString("event")));
+                    events.add(Codec.event(codec.open(rows.getString("event"), eventContext(sessionId, rows.getLong("version")))));
                 }
                 return events;
             }
@@ -208,11 +224,16 @@ public final class JdbcSessionStore implements SessionStore {
             log.setString(1, sessionId);
             log.setLong(2, next.version());
             log.setString(3, event.getClass().getSimpleName());
-            log.setString(4, Codec.event(event));
+            log.setString(4, codec.seal(Codec.event(event), eventContext(sessionId, next.version())));
             log.setLong(5, now);
             log.executeUpdate();
         }
         return true;
+    }
+
+    /** Binds a sealed event to its session and place in the log: moved or reordered, it fails to open. */
+    private static String eventContext(String sessionId, long version) {
+        return "toolgate_session_event:" + sessionId + ":" + version;
     }
 
     /** SQL state class 40: serialization failure or deadlock, the database's way to end a race. */

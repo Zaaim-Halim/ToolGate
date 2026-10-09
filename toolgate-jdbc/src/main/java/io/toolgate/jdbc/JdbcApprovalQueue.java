@@ -13,6 +13,7 @@ import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolId;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.PendingCall;
+import io.toolgate.spi.ValueCodec;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -28,6 +29,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -42,9 +44,10 @@ import javax.sql.DataSource;
  * which succeeds for exactly one of any number of concurrent approvers, on any instance.
  *
  * <p>Create the table with the DDL for your database, {@link Dialect#ddl()}, through your usual
- * migrations. The table holds the calls' real arguments, as JSON: protect it like the data it
- * carries. An ID longer than its column fails the insert, and ToolGate then denies the call rather
- * than report it as pending.
+ * migrations. Each row's payload holds the call's real arguments and the deferral reason, which can
+ * quote them. Give the queue a {@link ValueCodec} to seal it, bound to the row; without one it is
+ * stored in clear, and the queue says so once in the log. An ID longer than its column fails the
+ * insert, and ToolGate then denies the call rather than report it as pending.
  */
 public final class JdbcApprovalQueue implements ApprovalQueue {
 
@@ -55,8 +58,8 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
     private static final String INTEGRITY_VIOLATION_CLASS = "23";
     private static final Pattern TABLE_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
     private static final String COLUMNS = "approval_id, status, call_id, session_id, agent_id, principal_kind,"
-            + " principal_id, principal_tenant, principal_roles, tool, args, call_at, defer_rule, defer_reason,"
-            + " deferred_at, expires_at";
+            + " principal_id, principal_tenant, principal_roles, tool, call_at, defer_rule, payload, deferred_at,"
+            + " expires_at";
 
     /** The databases whose DDL ships with this module. */
     public enum Dialect {
@@ -87,14 +90,25 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
 
     private final DataSource dataSource;
     private final String table;
+    private final ValueCodec codec;
 
     /**
-     * A queue in the default table.
+     * A queue in the default table, storing payloads in clear.
      *
      * @param dataSource where the table is
      */
     public JdbcApprovalQueue(DataSource dataSource) {
-        this(dataSource, DEFAULT_TABLE);
+        this(dataSource, DEFAULT_TABLE, Unsealed.warnOnce(DEFAULT_TABLE));
+    }
+
+    /**
+     * A queue in the default table, sealing payloads with {@code codec}.
+     *
+     * @param dataSource where the table is
+     * @param codec      seals each payload, bound to its row; {@link ValueCodec#unencrypted()} for clear
+     */
+    public JdbcApprovalQueue(DataSource dataSource, ValueCodec codec) {
+        this(dataSource, DEFAULT_TABLE, codec);
     }
 
     /**
@@ -102,10 +116,12 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
      *
      * @param dataSource where the table is
      * @param table      a plain SQL identifier: letters, digits and underscores
+     * @param codec      seals each payload, bound to its row; {@link ValueCodec#unencrypted()} for clear
      * @throws IllegalArgumentException if the name is not a plain identifier
      */
-    public JdbcApprovalQueue(DataSource dataSource, String table) {
+    public JdbcApprovalQueue(DataSource dataSource, String table, ValueCodec codec) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
+        this.codec = Objects.requireNonNull(codec, "codec");
         if (table == null || !TABLE_NAME.matcher(table).matches()) {
             // The name is put into SQL text, so only plain identifiers are accepted.
             throw new IllegalArgumentException("table name must be a plain SQL identifier, was " + table);
@@ -124,7 +140,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             throw new IllegalArgumentException("expiry is less than a microsecond after the deferral");
         }
         ToolCall toolCall = call.call();
-        String sql = "INSERT INTO " + table + " (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO " + table + " (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection connection = dataSource.getConnection();
              PreparedStatement insert = connection.prepareStatement(sql)) {
             insert.setString(1, call.approvalId());
@@ -141,12 +157,11 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             insert.setString(9, ArgValueJson.write(ArgValue.list(
                     toolCall.principal().roles().stream().sorted().map(ArgValue::text).toList())));
             insert.setString(10, toolCall.tool().toString());
-            insert.setString(11, ArgValueJson.write(toolCall.args()));
-            insert.setLong(12, micros(toolCall.at()));
-            insert.setString(13, call.deferral().ruleId());
-            insert.setString(14, call.deferral().reason());
-            insert.setLong(15, deferredAt);
-            insert.setLong(16, expiresAt);
+            insert.setLong(11, micros(toolCall.at()));
+            insert.setString(12, call.deferral().ruleId());
+            insert.setString(13, codec.seal(payload(toolCall, call.deferral()), rowContext(call.approvalId())));
+            insert.setLong(14, deferredAt);
+            insert.setLong(15, expiresAt);
             insert.executeUpdate();
         } catch (SQLException failure) {
             // Class 23 covers every integrity violation, not only a duplicate key; only a row that is
@@ -204,20 +219,32 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
         }
     }
 
-    private static PendingCall read(ResultSet row) throws SQLException {
+    /** The values a payload carries: the arguments, and the deferral reason, which can quote them. */
+    private static String payload(ToolCall call, Decision.Defer deferral) {
+        return ArgValueJson.write(ArgValue.object(Map.of("args", call.args(), "reason", ArgValue.text(deferral.reason()))));
+    }
+
+    /** Binds a sealed payload to its row: copied into another row, it fails to open. */
+    private String rowContext(String approvalId) {
+        return table + ":" + approvalId;
+    }
+
+    private PendingCall read(ResultSet row) throws SQLException {
         String approvalId = row.getString("approval_id");
         try {
             String tenant = row.getString("principal_tenant");
             var principal = new Principal(Principal.Kind.valueOf(row.getString("principal_kind")),
                     row.getString("principal_id"), tenant == null ? Tenant.none() : Tenant.of(tenant),
                     roles(row.getString("principal_roles")));
-            if (!(ArgValueJson.read(row.getString("args")) instanceof ObjectValue args)) {
-                throw new IllegalArgumentException("args is not a JSON object");
+            if (!(ArgValueJson.read(codec.open(row.getString("payload"), rowContext(approvalId))) instanceof ObjectValue payload)
+                    || !(payload.field("args").orElse(null) instanceof ObjectValue args)
+                    || !(payload.field("reason").orElse(null) instanceof TextValue(String reason))) {
+                throw new IllegalArgumentException("payload is not {args, reason}");
             }
             var call = new ToolCall(row.getString("call_id"), principal, row.getString("agent_id"),
                     row.getString("session_id"), ToolId.parse(row.getString("tool")), args,
                     instant(row.getLong("call_at")));
-            var deferral = new Decision.Defer(row.getString("defer_rule"), row.getString("defer_reason"), approvalId);
+            var deferral = new Decision.Defer(row.getString("defer_rule"), reason, approvalId);
             return new PendingCall(approvalId, call, deferral, instant(row.getLong("deferred_at")),
                     instant(row.getLong("expires_at")), ApprovalStatus.valueOf(row.getString("status")));
         } catch (IllegalArgumentException | NullPointerException corrupt) {

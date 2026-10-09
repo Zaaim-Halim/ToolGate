@@ -1,6 +1,6 @@
--- ToolGate approval queue, MySQL. Requires utf8mb4. Times are epoch milliseconds (UTC), so no time zone or
--- timestamp type differs between databases. Arguments are the call's real values, as JSON: protect
--- this table like the data it carries.
+-- ToolGate approval queue, MySQL. Requires utf8mb4. Times are epoch microseconds (UTC), so no time zone or
+-- timestamp type differs between databases. payload holds the call's real arguments and the deferral
+-- reason, as JSON, sealed by the ValueCodec the queue was given, unencrypted unless one was.
 CREATE TABLE toolgate_pending_call (
     approval_id      VARCHAR(191)  NOT NULL PRIMARY KEY,
     status           VARCHAR(16)   NOT NULL,
@@ -12,18 +12,17 @@ CREATE TABLE toolgate_pending_call (
     principal_tenant VARCHAR(512),
     principal_roles  MEDIUMTEXT    NOT NULL,
     tool             VARCHAR(1024) NOT NULL,
-    args             MEDIUMTEXT    NOT NULL,
     call_at          BIGINT        NOT NULL,
     defer_rule       VARCHAR(512)  NOT NULL,
-    defer_reason     MEDIUMTEXT    NOT NULL,
+    payload          MEDIUMTEXT    NOT NULL,
     deferred_at      BIGINT        NOT NULL,
     expires_at       BIGINT        NOT NULL
 );
 CREATE INDEX toolgate_pending_call_status ON toolgate_pending_call (status, deferred_at);
 
 -- ToolGate session store. One row per session: the state every check reads. The event log keeps
--- every session event, including the calls' REAL ARGUMENT VALUES, unencrypted: protect it like the
--- data it carries, and purge idle sessions (JdbcSessionStore.purgeIdle) to bound how long it is kept.
+-- every session event, including the calls' REAL ARGUMENT VALUES, sealed by the store's ValueCodec
+-- (unencrypted unless one was given), purge idle sessions (JdbcSessionStore.purgeIdle) to bound how long it is kept.
 CREATE TABLE toolgate_session (
     session_id  VARCHAR(191)  NOT NULL PRIMARY KEY,
     version     BIGINT        NOT NULL,

@@ -13,6 +13,7 @@ import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolId;
 import io.toolgate.spi.PendingCall;
+import io.toolgate.spi.ValueCodec;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -113,15 +114,17 @@ class JdbcApprovalQueueTest {
 
     @Test
     void tableNamesMustBePlainIdentifiers() {
-        assertThatIllegalArgumentException().isThrownBy(() -> new JdbcApprovalQueue(database, "q; DROP TABLE users"));
-        assertThatIllegalArgumentException().isThrownBy(() -> new JdbcApprovalQueue(database, "1queue"));
-        assertThatIllegalArgumentException().isThrownBy(() -> new JdbcApprovalQueue(database, ""));
+        assertThatIllegalArgumentException().isThrownBy(() -> new JdbcApprovalQueue(database, "q; DROP TABLE users", ValueCodec.unencrypted()));
+        assertThatIllegalArgumentException().isThrownBy(() -> new JdbcApprovalQueue(database, "1queue", ValueCodec.unencrypted()));
+        assertThatIllegalArgumentException().isThrownBy(() -> new JdbcApprovalQueue(database, "", ValueCodec.unencrypted()));
     }
 
     @Test
     void shipsDdlForEachDatabase() {
         for (JdbcApprovalQueue.Dialect dialect : JdbcApprovalQueue.Dialect.values()) {
-            assertThat(dialect.ddl()).contains("CREATE TABLE toolgate_pending_call").contains("approval_id");
+            assertThat(dialect.ddl()).contains("CREATE TABLE toolgate_pending_call").contains("CREATE TABLE toolgate_session");
+            // Migration scripts often split on ';', so comments must not contain one.
+            assertThat(dialect.ddl().lines().filter(line -> line.startsWith("--"))).noneMatch(line -> line.contains(";"));
         }
     }
 
