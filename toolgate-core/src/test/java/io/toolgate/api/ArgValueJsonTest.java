@@ -85,14 +85,19 @@ class ArgValueJsonTest {
         assertThatIllegalArgumentException().isThrownBy(() -> ArgValueJson.read("1e99999999999"));
     }
 
+    /** Depth is bounded: an unbounded lazyOf tree occasionally grew until the test JVM ran out of heap. */
     @Provide
     Arbitrary<ArgValue> values() {
-        return Arbitraries.lazyOf(
-                () -> Arbitraries.strings().map(ArgValue::text),
-                () -> Arbitraries.bigDecimals().map(ArgValue::number),
-                () -> Arbitraries.of(true, false).map(ArgValue::bool),
-                () -> Arbitraries.just(ArgValue.nullValue()),
-                () -> values().list().ofMaxSize(4).map(ArgValue::list),
-                () -> Arbitraries.maps(Arbitraries.strings().ofMaxLength(8), values()).ofMaxSize(4).map(ArgValue::object));
+        return Arbitraries.recursive(ArgValueJsonTest::scalars, nested -> Arbitraries.oneOf(
+                nested.list().ofMaxSize(4).map(ArgValue::list),
+                Arbitraries.maps(Arbitraries.strings().ofMaxLength(8), nested).ofMaxSize(4).map(ArgValue::object)), 0, 4);
+    }
+
+    private static Arbitrary<ArgValue> scalars() {
+        return Arbitraries.oneOf(
+                Arbitraries.strings().map(ArgValue::text),
+                Arbitraries.bigDecimals().map(ArgValue::number),
+                Arbitraries.of(true, false).map(ArgValue::bool),
+                Arbitraries.just(ArgValue.nullValue()));
     }
 }
