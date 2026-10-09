@@ -17,3 +17,6 @@ target/
 # OS clutter
 .DS_Store
 Thumbs.db
+
+# Spike builds keep their own Maven repository
+spike/**/.m2/
