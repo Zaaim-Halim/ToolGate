@@ -18,7 +18,9 @@ import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 /**
  * Puts ToolGate between Spring AI and every tool. The application supplies a {@link ToolGatePolicy}
@@ -32,6 +34,7 @@ import org.springframework.context.annotation.Bean;
  */
 @AutoConfiguration
 @ConditionalOnClass(ChatClient.class)
+@EnableConfigurationProperties(ToolGateProperties.class)
 public class ToolGateAutoConfiguration {
 
     /** Creates the configuration; Spring Boot does this. */
@@ -82,9 +85,23 @@ public class ToolGateAutoConfiguration {
     }
 
     @Bean
-    Gating toolGateGating(ToolGate gate, ToolCatalog.Mutable catalog, ObjectProvider<ToolCallbackResolver> resolver,
-                          ObjectProvider<Clock> clock) {
-        return new Gating(gate, catalog, clock.getIfAvailable(Clock::systemUTC), resolver.getIfAvailable());
+    Gating toolGateGating(ToolGate gate, ToolGatePolicy policy, ToolCatalog.Mutable catalog,
+                          ObjectProvider<ToolCallbackResolver> resolver, ObjectProvider<Clock> clock,
+                          ObjectProvider<ToolGatePrincipalResolver> principals, ToolGateProperties properties) {
+        return new Gating(gate, catalog, clock.getIfAvailable(Clock::systemUTC), resolver.getIfAvailable(), policy.mode(),
+                principals.getIfAvailable(), properties.agent());
+    }
+
+    /** The signed-in user as the principal, in applications with Spring Security. */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "org.springframework.security.core.context.SecurityContextHolder")
+    static class SpringSecurity {
+
+        @Bean
+        @ConditionalOnMissingBean
+        ToolGatePrincipalResolver toolGatePrincipalResolver() {
+            return new SpringSecurityPrincipals();
+        }
     }
 
     /**

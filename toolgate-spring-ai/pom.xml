@@ -56,6 +56,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
+        <!-- Optional: present only in applications with Spring Security, whose user becomes the principal. -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-core</artifactId>
+            <optional>true</optional>
+        </dependency>
         <!-- Optional: present only in applications that use MCP tools, where it names their servers. -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

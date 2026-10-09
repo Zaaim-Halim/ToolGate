@@ -8,12 +8,15 @@ import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.StreamAdvisor;
 import org.springframework.ai.chat.client.advisor.api.StreamAdvisorChain;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.core.Ordered;
 import reactor.core.publisher.Flux;
 
 /**
  * Gates a request's tool callbacks before any tool advisor sees them, so even an application's own
- * {@code ToolAdvisor}, with a manager of its own, runs gated callbacks.
+ * {@code ToolAdvisor}, with a manager of its own, runs gated callbacks; and completes the request's
+ * tool context with the principal, agent and session, on the request's own thread.
  */
 final class ToolGateAdvisor implements CallAdvisor, StreamAdvisor {
 
@@ -51,6 +54,12 @@ final class ToolGateAdvisor implements CallAdvisor, StreamAdvisor {
     }
 
     private ChatClientRequest gated(ChatClientRequest request) {
-        return request.mutate().prompt(GatedToolCallingManager.gated(request.prompt(), gating.get())).build();
+        Gating shared = gating.get();
+        Prompt prompt = request.prompt();
+        if (prompt.getOptions() instanceof ToolCallingChatOptions options) {
+            prompt = new Prompt(prompt.getInstructions(),
+                    options.mutate().toolContext(shared.completeContext(options.getToolContext(), request.context())).build());
+        }
+        return request.mutate().prompt(GatedToolCallingManager.gated(prompt, shared)).build();
     }
 }

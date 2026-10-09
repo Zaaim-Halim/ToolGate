@@ -3,6 +3,7 @@ package io.toolgate.springai;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Decision;
+import io.toolgate.api.Mode;
 import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ResultDecision;
@@ -25,6 +26,7 @@ import org.springframework.ai.tool.metadata.ToolMetadata;
 final class GatedToolCallback implements ToolCallback {
 
     private static final String NO_CONTEXT = "adapter.context";
+    private static final System.Logger LOG = System.getLogger("toolgate.adapter");
 
     private final ToolCallback target;
     private final List<ToolCallback> siblings;
@@ -57,16 +59,29 @@ final class GatedToolCallback implements ToolCallback {
 
     @Override
     public String call(String toolInput, ToolContext toolContext) {
+        if (gating.mode() == Mode.OFF) {
+            // The emergency switch: tools run straight through, as if ToolGate were not there.
+            return target.call(toolInput, Gating.isMcp(target) ? withoutToolGateKeys(toolContext) : toolContext);
+        }
         Map<String, Object> context = toolContext == null ? Map.of() : toolContext.getContext();
         ToolId tool = gating.toolId(target);
         ObjectValue arguments = arguments(toolInput);
         if (arguments == null) {
             // Without the arguments the tool will see, no rule can be checked. Not audited: no call can be built.
-            return Decision.Deny.MODEL_MESSAGE;
+            return refuse(tool, "its arguments could not be read unambiguously", toolInput, toolContext);
+        }
+        ToolCall call;
+        try {
+            call = new ToolCall(UUID.randomUUID().toString(), principal(context), text(context, ToolGateContext.AGENT),
+                    text(context, ToolGateContext.SESSION), tool, arguments, gating.clock().instant());
+        } catch (ToolGateViolationException noContext) {
+            if (gating.mode() == Mode.MONITOR) {
+                LOG.log(System.Logger.Level.WARNING, "monitor mode: {0} ran unchecked: {1}", tool, noContext.getMessage());
+                return target.call(toolInput, Gating.isMcp(target) ? withoutToolGateKeys(toolContext) : toolContext);
+            }
+            throw noContext;
         }
         gating.define(tool, target);
-        var call = new ToolCall(UUID.randomUUID().toString(), principal(context), text(context, ToolGateContext.AGENT),
-                text(context, ToolGateContext.SESSION), tool, arguments, gating.clock().instant());
         return switch (gating.gate().check(call)) {
             case Decision.Allow allow -> run(target, call, toolInput, toolContext);
             case Decision.Deny deny -> Decision.Deny.MODEL_MESSAGE;
@@ -78,6 +93,16 @@ final class GatedToolCallback implements ToolCallback {
                     .orElse(Decision.Deny.MODEL_MESSAGE);
             case Decision.Terminate(String ruleId, String reason) -> throw new ToolGateViolationException(ruleId, reason);
         };
+    }
+
+    /** The adapter's own refusal: the generic denial, or in monitor mode a warning and the tool run unchecked. */
+    private String refuse(ToolId tool, String why, String toolInput, ToolContext toolContext) {
+        if (gating.mode() == Mode.MONITOR) {
+            LOG.log(System.Logger.Level.WARNING, "monitor mode: {0} ran unchecked: {1}", tool, why);
+            return target.call(toolInput, Gating.isMcp(target) ? withoutToolGateKeys(toolContext) : toolContext);
+        }
+        LOG.log(System.Logger.Level.WARNING, "{0} refused: {1}", tool, why);
+        return Decision.Deny.MODEL_MESSAGE;
     }
 
     /** Runs a tool, records what it returned, and gives the model the output unless a result rule withholds it. */

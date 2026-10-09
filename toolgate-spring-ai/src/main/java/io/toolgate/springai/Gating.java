@@ -1,15 +1,18 @@
 package io.toolgate.springai;
 
+import io.toolgate.api.Mode;
 import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
 import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.resolution.ToolCallbackResolver;
 
@@ -28,14 +31,46 @@ final class Gating {
     private final ToolCatalog.Mutable catalog;
     private final Clock clock;
     private final ToolCallbackResolver resolver;
+    private final Mode mode;
+    private final ToolGatePrincipalResolver principals;
+    private final String defaultAgent;
     /** Definitions by what they were built from, so a tool's pin is computed once, not on every call. */
     private final Map<List<String>, Optional<ToolDefinition>> definitions = new ConcurrentHashMap<>();
 
-    Gating(ToolGate gate, ToolCatalog.Mutable catalog, Clock clock, ToolCallbackResolver resolver) {
+    Gating(ToolGate gate, ToolCatalog.Mutable catalog, Clock clock, ToolCallbackResolver resolver, Mode mode,
+           ToolGatePrincipalResolver principals, String defaultAgent) {
         this.gate = Objects.requireNonNull(gate, "gate");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.resolver = resolver;
+        this.mode = Objects.requireNonNull(mode, "mode");
+        this.principals = principals;
+        this.defaultAgent = defaultAgent;
+    }
+
+    /** The policy-wide mode, which also decides whether the adapter's own refusals block. */
+    Mode mode() {
+        return mode;
+    }
+
+    /**
+     * Fills what a request's tool context leaves out, on the request's own thread: the principal from
+     * the resolver, the agent from {@code toolgate.agent}, the session from the conversation ID.
+     * Whatever the request passed wins.
+     */
+    Map<String, Object> completeContext(Map<String, Object> toolContext, Map<String, Object> requestContext) {
+        var complete = new HashMap<String, Object>(toolContext == null ? Map.of() : toolContext);
+        if (!complete.containsKey(ToolGateContext.PRINCIPAL) && principals != null) {
+            principals.resolve().ifPresent(principal -> complete.put(ToolGateContext.PRINCIPAL, principal));
+        }
+        if (!complete.containsKey(ToolGateContext.AGENT) && defaultAgent != null && !defaultAgent.isBlank()) {
+            complete.put(ToolGateContext.AGENT, defaultAgent);
+        }
+        if (!complete.containsKey(ToolGateContext.SESSION)
+                && requestContext.get(ChatMemory.CONVERSATION_ID) instanceof String conversation && !conversation.isBlank()) {
+            complete.put(ToolGateContext.SESSION, conversation);
+        }
+        return complete;
     }
 
     ToolGate gate() {
