@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
+import net.jqwik.api.Example;
 import net.jqwik.api.ForAll;
 import net.jqwik.api.Property;
 import net.jqwik.api.Provide;
@@ -148,8 +149,16 @@ class UrlCheckTest {
         if (result instanceof Accepted(Target target)) {
             assertThat(target.scheme()).isIn("http", "https");
             target.address().ifPresent(address -> assertThat(SpecialAddresses.find(address)).isEmpty());
-            assertThat(HostNames.internalReason(target.host())).isEmpty();
+            // Names only: an IPv6 literal such as [2000::] is public but has no dots, like a single label.
+            if (target.address().isEmpty()) {
+                assertThat(HostNames.internalReason(target.host())).isEmpty();
+            }
         }
+    }
+
+    @Example
+    void acceptsAPublicIpv6LiteralWithoutDots() {
+        assertThat(UrlCheck.check("http://[2000::]/", Rule.DEFAULT)).isInstanceOf(Accepted.class);
     }
 
     @Provide
