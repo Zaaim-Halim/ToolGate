@@ -1,5 +1,7 @@
 package io.toolgate.spi;
 
+import io.toolgate.session.InMemorySessionStore;
+
 /**
  * Keeps each session's events and current state.
  *
@@ -9,6 +11,16 @@ package io.toolgate.spi;
  * compare-and-set.
  */
 public interface SessionStore {
+
+    /**
+     * A store in this JVM's memory, the gate's default: for one instance, or to share between gates in
+     * tests, such as a gate redeployed with a new policy.
+     *
+     * @return a new, empty store
+     */
+    static SessionStore inMemory() {
+        return new InMemorySessionStore();
+    }
 
     /**
      * The current state of a session.

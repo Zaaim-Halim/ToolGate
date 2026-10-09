@@ -1,6 +1,7 @@
 package io.toolgate.spi;
 
 import io.toolgate.api.ApprovalStatus;
+import io.toolgate.queue.InMemoryApprovalQueue;
 import java.util.List;
 import java.util.Optional;
 
@@ -12,6 +13,16 @@ import java.util.Optional;
  * across instances, such as a JDBC table, implement the same contract with a conditional update.
  */
 public interface ApprovalQueue {
+
+    /**
+     * A queue in this JVM's memory, the gate's default: for one instance, or to share between gates in
+     * tests, such as a gate redeployed with a new policy.
+     *
+     * @return a new, empty queue
+     */
+    static ApprovalQueue inMemory() {
+        return new InMemoryApprovalQueue();
+    }
 
     /**
      * Stores a newly deferred call. Adding a call whose approval ID is already stored does nothing,

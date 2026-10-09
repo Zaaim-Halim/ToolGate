@@ -9,8 +9,10 @@ import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.ToolResult;
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.OwnershipResolver;
+import io.toolgate.spi.SessionStore;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -32,7 +34,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public final class ScriptedSession implements AutoCloseable {
 
-    private final ToolGate gate;
+    private final SessionStore sessionStore = SessionStore.inMemory();
+    private final ApprovalQueue approvalQueue = ApprovalQueue.inMemory();
+    private ToolGate gate;
     private final String agentId;
     private final Map<String, String> tenants = new HashMap<>();
     private final Map<String, String> owners = new HashMap<>();
@@ -48,12 +52,34 @@ public final class ScriptedSession implements AutoCloseable {
     private ScriptedSession(ToolGatePolicy policy, String agentId, Principal principal) {
         this.agentId = Objects.requireNonNull(agentId, "agentId");
         this.principal = Objects.requireNonNull(principal, "principal");
-        this.gate = ToolGate.builder(policy)
+        this.gate = deploy(policy);
+        newSession();
+    }
+
+    private ToolGate deploy(ToolGatePolicy policy) {
+        return ToolGate.builder(policy)
+                .sessionStore(sessionStore)
+                .approvalQueue(approvalQueue)
                 .ownershipResolver(new ScriptedOwners())
                 .auditSink(auditEvents::add)
                 .clock(clock)
                 .build();
-        newSession();
+    }
+
+    /**
+     * Replaces the policy as a deployment would, keeping sessions, pending approvals, ownership
+     * answers and the clock: approvals made from now on are re-checked against the new policy.
+     *
+     * @param policy the new policy
+     * @return this session
+     */
+    public ScriptedSession redeploy(ToolGatePolicy policy) {
+        requireRunning();
+        flush();
+        ToolGate replaced = gate;
+        gate = deploy(policy);
+        replaced.close();
+        return this;
     }
 
     /**
@@ -185,7 +211,7 @@ public final class ScriptedSession implements AutoCloseable {
     }
 
     /**
-     * The gate under test, for anything the script does not cover.
+     * The gate under test, for anything the script does not cover; after {@link #redeploy}, the new one.
      *
      * @return the gate
      */
