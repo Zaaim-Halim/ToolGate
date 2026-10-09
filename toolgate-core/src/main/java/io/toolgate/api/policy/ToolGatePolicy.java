@@ -5,6 +5,7 @@ import static io.toolgate.support.Checks.requireNonBlank;
 import io.toolgate.api.Effect;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
+import io.toolgate.api.Principal;
 import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolId;
 import io.toolgate.policy.PolicyHash;
@@ -434,6 +435,7 @@ public final class ToolGatePolicy {
         private Duration approvalExpiry;
         private Set<String> reviewers = Set.of();
         private PendingTaintRule pending;
+        private Principal service;
 
         private AgentBuilder(String id) {
             this.id = id;
@@ -448,6 +450,27 @@ public final class ToolGatePolicy {
          */
         public AgentBuilder interactive(boolean present) {
             this.interactive = present;
+            return this;
+        }
+
+        /**
+         * Makes this agent act as a service identity, as a job or event consumer does, instead of the
+         * signed-in user: calls that name no principal of their own are made as this service. Give it
+         * the tenant and roles the job may use; tenant and role rules apply to it like to anyone.
+         *
+         * @param servicePrincipal a principal of kind {@link Principal.Kind#SERVICE}
+         * @return this agent builder
+         */
+        public AgentBuilder principal(Principal servicePrincipal) {
+            Objects.requireNonNull(servicePrincipal, "principal");
+            if (servicePrincipal.kind() != Principal.Kind.SERVICE) {
+                throw new InvalidPolicyException("agent '" + id + "': principal must be a service identity, such as"
+                        + " Principal.service(\"invoice-processor\", tenant); a user comes from the request");
+            }
+            if (service != null) {
+                throw new InvalidPolicyException("agent '" + id + "': principal is set twice");
+            }
+            this.service = servicePrincipal;
             return this;
         }
 
@@ -710,7 +733,7 @@ public final class ToolGatePolicy {
                     ? approvalExpiry
                     : (interactive ? INTERACTIVE_APPROVAL_EXPIRY : HEADLESS_APPROVAL_EXPIRY);
             return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules,
-                    requiredRoles, resultRules, expiry, reviewers);
+                    requiredRoles, resultRules, expiry, reviewers, service);
         }
     }
 

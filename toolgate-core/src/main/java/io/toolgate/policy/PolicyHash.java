@@ -1,6 +1,7 @@
 package io.toolgate.policy;
 
 import io.toolgate.api.Mode;
+import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.policy.AgentPolicy;
 import io.toolgate.api.policy.ArgumentRule;
@@ -76,6 +77,10 @@ public final class PolicyHash {
         line(text, " onTrifecta", agent.onTrifecta().name());
         line(text, " approvalExpiry", agent.approvalExpiry().toString());
         line(text, " reviewers", agent.reviewers().stream().sorted().toArray(String[]::new));
+        // Only when set, so policies without service identities keep their hash.
+        agent.servicePrincipal().ifPresent(service -> line(text, " principal",
+                Stream.concat(Stream.of(service.id(), tenant(service.tenant())), service.roles().stream().sorted())
+                        .toArray(String[]::new)));
         agent.downgrades().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
                 .forEach(entry -> line(text, " downgrade", entry.getKey().toString(), entry.getValue().toString()));
@@ -92,6 +97,13 @@ public final class PolicyHash {
                     line(text, " rule", entry.getKey().ruleId());
                     entry.getValue().stream().map(PolicyHash::rule).sorted().forEach(rule -> text.append("  ").append(rule));
                 });
+    }
+
+    private static String tenant(Tenant tenant) {
+        return switch (tenant) {
+            case Tenant.Scoped scoped -> "tenant " + scoped.id();
+            case Tenant.Unscoped unscoped -> "-";
+        };
     }
 
     private static String rule(ArgumentRule rule) {

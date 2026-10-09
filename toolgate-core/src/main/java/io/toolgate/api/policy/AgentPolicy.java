@@ -2,6 +2,7 @@ package io.toolgate.api.policy;
 
 import static io.toolgate.support.Checks.requireNonBlank;
 
+import io.toolgate.api.Principal;
 import io.toolgate.api.ToolId;
 import java.time.Duration;
 import java.util.Collections;
@@ -9,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -28,12 +30,15 @@ import java.util.stream.Collectors;
  * @param approvalExpiry how long a deferred call waits for a decision before it expires
  * @param reviewers     roles that may approve or reject this agent's deferred calls; empty means
  *                      nobody, except the signed-in user confirming their own call in an interactive agent
+ * @param service       the service identity this agent acts as, or null if its principal comes from
+ *                      the request; see {@link #servicePrincipal()}
  */
 public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
                           Map<ToolArgument, List<ArgumentRule>> argumentRules,
                           boolean interactive, Map<ToolId, ToolId> downgrades, TaintAction onTrifecta,
                           List<TaintRule> taintRules, Map<ToolId, Set<String>> requiredRoles,
-                          List<ResultRule> resultRules, Duration approvalExpiry, Set<String> reviewers) {
+                          List<ResultRule> resultRules, Duration approvalExpiry, Set<String> reviewers,
+                          Principal service) {
 
     /** Validates and copies every component. */
     public AgentPolicy {
@@ -53,5 +58,18 @@ public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
             throw new IllegalArgumentException("approvalExpiry must be positive");
         }
         reviewers = Set.copyOf(reviewers);
+        if (service != null && service.kind() != Principal.Kind.SERVICE) {
+            throw new IllegalArgumentException("agent '" + id + "' can only act as a service identity, not " + service);
+        }
+    }
+
+    /**
+     * The service identity this agent acts as, such as a nightly job's: adapters use it for calls that
+     * name no principal of their own, instead of the signed-in user.
+     *
+     * @return the service principal, or empty if the principal comes from the request
+     */
+    public Optional<Principal> servicePrincipal() {
+        return Optional.ofNullable(service);
     }
 }
