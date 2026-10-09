@@ -28,7 +28,9 @@ import java.util.stream.Collectors;
  * {@code OwnershipResolver} who owns the record an ID names. An unknown record is denied. The
  * argument may be a text or number ID, or a list of them, every one of which must pass.
  *
- * <p>Numeric rules: {@link #atMost} and {@link #atLeast} deny a call past the limit, or with
+ * <p>Numeric rules: {@link #atMost} and {@link #atLeast} limit each call, and {@link #totalAtMost}
+ * the sum over the session's calls that ran (allowed calls, and deferred ones once released), so a
+ * model cannot split one large amount into several small ones. Each denies a call past the limit, or with
  * {@code .otherwise(DEFER)} hold it for review. One deny limit and one defer limit of each kind may
  * share an argument, such as deny above 1000 and review above 200. The value may be a number or text
  * that is a plain decimal; anything a tool might read differently, such as {@code 1e3}, is denied.
@@ -141,6 +143,18 @@ public final class ArgumentRules {
     }
 
     /**
+     * Allows the session's total of this argument, over calls that ran, up to a limit; a call that
+     * would pass it is denied. Negative values are denied, so a total can never be lowered.
+     *
+     * @param limit a plain decimal, such as {@code "500"}
+     * @return the rule; {@code .otherwise(DEFER)} reviews instead of denying
+     * @throws IllegalArgumentException if the limit is not a plain decimal
+     */
+    public static ArgumentRule.TotalAtMost totalAtMost(String limit) {
+        return new ArgumentRule.TotalAtMost(decimal(limit), OnViolation.DENY);
+    }
+
+    /**
      * The kind of a rule, so a policy can give each kind at most once per argument. A limit's kind
      * includes its action, so one deny and one defer limit may share an argument.
      */
@@ -157,6 +171,8 @@ public final class ArgumentRules {
                     action == OnViolation.DENY ? "atMost" : "atMost otherwise " + action;
             case ArgumentRule.AtLeast(var limit, OnViolation action) ->
                     action == OnViolation.DENY ? "atLeast" : "atLeast otherwise " + action;
+            case ArgumentRule.TotalAtMost(var limit, OnViolation action) ->
+                    action == OnViolation.DENY ? "totalAtMost" : "totalAtMost otherwise " + action;
         };
     }
 }

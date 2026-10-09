@@ -18,8 +18,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Applies one agent's numeric limits to one argument. Deny limits are checked first, so a value
- * past both limits is denied, not reviewed.
+ * Applies one agent's numeric limits to one argument: per call, and over the session's total. Deny
+ * limits are checked first, so a value past both limits is denied, not reviewed.
  */
 final class NumericEvaluator implements Evaluator {
 
@@ -44,6 +44,15 @@ final class NumericEvaluator implements Evaluator {
         Optional<BigDecimal> maxDefer = limit(rules, true, OnViolation.DEFER);
         Optional<BigDecimal> minDeny = limit(rules, false, OnViolation.DENY);
         Optional<BigDecimal> minDefer = limit(rules, false, OnViolation.DEFER);
+        Optional<BigDecimal> totalDeny = totalLimit(rules, OnViolation.DENY);
+        Optional<BigDecimal> totalDefer = totalLimit(rules, OnViolation.DEFER);
+        if (totalDeny.isPresent() && totalDefer.isPresent() && totalDefer.get().compareTo(totalDeny.get()) >= 0) {
+            throw new IllegalArgumentException("totalAtMost(" + totalDefer.get() + ").otherwise(DEFER) can never fire above"
+                    + " totalAtMost(" + totalDeny.get() + "); the review limit must be lower");
+        }
+        if (totalDeny.or(() -> totalDefer).filter(total -> total.signum() < 0).isPresent()) {
+            throw new IllegalArgumentException("a total limit must not be negative");
+        }
         if (maxDeny.isPresent() && maxDefer.isPresent() && maxDefer.get().compareTo(maxDeny.get()) >= 0) {
             throw new IllegalArgumentException("atMost(" + maxDefer.get() + ").otherwise(DEFER) can never fire above atMost("
                     + maxDeny.get() + "); the review limit must be lower");
@@ -81,8 +90,14 @@ final class NumericEvaluator implements Evaluator {
         if (number.isEmpty()) {
             return new Verdict.Deny(reason("must be a number, or plain decimal text"), Origin.ACCESS);
         }
+        if (number.get().signum() < 0 && hasTotal(rules)) {
+            // A negative amount would lower the total and make room for more: never counted, never allowed.
+            return new Verdict.Deny(reason(Decimals.describe(number.get()) + " is negative, and totals only grow"),
+                    Origin.ACCESS);
+        }
         for (OnViolation action : List.of(OnViolation.DENY, OnViolation.DEFER)) {
-            Optional<String> broken = brokenLimit(number.get(), action);
+            Optional<String> broken = brokenLimit(number.get(), action)
+                    .or(() -> brokenTotal(number.get(), context.session().total(argument.ruleId()), action));
             if (broken.isPresent()) {
                 return switch (action) {
                     case DENY -> new Verdict.Deny(reason(broken.get()), Origin.ACCESS);
@@ -103,6 +118,39 @@ final class NumericEvaluator implements Evaluator {
             return Optional.of(Decimals.describe(number) + " is below " + Decimals.describe(min.get()));
         }
         return Optional.empty();
+    }
+
+    /**
+     * Compares {@code value > limit - total} rather than adding: the total never exceeds its limit, so
+     * the difference stays small, while a sum with a model's {@code 1e999999999} would need a billion digits.
+     */
+    private Optional<String> brokenTotal(BigDecimal value, BigDecimal total, OnViolation action) {
+        return totalLimit(rules, action)
+                .filter(limit -> value.compareTo(limit.subtract(total)) > 0)
+                .map(limit -> "the session's total " + Decimals.describe(total) + " plus " + Decimals.describe(value)
+                        + " is above " + Decimals.describe(limit));
+    }
+
+    static boolean hasTotal(List<ArgumentRule> rules) {
+        return rules.stream().anyMatch(ArgumentRule.TotalAtMost.class::isInstance);
+    }
+
+    private static Optional<BigDecimal> totalLimit(List<ArgumentRule> rules, OnViolation action) {
+        return rules.stream()
+                .<Optional<BigDecimal>>map(rule -> rule instanceof ArgumentRule.TotalAtMost(BigDecimal limit, OnViolation on)
+                        && on == action ? Optional.of(limit) : Optional.empty())
+                .flatMap(Optional::stream)
+                .findFirst();
+    }
+
+    /**
+     * The number in an argument value, read as the numeric rules read it: a number, or plain decimal text.
+     *
+     * @param value the argument's value
+     * @return the number, or empty for anything else
+     */
+    static Optional<BigDecimal> numberOf(ArgValue value) {
+        return number(value);
     }
 
     private static Optional<BigDecimal> limit(List<ArgumentRule> rules, boolean upper, OnViolation action) {

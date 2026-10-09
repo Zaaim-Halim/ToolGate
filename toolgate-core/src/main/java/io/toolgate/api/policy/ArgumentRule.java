@@ -13,7 +13,8 @@ import java.util.Set;
  */
 public sealed interface ArgumentRule
         permits ArgumentRule.Hosts, ArgumentRule.Schemes, ArgumentRule.Ports, ArgumentRule.Under, ArgumentRule.NotUnder,
-                ArgumentRule.SameTenant, ArgumentRule.OwnedByPrincipal, ArgumentRule.AtMost, ArgumentRule.AtLeast {
+                ArgumentRule.SameTenant, ArgumentRule.OwnedByPrincipal, ArgumentRule.AtMost, ArgumentRule.AtLeast,
+                ArgumentRule.TotalAtMost {
 
     /**
      * A URL argument must point at one of these hosts.
@@ -120,6 +121,31 @@ public sealed interface ArgumentRule
          */
         public AtMost otherwise(OnViolation action) {
             return new AtMost(limit, action);
+        }
+    }
+
+    /**
+     * The sum of a numeric argument over the session's calls that ran must stay at most {@code limit}.
+     * Negative values are denied, so a total can never be lowered.
+     *
+     * @param limit       the largest allowed total
+     * @param onViolation what happens to a call that would pass it
+     */
+    record TotalAtMost(BigDecimal limit, OnViolation onViolation) implements ArgumentRule {
+        /** Requires both components. */
+        public TotalAtMost {
+            Objects.requireNonNull(limit, "limit");
+            Objects.requireNonNull(onViolation, "onViolation");
+        }
+
+        /**
+         * The same limit with another action.
+         *
+         * @param action what happens to a call that would pass the limit
+         * @return the rule
+         */
+        public TotalAtMost otherwise(OnViolation action) {
+            return new TotalAtMost(limit, action);
         }
     }
 

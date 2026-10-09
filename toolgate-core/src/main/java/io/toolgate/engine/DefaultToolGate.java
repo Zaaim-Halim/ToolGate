@@ -19,6 +19,7 @@ import io.toolgate.audit.AuditChannel;
 import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.rules.ResultChecker;
+import io.toolgate.rules.Spending;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.PendingCall;
@@ -216,9 +217,9 @@ public final class DefaultToolGate implements ToolGate {
         return expired;
     }
 
-    /** What a call adds to the session's totals: nothing until total limits exist. */
+    /** What a call adds to the session's totals: only a call that runs, which an allowed call does. */
     private Map<String, BigDecimal> spent(ToolCall call, Decision applied) {
-        return Map.of();
+        return applied instanceof Decision.Allow ? Spending.of(policy, call) : Map.of();
     }
 
     /**

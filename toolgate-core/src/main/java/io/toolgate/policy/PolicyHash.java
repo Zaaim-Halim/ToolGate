@@ -102,6 +102,8 @@ public final class PolicyHash {
             case ArgumentRule.OwnedByPrincipal(String type) -> line(text, "ownedByPrincipal", type);
             case ArgumentRule.AtMost(var limit, var action) -> line(text, "atMost", limit.toPlainString(), action.name());
             case ArgumentRule.AtLeast(var limit, var action) -> line(text, "atLeast", limit.toPlainString(), action.name());
+            case ArgumentRule.TotalAtMost(var limit, var action) ->
+                    line(text, "totalAtMost", limit.toPlainString(), action.name());
         }
         return text.toString();
     }

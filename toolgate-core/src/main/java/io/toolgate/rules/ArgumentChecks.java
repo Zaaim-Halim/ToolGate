@@ -119,6 +119,7 @@ public final class ArgumentChecks {
             case ArgumentRule.OwnedByPrincipal owned -> Family.OWNERSHIP;
             case ArgumentRule.AtMost atMost -> Family.NUMBER;
             case ArgumentRule.AtLeast atLeast -> Family.NUMBER;
+            case ArgumentRule.TotalAtMost total -> Family.NUMBER;
         };
     }
 
