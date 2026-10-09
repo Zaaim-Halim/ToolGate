@@ -1,6 +1,7 @@
 package io.toolgate.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -45,6 +46,23 @@ class PinRulesTest {
         catalog.put(UPDATED);
 
         assertThat(check(gate(policy(UPDATED.sha256())), SEARCH)).isInstanceOf(Decision.Allow.class);
+    }
+
+    /** The definition offered with the call wins over the catalog, which another request may have changed. */
+    @Test
+    void theDefinitionOfferedWithTheCallIsTheOneChecked() {
+        ToolGate gate = gate(policy());
+        catalog.put(UPDATED);
+
+        assertThat(gate.check(call(SEARCH), REVIEWED)).isInstanceOf(Decision.Allow.class);
+        assertThat(gate.check(call(SEARCH), UPDATED)).isInstanceOf(Decision.Deny.class);
+        catalog.remove(SEARCH);
+        assertThat(gate.check(call(SEARCH), REVIEWED)).as("no catalog entry needed").isInstanceOf(Decision.Allow.class);
+    }
+
+    @Test
+    void aDefinitionOfAnotherToolIsRefused() {
+        assertThatIllegalArgumentException().isThrownBy(() -> gate(policy()).check(call(CREATE), REVIEWED));
     }
 
     @Test
@@ -119,7 +137,11 @@ class PinRulesTest {
     }
 
     private Decision check(ToolGate gate, ToolId tool) {
-        return gate.check(new ToolCall("c" + calls.incrementAndGet(), Principal.service("triage", Tenant.of("acme")),
-                "triage", "s1", tool, ObjectValue.empty(), Instant.EPOCH));
+        return gate.check(call(tool));
+    }
+
+    private ToolCall call(ToolId tool) {
+        return new ToolCall("c" + calls.incrementAndGet(), Principal.service("triage", Tenant.of("acme")),
+                "triage", "s1", tool, ObjectValue.empty(), Instant.EPOCH);
     }
 }

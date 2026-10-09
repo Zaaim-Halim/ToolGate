@@ -30,6 +30,13 @@ public final class BuiltInRules {
     public static final String TOOL_CALL_BUDGET = "budget.toolCalls";
     /** The session has not used up its denial budget. */
     public static final String DENIAL_BUDGET = "budget.denials";
+    /** The adapter could not read the call's arguments unambiguously, so no rule could check them. */
+    public static final String ARGUMENTS_READABLE = "arguments.readable";
+    /** The adapter could not read the tool's definition, so neither pins nor declared arguments could be checked. */
+    public static final String DEFINITION_READABLE = "definition.readable";
+    /** Refusals an adapter records through {@code ToolGate.reject}. */
+    public static final Set<String> ADAPTER_REFUSALS = Set.of(ARGUMENTS_READABLE, DEFINITION_READABLE);
+
     /** A session holding private data and untrusted content may not call an external sink. */
     public static final String TAINT_TRIFECTA = "taint.trifecta";
     /** A session holding untrusted content may not call an irreversible tool without review. */
@@ -50,7 +57,8 @@ public final class BuiltInRules {
 
     /** Every rule whose mode a policy may set. */
     public static final Set<String> CONFIGURABLE =
-            Set.of(AGENT_KNOWN, MCP_SERVERS, ALLOW_LIST, TOOL_PINNED, ARGUMENTS_DECLARED, TOOL_CALL_BUDGET, DENIAL_BUDGET, TAINT_TRIFECTA,
+            Set.of(AGENT_KNOWN, MCP_SERVERS, ALLOW_LIST, TOOL_PINNED, ARGUMENTS_DECLARED, ARGUMENTS_READABLE,
+                    DEFINITION_READABLE, TOOL_CALL_BUDGET, DENIAL_BUDGET, TAINT_TRIFECTA,
                     TAINT_IRREVERSIBLE);
 
     private BuiltInRules() {}

@@ -7,6 +7,7 @@ import io.toolgate.api.policy.AgentPolicy;
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.SessionState;
+import io.toolgate.spi.ToolCatalog;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -33,11 +34,16 @@ public final class DecisionEngine {
         this.evaluators = evaluators.stream().sorted(Comparator.comparing(Evaluator::stage)).toList();
     }
 
-    /** Evaluates one call against the session's state before it. */
+    /** Evaluates one call against the session's state before it, knowing no tool definitions. */
     public Evaluation evaluate(ToolCall call, SessionState session) {
+        return evaluate(call, session, tool -> Optional.empty());
+    }
+
+    /** Evaluates one call against the session's state before it and the tool definitions given. */
+    public Evaluation evaluate(ToolCall call, SessionState session, ToolCatalog definitions) {
         Optional<AgentPolicy> agent = policy.agent(call.agentId());
         List<RuledVerdict> verdicts = agent.isPresent()
-                ? collectVerdicts(new EvaluationContext(call, policy, agent.get(), session))
+                ? collectVerdicts(new EvaluationContext(call, policy, agent.get(), session, definitions))
                 : unknownAgent(call);
 
         Decision computed = combine(verdicts, call);

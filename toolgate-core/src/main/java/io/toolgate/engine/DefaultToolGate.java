@@ -1,5 +1,7 @@
 package io.toolgate.engine;
 
+import static io.toolgate.support.Checks.requireNonBlank;
+
 import io.toolgate.api.Approval;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
@@ -8,6 +10,7 @@ import io.toolgate.api.Mode;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ResultDecision;
 import io.toolgate.api.ToolCall;
+import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolResult;
 import io.toolgate.api.policy.AgentPolicy;
@@ -29,12 +32,14 @@ import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
+import io.toolgate.spi.ToolCatalog;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -62,20 +67,25 @@ public final class DefaultToolGate implements ToolGate {
     private final DecisionEngine engine;
     /** The engine without run-ending limits, for re-checking a deferred call that was already counted. */
     private final DecisionEngine releaseEngine;
+    /** Run-ending limits alone, which a call the adapter refuses must still pass first. */
+    private final List<Evaluator> limits;
     private final SessionStore sessions;
     private final ApprovalQueue approvals;
     private final ResultChecker results;
     private final AuditChannel audit;
     private final ArgumentSummary argumentSummary;
     private final Clock clock;
+    private final ToolCatalog catalog;
 
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, ResultChecker results,
                            SessionStore sessions, ApprovalQueue approvals, AuditChannel audit,
-                           ArgumentSummary argumentSummary, Clock clock) {
+                           ArgumentSummary argumentSummary, Clock clock, ToolCatalog catalog) {
         this.policy = Objects.requireNonNull(policy, "policy");
+        this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.engine = new DecisionEngine(policy, evaluators);
         this.releaseEngine = new DecisionEngine(policy,
                 evaluators.stream().filter(evaluator -> evaluator.stage() != Stage.LIMITS).toList());
+        this.limits = evaluators.stream().filter(evaluator -> evaluator.stage() == Stage.LIMITS).toList();
         this.results = Objects.requireNonNull(results, "results");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.approvals = Objects.requireNonNull(approvals, "approvals");
@@ -89,17 +99,65 @@ public final class DefaultToolGate implements ToolGate {
     /** A gate without audit, for tests of decisions alone. */
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions) {
         this(policy, evaluators, new ResultChecker(policy, BuiltInEvaluators.NO_OWNERS), sessions,
-                new InMemoryApprovalQueue(), AuditChannel.NONE, ArgumentSummary.typesOnly(), Clock.systemUTC());
+                new InMemoryApprovalQueue(), AuditChannel.NONE, ArgumentSummary.typesOnly(), Clock.systemUTC(),
+                BuiltInEvaluators.NO_TOOLS);
     }
 
     @Override
     public Decision check(ToolCall call) {
         Objects.requireNonNull(call, "call");
+        return checkWith(call, catalog);
+    }
+
+    @Override
+    public Decision check(ToolCall call, ToolDefinition offered) {
+        Objects.requireNonNull(call, "call");
+        Objects.requireNonNull(offered, "offered");
+        if (!offered.tool().equals(call.tool())) {
+            throw new IllegalArgumentException("definition of " + offered.tool() + " offered for a call to " + call.tool());
+        }
+        return checkWith(call, tool -> tool.equals(offered.tool()) ? Optional.of(offered) : catalog.definition(tool));
+    }
+
+    @Override
+    public Decision reject(ToolCall call, String ruleId, String reason) {
+        Objects.requireNonNull(call, "call");
+        if (!BuiltInRules.ADAPTER_REFUSALS.contains(ruleId)) {
+            throw new IllegalArgumentException("not an adapter refusal: '" + ruleId + "'; use one of "
+                    + BuiltInRules.ADAPTER_REFUSALS);
+        }
+        requireNonBlank(reason, "reason");
+        var refusal = new Evaluator() {
+            @Override
+            public String id() {
+                return ruleId;
+            }
+
+            @Override
+            public Stage stage() {
+                return Stage.STRUCTURE;
+            }
+
+            @Override
+            public Verdict evaluate(EvaluationContext context) {
+                return new Verdict.Deny(reason, Origin.ACCESS);
+            }
+        };
+        var withLimits = new ArrayList<Evaluator>(limits);
+        withLimits.add(refusal);
+        return checkWith(call, catalog, new DecisionEngine(policy, withLimits));
+    }
+
+    private Decision checkWith(ToolCall call, ToolCatalog definitions) {
+        return checkWith(call, definitions, engine);
+    }
+
+    private Decision checkWith(ToolCall call, ToolCatalog definitions, DecisionEngine deciding) {
         if (policy.mode() == Mode.OFF) {
             return new Decision.Allow(BuiltInRules.MODE_OFF);
         }
         try {
-            return decideAndRecord(call);
+            return decideAndRecord(call, definitions, deciding);
         } catch (RuntimeException storeFailure) {
             // Evaluators cannot throw past the engine, so this is the store. Without session state
             // every later call would be decided blind, so the run ends rather than this call alone.
@@ -251,7 +309,7 @@ public final class DefaultToolGate implements ToolGate {
      * rule is what the approval covers; any other objection was not seen by the reviewer.
      */
     private Optional<String> recheck(ToolCall call, Decision.Defer deferral) {
-        Decision now = releaseEngine.evaluate(call, sessions.state(call.sessionId())).effective();
+        Decision now = releaseEngine.evaluate(call, sessions.state(call.sessionId()), catalog).effective();
         return switch (now) {
             case Decision.Allow allowed -> Optional.empty();
             case Decision.Defer defer -> defer.ruleId().equals(deferral.ruleId())
@@ -298,10 +356,10 @@ public final class DefaultToolGate implements ToolGate {
         audit.close();
     }
 
-    private Decision decideAndRecord(ToolCall call) {
+    private Decision decideAndRecord(ToolCall call, ToolCatalog definitions, DecisionEngine deciding) {
         for (int attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt++) {
             SessionState state = sessions.state(call.sessionId());
-            Evaluation evaluation = decide(call, state);
+            Evaluation evaluation = decide(call, state, definitions, deciding);
             Decision decision = evaluation.effective();
             var event = new CallDecided(call.sessionId(), call.callId(), call.agentId(), call.principal(), call.tool(),
                     call.args(), decision, evaluation.computed(), spent(call, decision), policy.hash(), call.at());
@@ -340,18 +398,19 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     /** The engine's evaluation, with a downgrade replaced by its safe call's decision when that is stricter. */
-    private Evaluation decide(ToolCall call, SessionState state) {
-        Evaluation evaluation = engine.evaluate(call, state);
+    private Evaluation decide(ToolCall call, SessionState state, ToolCatalog definitions, DecisionEngine deciding) {
+        Evaluation evaluation = deciding.evaluate(call, state, definitions);
         if (!(evaluation.effective() instanceof Decision.Downgrade downgrade)) {
             return evaluation;
         }
-        return new Evaluation(checkSafeCall(call, state, downgrade), evaluation.computed());
+        return new Evaluation(checkSafeCall(call, state, downgrade, definitions), evaluation.computed());
     }
 
-    private Decision checkSafeCall(ToolCall call, SessionState state, Decision.Downgrade downgrade) {
+    private Decision checkSafeCall(ToolCall call, SessionState state, Decision.Downgrade downgrade,
+                                   ToolCatalog definitions) {
         // The safe tool is checked like any other call, once, against the same state, so a downgrade
         // can never reach a tool the agent may not call. Its own decision wins unless it allows.
-        Decision safe = engine.evaluate(call.withTool(downgrade.safeTool(), downgrade.safeArgs()), state).effective();
+        Decision safe = engine.evaluate(call.withTool(downgrade.safeTool(), downgrade.safeArgs()), state, definitions).effective();
         return switch (safe) {
             case Decision.Allow allowed -> downgrade;
             case Decision.Downgrade chained -> new Decision.Deny(BuiltInRules.DOWNGRADE_CHAIN,

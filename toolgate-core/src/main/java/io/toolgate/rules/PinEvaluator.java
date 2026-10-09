@@ -8,8 +8,6 @@ import io.toolgate.engine.Evaluator;
 import io.toolgate.engine.Origin;
 import io.toolgate.engine.Stage;
 import io.toolgate.engine.Verdict;
-import io.toolgate.spi.ToolCatalog;
-import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -23,11 +21,6 @@ final class PinEvaluator implements Evaluator {
     /** Enough to see a changed description or the first properties, without filling the audit log. */
     private static final int MAX_DEFINITION_IN_REASON = 1_000;
 
-    private final ToolCatalog catalog;
-
-    PinEvaluator(ToolCatalog catalog) {
-        this.catalog = Objects.requireNonNull(catalog, "catalog");
-    }
 
     @Override
     public String id() {
@@ -46,7 +39,7 @@ final class PinEvaluator implements Evaluator {
         if (pin.isEmpty()) {
             return Verdict.PASS;
         }
-        Optional<ToolDefinition> current = catalog.definition(tool);
+        Optional<ToolDefinition> current = context.definitions().definition(tool);
         if (current.isEmpty()) {
             return new Verdict.Deny(tool + " is pinned, but the tool catalog has no definition for it", Origin.ACCESS);
         }

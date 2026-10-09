@@ -55,6 +55,14 @@ class DeclaredArgumentsTest {
     }
 
     @Test
+    void theArgumentsDeclaredByTheOfferedDefinitionAreTheOnesThatCount() {
+        catalog.put(Catalogs.definition(FETCH, Set.of("url")));
+
+        assertThat(gate.check(call("ops", FETCH, Map.of("url", "https://status.example/", "timeout", "5")),
+                Catalogs.definition(FETCH, Set.of("url", "timeout")))).isInstanceOf(Decision.Allow.class);
+    }
+
+    @Test
     void aToolWithRulesTheCatalogDoesNotKnowIsDenied() {
         catalog.remove(FETCH);
 

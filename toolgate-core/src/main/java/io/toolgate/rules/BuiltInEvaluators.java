@@ -68,7 +68,7 @@ public final class BuiltInEvaluators {
      * @return the evaluators, built-ins first
      */
     public static List<Evaluator> forPolicy(ToolGatePolicy policy) {
-        return forPolicy(policy, NO_NAME_CHECK, NO_OWNERS, NO_TOOLS);
+        return forPolicy(policy, NO_NAME_CHECK, NO_OWNERS);
     }
 
     /**
@@ -78,17 +78,16 @@ public final class BuiltInEvaluators {
      * @param policy    the policy whose rules to apply
      * @param nameCheck why a URL host name must not be used; {@link #NO_NAME_CHECK} or {@link #resolving}
      * @param owners    the application's ownership resolver
-     * @param catalog   the tools' current definitions, for pins
      * @return the evaluators, built-ins first
      */
     public static List<Evaluator> forPolicy(ToolGatePolicy policy, Function<String, Optional<String>> nameCheck,
-                                            OwnershipResolver owners, ToolCatalog catalog) {
+                                            OwnershipResolver owners) {
         var evaluators = new ArrayList<>(all());
         if (!policy.pins().isEmpty()) {
-            evaluators.add(new PinEvaluator(catalog));
+            evaluators.add(new PinEvaluator());
         }
         if (DeclaredArgumentsEvaluator.needed(policy)) {
-            evaluators.add(new DeclaredArgumentsEvaluator(policy, catalog));
+            evaluators.add(new DeclaredArgumentsEvaluator(policy));
         }
         policy.agents().values().forEach(agent -> {
             agent.argumentRules().forEach((argument, rules) -> {

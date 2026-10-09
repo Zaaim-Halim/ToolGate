@@ -46,6 +46,34 @@ public interface ToolGate extends AutoCloseable {
     Decision check(ToolCall call);
 
     /**
+     * Decides a call as {@link #check(ToolCall)} does, with the definition the model was offered for this
+     * call's tool. Pins and declared arguments are checked against it instead of the tool catalog, so two
+     * requests offering different definitions under one tool name can never be checked against each
+     * other's. Other tools, such as a downgrade's safe tool, are still looked up in the catalog.
+     *
+     * @param call    the call the model asked for
+     * @param offered the definition offered for the call's tool, such as the framework's callback has
+     * @return the decision to apply
+     * @throws IllegalArgumentException if the definition is not of the call's tool
+     * @throws NullPointerException     if either is null
+     */
+    Decision check(ToolCall call, ToolDefinition offered);
+
+    /**
+     * Records a call the adapter refused before it could be checked, such as one whose arguments it
+     * could not read unambiguously. The refusal is audited and counts toward the denial budget like any
+     * deny, so a model cannot repeat it without limit; run-ending limits are checked first. In monitor
+     * mode it is recorded as computed and Allow is returned, as for any rule.
+     *
+     * @param call   the call as far as it could be read; arguments it could not read are left out
+     * @param ruleId one of {@link io.toolgate.api.policy.BuiltInRules#ADAPTER_REFUSALS}
+     * @param reason why, for the audit trail
+     * @return Deny, Terminate once a run-ending limit is reached, or Allow in monitor and off modes
+     * @throws IllegalArgumentException if the rule is not an adapter refusal, or the reason is blank
+     */
+    Decision reject(ToolCall call, String ruleId, String reason);
+
+    /**
      * Checks what a tool returned against the agent's result rules, and records it. Call it for
      * every tool that ran, with the call that actually ran (for a downgrade, the safe tool), before
      * handing the output to the model. Calls that were denied, deferred or ended the run did not run.
@@ -293,15 +321,15 @@ public interface ToolGate extends AutoCloseable {
                     policy,
                     BuiltInEvaluators.forPolicy(policy,
                             hostResolver != null ? BuiltInEvaluators.resolving(hostResolver) : BuiltInEvaluators.NO_NAME_CHECK,
-                            owners,
-                            toolCatalog != null ? toolCatalog : BuiltInEvaluators.NO_TOOLS),
+                            owners),
                     new ResultChecker(policy, owners),
                     sessionStore != null ? sessionStore : new InMemorySessionStore(),
                     approvalQueue != null ? approvalQueue : new InMemoryApprovalQueue(),
                     new AsyncAuditDispatcher(auditSink != null ? auditSink : new SystemLoggerSink(),
                             AsyncAuditDispatcher.DEFAULT_CAPACITY),
                     argumentHashKey != null ? ArgumentSummary.keyed(argumentHashKey) : ArgumentSummary.typesOnly(),
-                    clock);
+                    clock,
+                    toolCatalog != null ? toolCatalog : BuiltInEvaluators.NO_TOOLS);
         }
     }
 }

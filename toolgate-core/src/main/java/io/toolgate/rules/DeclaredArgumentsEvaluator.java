@@ -11,10 +11,8 @@ import io.toolgate.engine.Evaluator;
 import io.toolgate.engine.Origin;
 import io.toolgate.engine.Stage;
 import io.toolgate.engine.Verdict;
-import io.toolgate.spi.ToolCatalog;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
@@ -32,12 +30,10 @@ final class DeclaredArgumentsEvaluator implements Evaluator {
     /** Names are chosen by the model, so only a few are quoted in the reason. */
     private static final int MAX_NAMES_IN_REASON = 5;
 
-    private final ToolCatalog catalog;
     /** Ruled argument names, by agent and tool. */
     private final Map<String, Map<ToolId, Set<String>>> ruled = new HashMap<>();
 
-    DeclaredArgumentsEvaluator(ToolGatePolicy policy, ToolCatalog catalog) {
-        this.catalog = Objects.requireNonNull(catalog, "catalog");
+    DeclaredArgumentsEvaluator(ToolGatePolicy policy) {
         policy.agents().values().forEach(agent -> ruled.put(agent.id(), agent.argumentRules().keySet().stream()
                 .collect(Collectors.groupingBy(ToolArgument::tool,
                         Collectors.mapping(ToolArgument::name, Collectors.toUnmodifiableSet())))));
@@ -70,7 +66,7 @@ final class DeclaredArgumentsEvaluator implements Evaluator {
         if (ruledNames == null) {
             return Verdict.PASS;
         }
-        Optional<ToolDefinition> definition = catalog.definition(tool);
+        Optional<ToolDefinition> definition = context.definitions().definition(tool);
         if (definition.isEmpty()) {
             return deny(tool + " has argument rules, but the tool catalog has no definition for it");
         }
