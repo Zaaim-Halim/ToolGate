@@ -22,6 +22,7 @@
     <modules>
         <module>toolgate-core</module>
         <module>toolgate-jdbc</module>
+        <module>toolgate-test</module>
         <module>toolgate-fuzz</module>
         <module>toolgate-benchmarks</module>
     </modules>
