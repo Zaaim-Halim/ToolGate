@@ -10,10 +10,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Stream;
 import javax.sql.DataSource;
 
 /**
@@ -147,6 +149,38 @@ public final class JdbcSessionStore implements SessionStore {
         } catch (IllegalArgumentException corrupt) {
             throw new JdbcStoreException("unreadable event in session " + sessionId, corrupt);
         }
+    }
+
+    /**
+     * Every event of every session with a call decided in {@code [from, to)}, each session whole and
+     * in order, so a replay starts each session from its first event rather than mid-way. Sessions
+     * are read one at a time as the stream is consumed, each in its own query.
+     *
+     * @param from the first instant, inclusive, by the store's clock when the call was recorded
+     * @param to   the last instant, exclusive
+     * @return the events, session by session; empty if no call was decided in the window
+     */
+    public Stream<SessionEvent> events(Instant from, Instant to) {
+        if (!from.isBefore(to)) {
+            throw new IllegalArgumentException("from must be before to, was " + from + " and " + to);
+        }
+        String sql = "SELECT DISTINCT session_id FROM toolgate_session_event"
+                + " WHERE event_type = ? AND recorded_at >= ? AND recorded_at < ? ORDER BY session_id";
+        var sessionIds = new ArrayList<String>();
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement select = connection.prepareStatement(sql)) {
+            select.setString(1, SessionEvent.CallDecided.class.getSimpleName());
+            select.setLong(2, Codec.micros(from));
+            select.setLong(3, Codec.micros(to));
+            try (ResultSet rows = select.executeQuery()) {
+                while (rows.next()) {
+                    sessionIds.add(rows.getString("session_id"));
+                }
+            }
+        } catch (SQLException failure) {
+            throw new JdbcStoreException("could not find the sessions with calls from " + from + " to " + to, failure);
+        }
+        return sessionIds.stream().flatMap(sessionId -> events(sessionId).stream());
     }
 
     /**

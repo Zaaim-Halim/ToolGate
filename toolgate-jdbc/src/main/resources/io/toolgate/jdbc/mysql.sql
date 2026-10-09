@@ -41,3 +41,4 @@ CREATE TABLE toolgate_session_event (
     recorded_at BIGINT        NOT NULL,
     PRIMARY KEY (session_id, version)
 );
+CREATE INDEX toolgate_session_event_recorded ON toolgate_session_event (event_type, recorded_at);

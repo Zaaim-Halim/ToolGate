@@ -1,6 +1,7 @@
 package io.toolgate.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.Decision;
@@ -113,6 +114,27 @@ class JdbcSessionStoreTest {
         assertThat(store.state("old")).isEqualTo(SessionState.empty("old"));
         assertThat(store.events("old")).isEmpty();
         assertThat(store.state("s1").version()).isEqualTo(1);
+    }
+
+    /** A session that began before the window comes back whole; one with only a declassify does not. */
+    @Test
+    void readsWholeSessionsWithCallsInAWindow() {
+        var monday = new JdbcSessionStore(database, ValueCodec.unencrypted(), Clock.fixed(T0.minus(Duration.ofDays(3)), ZoneOffset.UTC));
+        var thursday = new JdbcSessionStore(database, ValueCodec.unencrypted(), Clock.fixed(T0, ZoneOffset.UTC));
+        monday.append(decided("long/1", new Decision.Allow("allow-list"), "long"));
+        thursday.append(decided("long/2", new Decision.Allow("allow-list"), "long"));
+        monday.append(decided("old/1", new Decision.Allow("allow-list"), "old"));
+        thursday.append(new SessionEvent.Declassified("quiet", Label.UNTRUSTED_CONTENT, "parsed", T0));
+        thursday.append(decided("new/1", new Decision.Allow("allow-list"), "new"));
+
+        try (var events = store.events(T0.minus(Duration.ofDays(1)), T0.plusSeconds(1))) {
+            assertThat(events.map(event -> event.sessionId() + ":" + event.getClass().getSimpleName()))
+                    .containsExactly("long:CallDecided", "long:CallDecided", "new:CallDecided");
+        }
+        try (var none = store.events(T0.plusSeconds(1), T0.plusSeconds(2))) {
+            assertThat(none).isEmpty();
+        }
+        assertThatIllegalArgumentException().isThrownBy(() -> store.events(T0, T0));
     }
 
     private static SessionEvent decided(String callId, Decision applied) {
