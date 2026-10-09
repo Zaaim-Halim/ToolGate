@@ -123,13 +123,13 @@ public class ToolGateAutoConfiguration {
     /**
      * Gated chat clients for applications that build them by hand.
      *
-     * @param manager the gated tool calling manager
+     * @param manager the gated tool calling manager, resolved when a client is built
      * @param gating  the shared gating
      * @return the factory
      */
     @Bean
     @ConditionalOnMissingBean
-    public ToolGateChatClients toolGateChatClients(ToolCallingManager manager, ObjectProvider<Gating> gating) {
-        return new ToolGateChatClients(manager, gating::getObject);
+    public ToolGateChatClients toolGateChatClients(ObjectProvider<ToolCallingManager> manager, ObjectProvider<Gating> gating) {
+        return new ToolGateChatClients(manager::getObject, gating::getObject);
     }
 }

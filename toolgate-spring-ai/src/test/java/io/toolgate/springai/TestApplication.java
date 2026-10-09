@@ -40,6 +40,8 @@ class TestApplication {
                 .agent("refunds", a -> a
                         .allow("readTicket", "issueRefund", "createPendingRefund")
                         .downgrade("issueRefund", "createPendingRefund"))
+                .mcpServers("jira")
+                .agent("triage", a -> a.allow("mcp:jira/searchTickets"))
                 .agent("one-call", a -> a
                         .allow("getWeather")
                         .budget(b -> b.toolCalls(1)))

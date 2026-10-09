@@ -41,7 +41,7 @@
         </dependencies>
     </dependencyManagement>
 
-    <!-- Runtime: core, Spring AI's chat client and Spring Boot's auto-configuration. -->
+    <!-- Runtime: core, Spring AI's chat client and Spring Boot's auto-configuration; MCP optionally. -->
     <dependencies>
         <dependency>
             <groupId>io.toolgate</groupId>
@@ -56,9 +56,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
+        <!-- Optional: present only in applications that use MCP tools, where it names their servers. -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-mcp</artifactId>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

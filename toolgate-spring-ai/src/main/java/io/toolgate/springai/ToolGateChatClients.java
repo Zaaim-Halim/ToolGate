@@ -18,10 +18,10 @@ import org.springframework.ai.model.tool.ToolCallingManager;
  */
 public final class ToolGateChatClients {
 
-    private final ToolCallingManager gatedManager;
+    private final Supplier<ToolCallingManager> gatedManager;
     private final Supplier<Gating> gating;
 
-    ToolGateChatClients(ToolCallingManager gatedManager, Supplier<Gating> gating) {
+    ToolGateChatClients(Supplier<ToolCallingManager> gatedManager, Supplier<Gating> gating) {
         this.gatedManager = gatedManager;
         this.gating = gating;
     }
@@ -34,7 +34,7 @@ public final class ToolGateChatClients {
      */
     public ChatClient.Builder builder(ChatModel chatModel) {
         return ChatClient.builder(chatModel, ObservationRegistry.NOOP, null, null,
-                        ToolCallingAdvisor.builder().toolCallingManager(gatedManager))
+                        ToolCallingAdvisor.builder().toolCallingManager(gatedManager.get()))
                 .defaultAdvisors(new ToolGateAdvisor(gating));
     }
 }

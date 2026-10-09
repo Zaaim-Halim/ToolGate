@@ -9,6 +9,7 @@ import io.toolgate.api.ResultDecision;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.ToolResult;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -83,7 +84,7 @@ final class GatedToolCallback implements ToolCallback {
     private String run(ToolCallback callback, ToolCall callThatRuns, String input, ToolContext toolContext) {
         String output;
         try {
-            output = callback.call(input, toolContext);
+            output = callback.call(input, Gating.isMcp(callback) ? withoutToolGateKeys(toolContext) : toolContext);
         } catch (RuntimeException failure) {
             // An error message can carry an attacker's page as easily as a result, so it taints too.
             gating.gate().recordResult(callThatRuns, new ToolResult.Failed(String.valueOf(failure.getMessage())));
@@ -121,6 +122,19 @@ final class GatedToolCallback implements ToolCallback {
         } catch (IllegalArgumentException unreadable) {
             return null;
         }
+    }
+
+    /**
+     * Spring AI sends an MCP tool's whole tool context to its server as {@code _meta}; the principal
+     * and session are no business of a third party.
+     */
+    private static ToolContext withoutToolGateKeys(ToolContext toolContext) {
+        if (toolContext == null) {
+            return null;
+        }
+        var kept = new HashMap<String, Object>(toolContext.getContext());
+        kept.keySet().removeIf(ToolGateContext::isToolGateKey);
+        return new ToolContext(kept);
     }
 
     private static ArgValue result(String output) {

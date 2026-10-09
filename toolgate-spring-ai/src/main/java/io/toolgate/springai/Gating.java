@@ -19,8 +19,9 @@ import org.springframework.ai.tool.resolution.ToolCallbackResolver;
  */
 final class Gating {
 
-    /** MCP callbacks live here; until their server is attributed, they are named after no allowed server. */
+    /** MCP callbacks live here. */
     private static final String MCP_PACKAGE = "org.springframework.ai.mcp.";
+    /** The server of an MCP tool whose connection is unknown or ambiguous; no policy allows it. */
     static final String UNATTRIBUTED_SERVER = "unattributed";
 
     private final ToolGate gate;
@@ -59,11 +60,22 @@ final class Gating {
         return callback instanceof GatedToolCallback gated ? gated.target() : callback;
     }
 
+    static boolean isMcp(ToolCallback callback) {
+        return callback.getClass().getName().startsWith(MCP_PACKAGE);
+    }
+
+    /** A local tool by its name; an MCP tool with the configured connection it came from. */
     ToolId toolId(ToolCallback callback) {
         String name = callback.getToolDefinition().name();
-        return callback.getClass().getName().startsWith(MCP_PACKAGE)
-                ? ToolId.mcp(UNATTRIBUTED_SERVER, name)
-                : ToolId.local(name);
+        if (!isMcp(callback)) {
+            return ToolId.local(name);
+        }
+        String server = McpConnections.connectionOf(callback).orElse(UNATTRIBUTED_SERVER);
+        try {
+            return ToolId.mcp(server, name);
+        } catch (IllegalArgumentException unusableName) {
+            return ToolId.mcp(UNATTRIBUTED_SERVER, name);
+        }
     }
 
     /**
