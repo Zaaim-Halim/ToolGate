@@ -1,0 +1,64 @@
+# ToolGate email bypass corpus, format version 1 (the same format as core's corpus-v1.txt).
+#
+# One case per line:  kind | expect | input | why
+#   kind    email      emailDomains("mycompany.com", "*.mycompany.com") on a string argument
+#   expect  allow or deny
+#   input   the argument, exactly as a model would write it; \uXXXX escapes stand for one
+#           character, so this file stays ASCII and nothing in it is invisible
+#   why     the trap, or the source of the case
+#
+# Every reported bypass becomes a case here before its fix is merged. Never edit a case to make
+# it pass; add a new format version instead if the meaning of a field must change.
+
+# --- Plain addresses and lists
+email | allow | ops@mycompany.com | plain address
+email | allow | Ops@MyCompany.COM | domains compare without case
+email | allow | billing@eu.mycompany.com | subdomain through *.mycompany.com
+email | allow | a@mycompany.com, b@eu.mycompany.com | every recipient allowed
+email | allow | first.last+invoices@mycompany.com | dots and plus tags in the local part
+email | deny  | ops@evil.example | outside domain
+email | deny  | attacker@evil.example,ops@mycompany.com | design document: endsWith("@mycompany.com") is true
+email | deny  | ops@mycompany.com, attacker@evil.example | the outside recipient second
+email | deny  | ops@mycompany.com.evil.example | allowed domain as a prefix
+email | deny  | ops@evilmycompany.com | allowed domain as a suffix without a dot
+email | deny  | ops@mycompany.com.  | trailing dot
+email | deny  | a@x.example; ops@mycompany.com | semicolon list, which Outlook-style mailers split
+email | deny  |  | empty: no recipient
+email | deny  | ops | no domain
+email | deny  | ops@mycompany | single-label domain
+email | deny  | ops@@mycompany.com | doubled @
+email | deny  | Mao <mraia@mycompany.com>, | trailing comma: Jakarta Mail skips the empty recipient (found by fuzzing)
+email | deny  | ,ops@mycompany.com | leading comma
+email | deny  | a@mycompany.com,,b@mycompany.com | doubled comma
+email | deny  | <maria@mycompany.com>pia | text after the brackets, which Jakarta Mail accepts (found by fuzzing)
+email | deny  | Maria <<maria@mycompany.com>> | doubled brackets
+email | deny  | Maria <maria@mycompany.com | unclosed bracket
+email | allow | <maria@mycompany.com> | brackets without a name
+
+# --- Forms RFC 5322 allows and mail libraries read differently
+email | deny  | "attacker@evil.example"@mycompany.com | quoted local part hiding an @ (Jakarta Mail accepts it)
+email | deny  | ops\@evil.example@mycompany.com | escaped @ (Jakarta Mail accepts it)
+email | deny  | <@relay.evil.example:ops@mycompany.com> | obsolete source route through another host
+email | deny  | team: attacker@evil.example, ops@mycompany.com; | group syntax
+email | deny  | ops@mycompany.com (attacker@evil.example) | comment holding an address
+email | deny  | ops@[10.0.0.1] | IP-literal domain
+email | deny  | =?utf-8?q?ops=40mycompany.com?= <attacker@evil.example> | encoded word as display name
+email | deny  | attacker@evil.example <ops@mycompany.com> | an address as display name
+email | deny  | ops@mycompany.com <attacker@evil.example> | the allowed address as display name, the outside one as recipient
+email | deny  | "Lopez, Maria" <maria@mycompany.com> | quoted display name, which can hide commas and @
+email | allow | Maria Lopez <maria@mycompany.com> | simple display name
+email | allow | Jos\u00e9 O'Neil-Smith <jose@mycompany.com> | letters, apostrophe and hyphen in a display name
+
+# --- Header injection and invisible characters
+email | deny  | ops@mycompany.com\u000d\u000aBcc: attacker@evil.example | CRLF header injection
+email | deny  | ops@mycompany.com\u000aattacker@evil.example | bare line feed
+email | deny  | ops@mycompany.com\u0000attacker@evil.example | NUL
+email | deny  | ops@mycompany.com\u2028 | line separator
+email | deny  | ops\u200b@mycompany.com | zero-width space
+email | deny  | Maria \u202eLopez <maria@mycompany.com> | right-to-left override in a display name
+
+# --- Look-alike and Unicode domains
+email | deny  | ops@mycomp\u0430ny.com | Cyrillic a in the domain (Jakarta Mail accepts it)
+email | deny  | ops@mycompany\uff0ecom | fullwidth full stop
+email | deny  | ops@xn--mycmpany-p2a.com | punycode of a look-alike: a different domain
+email | deny  | \u043eps@mycompany.com | Cyrillic letter in the local part

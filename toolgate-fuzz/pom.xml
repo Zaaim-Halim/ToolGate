@@ -12,7 +12,7 @@
 
     <artifactId>toolgate-fuzz</artifactId>
     <name>ToolGate Fuzz Tests</name>
-    <description>Coverage-guided fuzz targets for the parsers and validators in toolgate-core. Never published.</description>
+    <description>Coverage-guided fuzz targets for the parsers and validators in toolgate-core and toolgate-email. Never published.</description>
 
     <properties>
         <!-- Test-only module: nothing here may reach users. -->
@@ -33,6 +33,12 @@
         <dependency>
             <groupId>io.toolgate</groupId>
             <artifactId>toolgate-core</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.toolgate</groupId>
+            <artifactId>toolgate-email</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>
         </dependency>

@@ -35,6 +35,7 @@ java -jar toolgate-benchmarks/target/benchmarks.jar
 | --------------- | ------------------------------------------------------------------------ |
 | `toolgate-core` | Policy model, decision engine, validators, session state, audit events. No runtime dependencies. |
 | `toolgate-jdbc` | Approval queue and session store in the application's database, through plain JDBC, for applications with more than one instance. Ships DDL for H2, PostgreSQL and MySQL. |
+| `toolgate-email` | The `emailDomains` rule: recipients parsed with Jakarta Mail, every one checked, and every address form that mail libraries read differently denied. |
 | `toolgate-test` | Test your policies: scripted sessions play tool calls as a compromised model would, and assert what ToolGate decides. A JUnit 5 extension (`@ToolGateTest`) or plain `ScriptedSession.of(...)`. For test scope. |
 | `toolgate-fuzz` | Jazzer fuzz targets for the parsers and validators. Test-only, never published. |
 | `toolgate-benchmarks` | JMH benchmarks for `check`. Never published. |

@@ -22,6 +22,7 @@
     <modules>
         <module>toolgate-core</module>
         <module>toolgate-jdbc</module>
+        <module>toolgate-email</module>
         <module>toolgate-test</module>
         <module>toolgate-fuzz</module>
         <module>toolgate-benchmarks</module>
@@ -42,6 +43,7 @@
         <jmh.version>1.37</jmh.version>
         <!-- 2.5.252 is a patch released 2026-09-26; take it at the next dependency update. -->
         <h2.version>2.5.250</h2.version>
+        <jakarta.mail.version>2.1.5</jakarta.mail.version>
     </properties>
 
     <dependencyManagement>
@@ -77,6 +79,11 @@
                 <groupId>com.h2database</groupId>
                 <artifactId>h2</artifactId>
                 <version>${h2.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.mail</groupId>
+                <artifactId>jakarta.mail-api</artifactId>
+                <version>${jakarta.mail.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
