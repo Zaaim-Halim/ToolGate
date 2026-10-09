@@ -7,6 +7,7 @@ import static io.toolgate.api.Label.EXTERNAL_SINK;
 import static io.toolgate.api.Label.PRIVATE_DATA;
 import static io.toolgate.api.Label.UNTRUSTED_CONTENT;
 import static io.toolgate.api.policy.ArgumentRules.atMost;
+import static io.toolgate.email.EmailRules.emailDomains;
 import static io.toolgate.api.policy.ArgumentRules.hosts;
 import static io.toolgate.api.policy.ArgumentRules.sameTenant;
 import static io.toolgate.api.policy.ArgumentRules.schemes;
@@ -35,7 +36,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The example cases of the design document, row by row, as one acceptance suite. Each test names
- * its case; a row that needs a feature not built yet asserts what happens today and names the gap.
+ * its case; a row that needs a feature not built yet names the gap.
  * Case G needs replay, which does not exist yet.
  */
 class ExampleCasesTest {
@@ -52,7 +53,8 @@ class ExampleCasesTest {
                         .allow("readInvoice", "fetchSupplierPage", "sendEmail", "draftEmail")
                         .downgrade("sendEmail", "draftEmail")
                         .rule("readInvoice.id", sameTenant("invoice"))
-                        .rule("fetchSupplierPage.url", schemes("https"), hosts("acme.suppliers.example")))
+                        .rule("fetchSupplierPage.url", schemes("https"), hosts("acme.suppliers.example"))
+                        .rule("sendEmail.to", emailDomains("mycompany.com")))
                 .build();
 
         @Test
@@ -62,10 +64,8 @@ class ExampleCasesTest {
 
                 s.call("readInvoice", Map.of("id", "INV-118")).assertAllowed();
                 s.call("fetchSupplierPage", Map.of("url", "https://acme.suppliers.example/terms")).assertAllowed();
-                // Row 3 says Deny: the recipient is not on mycompany.com. That needs the email validator
-                // (backlog). Today the tainted session turns it into a draft, which is safe but not a denial.
                 s.call("sendEmail", Map.of("to", "remit@acme-payments.example", "body", "invoice and IBAN"))
-                        .assertDowngradedTo("draftEmail");
+                        .assertDeniedBy("sendEmail.to");
                 ScriptedCall row4 = s.call("sendEmail", Map.of("to", "billing@mycompany.com", "body", "invoice and IBAN"))
                         .assertDowngradedTo("draftEmail");
 
