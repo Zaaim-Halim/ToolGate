@@ -6,6 +6,7 @@ import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.spi.SessionEvent;
+import io.toolgate.spi.ToolCatalog;
 import java.util.Objects;
 import java.util.stream.Stream;
 
@@ -24,7 +25,8 @@ import java.util.stream.Stream;
  * <p>Each session replays in order on fresh state, so a call the proposed policy denies no longer adds
  * taint, spends budget or adds to totals for the calls after it. A deferred call runs if history
  * released it. A call keeps its recorded result; one that runs only under the proposed policy is taken
- * to succeed, with its tool's labels. Ownership and path rules ask today's data and files. Result
+ * to succeed, with its tool's labels. Ownership and path rules ask today's data and files, and pins
+ * today's tool definitions, since session events do not record the definition a call saw. Result
  * rules are not replayed, because tool outputs are not stored; a recorded withheld output stays withheld.
  * Decisions compare as the policies computed them, by kind, rule and safe tool, so history recorded
  * in monitor mode works too.
@@ -34,11 +36,13 @@ public final class PolicyReplay {
     private final ToolGatePolicy policy;
     private final OwnershipResolver owners;
     private final HostResolver hosts;
+    private final ToolCatalog catalog;
 
     private PolicyReplay(Builder builder) {
         this.policy = builder.policy;
         this.owners = builder.owners;
         this.hosts = builder.hosts;
+        this.catalog = builder.catalog;
     }
 
     /**
@@ -59,7 +63,7 @@ public final class PolicyReplay {
      * @return what would change
      */
     public ReplayReport replay(Stream<SessionEvent> history) {
-        return new Replayer(policy, owners, hosts).replay(history);
+        return new Replayer(policy, owners, hosts, catalog).replay(history);
     }
 
     /** Settings for a replay. */
@@ -68,6 +72,7 @@ public final class PolicyReplay {
         private final ToolGatePolicy policy;
         private OwnershipResolver owners;
         private HostResolver hosts;
+        private ToolCatalog catalog;
 
         private Builder(ToolGatePolicy policy) {
             this.policy = Objects.requireNonNull(policy, "policy");
@@ -96,14 +101,29 @@ public final class PolicyReplay {
         }
 
         /**
+         * Checks pins against today's tool definitions, as the live gate does.
+         *
+         * @param toolCatalog the tools' current definitions
+         * @return this builder
+         */
+        public Builder toolCatalog(ToolCatalog toolCatalog) {
+            this.catalog = Objects.requireNonNull(toolCatalog, "toolCatalog");
+            return this;
+        }
+
+        /**
          * Builds the replay.
          *
          * @return the replay
-         * @throws IllegalStateException if the policy uses ownership rules and no resolver was given
+         * @throws IllegalStateException if the policy uses ownership rules and no resolver was given, or
+         *                               pins tools and no tool catalog was given
          */
         public PolicyReplay build() {
             if (owners == null && BuiltInEvaluators.usesOwnership(policy)) {
                 throw new IllegalStateException("the policy uses sameTenant or ownedByPrincipal rules; set an ownershipResolver");
+            }
+            if (catalog == null && !policy.pins().isEmpty()) {
+                throw new IllegalStateException("the policy pins tool definitions; set a toolCatalog");
             }
             return new PolicyReplay(this);
         }

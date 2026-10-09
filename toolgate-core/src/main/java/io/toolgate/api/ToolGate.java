@@ -15,6 +15,7 @@ import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionStore;
+import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
 import java.util.Arrays;
 import java.util.List;
@@ -157,6 +158,7 @@ public interface ToolGate extends AutoCloseable {
         private ApprovalQueue approvalQueue;
         private HostResolver hostResolver;
         private OwnershipResolver ownershipResolver;
+        private ToolCatalog toolCatalog;
         private AuditSink auditSink;
         private byte[] argumentHashKey;
         private Clock clock = Clock.systemUTC();
@@ -215,6 +217,18 @@ public interface ToolGate extends AutoCloseable {
         }
 
         /**
+         * Gives each tool's current definition, for pinned tools. Required when the policy pins any
+         * tool; keep it current whenever a framework or MCP server lists its tools again.
+         *
+         * @param catalog the catalog, such as {@link ToolCatalog#inMemory()}; read on every call to a pinned tool
+         * @return this builder
+         */
+        public Builder toolCatalog(ToolCatalog catalog) {
+            this.toolCatalog = Objects.requireNonNull(catalog, "toolCatalog");
+            return this;
+        }
+
+        /**
          * Where audit events go. Defaults to one JSON line per event on the JDK logger
          * {@code toolgate.audit}, which Spring Boot routes to SLF4J.
          *
@@ -260,19 +274,24 @@ public interface ToolGate extends AutoCloseable {
          *
          * @return a thread-safe gate; close it at shutdown
          * @throws IllegalStateException if the policy uses ownership rules and no
-         *                               {@link #ownershipResolver} was given
+         *                               {@link #ownershipResolver} was given, or pins tools and no
+         *                               {@link #toolCatalog} was given
          */
         public ToolGate build() {
             if (ownershipResolver == null && BuiltInEvaluators.usesOwnership(policy)) {
                 throw new IllegalStateException(
                         "the policy uses sameTenant or ownedByPrincipal rules; set an ownershipResolver");
             }
+            if (toolCatalog == null && !policy.pins().isEmpty()) {
+                throw new IllegalStateException("the policy pins tool definitions; set a toolCatalog");
+            }
             OwnershipResolver owners = ownershipResolver != null ? ownershipResolver : BuiltInEvaluators.NO_OWNERS;
             return new DefaultToolGate(
                     policy,
                     BuiltInEvaluators.forPolicy(policy,
                             hostResolver != null ? BuiltInEvaluators.resolving(hostResolver) : BuiltInEvaluators.NO_NAME_CHECK,
-                            owners),
+                            owners,
+                            toolCatalog != null ? toolCatalog : BuiltInEvaluators.NO_TOOLS),
                     new ResultChecker(policy, owners),
                     sessionStore != null ? sessionStore : new InMemorySessionStore(),
                     approvalQueue != null ? approvalQueue : new InMemoryApprovalQueue(),

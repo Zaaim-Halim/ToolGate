@@ -19,6 +19,8 @@ public final class BuiltInRules {
     public static final String MCP_SERVERS = "mcp.servers";
     /** The tool is on the agent's allow-list. */
     public static final String ALLOW_LIST = "allow-list";
+    /** A pinned tool's current definition is still the one the policy pins. */
+    public static final String TOOL_PINNED = "tool.pinned";
     /** The session has tool-call budget left. */
     public static final String TOOL_CALL_BUDGET = "budget.toolCalls";
     /** The session has not used up its denial budget. */
@@ -43,7 +45,7 @@ public final class BuiltInRules {
 
     /** Every rule whose mode a policy may set. */
     public static final Set<String> CONFIGURABLE =
-            Set.of(AGENT_KNOWN, MCP_SERVERS, ALLOW_LIST, TOOL_CALL_BUDGET, DENIAL_BUDGET, TAINT_TRIFECTA,
+            Set.of(AGENT_KNOWN, MCP_SERVERS, ALLOW_LIST, TOOL_PINNED, TOOL_CALL_BUDGET, DENIAL_BUDGET, TAINT_TRIFECTA,
                     TAINT_IRREVERSIBLE);
 
     private BuiltInRules() {}

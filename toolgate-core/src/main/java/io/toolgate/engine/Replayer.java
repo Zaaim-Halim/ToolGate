@@ -18,6 +18,7 @@ import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
+import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -43,15 +44,18 @@ public final class Replayer {
     private final ToolGatePolicy policy;
     private final OwnershipResolver owners;
     private final HostResolver hosts;
+    private final ToolCatalog catalog;
 
     /**
-     * @param owners may be null when the policy has no ownership rules
-     * @param hosts  may be null to check URLs without resolving names
+     * @param owners  may be null when the policy has no ownership rules
+     * @param hosts   may be null to check URLs without resolving names
+     * @param catalog may be null when the policy pins no tools
      */
-    public Replayer(ToolGatePolicy policy, OwnershipResolver owners, HostResolver hosts) {
+    public Replayer(ToolGatePolicy policy, OwnershipResolver owners, HostResolver hosts, ToolCatalog catalog) {
         this.policy = policy;
         this.owners = owners;
         this.hosts = hosts;
+        this.catalog = catalog;
     }
 
     public ReplayReport replay(Stream<SessionEvent> history) {
@@ -69,6 +73,9 @@ public final class Replayer {
         }
         if (hosts != null) {
             builder.hostResolver(hosts);
+        }
+        if (catalog != null) {
+            builder.toolCatalog(catalog);
         }
         var changes = new ArrayList<ReplayReport.Change>();
         var agents = new TreeSet<String>();

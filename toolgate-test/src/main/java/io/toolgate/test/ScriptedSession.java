@@ -5,6 +5,7 @@ import io.toolgate.api.ArgValue;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ToolCall;
+import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.ToolResult;
@@ -13,6 +14,7 @@ import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.spi.SessionStore;
+import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -30,12 +32,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * and no framework: what a policy decides is then a plain assertion.
  *
  * <p>Each call is checked; when it runs, its result is recorded too, so taint builds up as in
- * production. Ownership answers, the principal, the clock and the session are all scripted.
+ * production. Ownership answers, tool definitions, the principal, the clock and the session are all scripted.
  */
 public final class ScriptedSession implements AutoCloseable {
 
     private final SessionStore sessionStore = SessionStore.inMemory();
     private final ApprovalQueue approvalQueue = ApprovalQueue.inMemory();
+    private final ToolCatalog.Mutable catalog = ToolCatalog.inMemory();
     private ToolGate gate;
     private final String agentId;
     private final Map<String, String> tenants = new HashMap<>();
@@ -61,6 +64,7 @@ public final class ScriptedSession implements AutoCloseable {
                 .sessionStore(sessionStore)
                 .approvalQueue(approvalQueue)
                 .ownershipResolver(new ScriptedOwners())
+                .toolCatalog(catalog)
                 .auditSink(auditEvents::add)
                 .clock(clock)
                 .build();
@@ -157,6 +161,19 @@ public final class ScriptedSession implements AutoCloseable {
      */
     public ScriptedSession ownerOf(String resourceType, String id, String owner) {
         owners.put(resourceType + "\u0000" + id, owner);
+        return this;
+    }
+
+    /**
+     * Scripts a tool's current definition, as a framework or MCP server lists it, for pinned tools.
+     * Listing the tool again replaces it, as a server's update would.
+     *
+     * @param definition the definition
+     * @return this session
+     */
+    public ScriptedSession listTool(ToolDefinition definition) {
+        flush();
+        catalog.put(definition);
         return this;
     }
 

@@ -42,12 +42,14 @@ public final class PolicyHash {
      * @param denialBudget the denial budget
      * @param mcpServers   allowed MCP servers
      * @param tools        tool descriptions
+     * @param pins         pinned tool definitions; absent from the text when empty, so policies
+     *                     without pins keep the hash they had before pins existed
      * @param agents       agents by ID
      * @return {@code sha256:} and 64 hex digits
      */
     public static String of(Mode mode, Map<String, Mode> ruleModes, int denialBudget,
                             Collection<String> mcpServers, Map<ToolId, ToolPolicy> tools,
-                            Map<String, AgentPolicy> agents) {
+                            Map<ToolId, String> pins, Map<String, AgentPolicy> agents) {
         var text = new StringBuilder(FORMAT_VERSION).append('\n');
         line(text, "mode", mode.toString());
         ruleModes.entrySet().stream()
@@ -59,6 +61,9 @@ public final class PolicyHash {
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
                 .forEach(entry -> line(text, "tool", withLabels(entry.getValue().labels(),
                         entry.getKey().toString(), entry.getValue().effect().name())));
+        pins.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
+                .forEach(entry -> line(text, "pin", entry.getKey().toString(), entry.getValue()));
         agents.values().stream().sorted(Comparator.comparing(AgentPolicy::id)).forEach(agent -> agent(text, agent));
         return PREFIX + HexFormat.of().formatHex(sha256(text.toString()));
     }

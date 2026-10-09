@@ -5,6 +5,7 @@ import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.engine.Evaluator;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
+import io.toolgate.spi.ToolCatalog;
 import io.toolgate.validate.ResolvedAddresses;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,6 +20,9 @@ public final class BuiltInEvaluators {
 
     /** Knows no owners, so every ownership rule denies; for policies without ownership rules. */
     public static final OwnershipResolver NO_OWNERS = new OwnershipResolver() { };
+
+    /** Knows no tools, so every pinned tool is denied; for policies without pins. */
+    public static final ToolCatalog NO_TOOLS = tool -> Optional.empty();
 
     private BuiltInEvaluators() {}
 
@@ -53,20 +57,25 @@ public final class BuiltInEvaluators {
      * @return the evaluators, built-ins first
      */
     public static List<Evaluator> forPolicy(ToolGatePolicy policy) {
-        return forPolicy(policy, NO_NAME_CHECK, NO_OWNERS);
+        return forPolicy(policy, NO_NAME_CHECK, NO_OWNERS, NO_TOOLS);
     }
 
     /**
-     * Every built-in evaluator, plus one for each argument and taint rule in the policy.
+     * Every built-in evaluator, plus one for each argument and taint rule in the policy, and the pin
+     * check when the policy pins any tool.
      *
      * @param policy    the policy whose rules to apply
      * @param nameCheck why a URL host name must not be used; {@link #NO_NAME_CHECK} or {@link #resolving}
      * @param owners    the application's ownership resolver
+     * @param catalog   the tools' current definitions, for pins
      * @return the evaluators, built-ins first
      */
     public static List<Evaluator> forPolicy(ToolGatePolicy policy, Function<String, Optional<String>> nameCheck,
-                                            OwnershipResolver owners) {
+                                            OwnershipResolver owners, ToolCatalog catalog) {
         var evaluators = new ArrayList<>(all());
+        if (!policy.pins().isEmpty()) {
+            evaluators.add(new PinEvaluator(catalog));
+        }
         policy.agents().values().forEach(agent -> {
             agent.argumentRules().forEach((argument, rules) -> {
                 if (ArgumentChecks.isOwnership(rules)) {

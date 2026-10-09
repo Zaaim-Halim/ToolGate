@@ -5,6 +5,7 @@ import static io.toolgate.support.Checks.requireNonBlank;
 import io.toolgate.api.Effect;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
+import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolId;
 import io.toolgate.policy.PolicyHash;
 import io.toolgate.rules.ArgumentChecks;
@@ -58,6 +59,7 @@ public final class ToolGatePolicy {
     private final Set<String> mcpServers;
     private final Map<String, AgentPolicy> agents;
     private final Map<ToolId, ToolPolicy> tools;
+    private final Map<ToolId, String> pins;
     private final String hash;
 
     private ToolGatePolicy(Builder builder) {
@@ -67,7 +69,8 @@ public final class ToolGatePolicy {
         this.mcpServers = Set.copyOf(builder.mcpServers);
         this.agents = Map.copyOf(builder.agents);
         this.tools = Map.copyOf(builder.tools);
-        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, tools, agents);
+        this.pins = Map.copyOf(builder.pins);
+        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, tools, pins, agents);
     }
 
     /**
@@ -153,6 +156,25 @@ public final class ToolGatePolicy {
     }
 
     /**
+     * The definition a tool must still have, if the policy pins it.
+     *
+     * @param tool the tool
+     * @return its pin, from {@link ToolDefinition#sha256()}, or empty if the tool is not pinned
+     */
+    public Optional<String> pin(ToolId tool) {
+        return Optional.ofNullable(pins.get(tool));
+    }
+
+    /**
+     * Every pinned tool.
+     *
+     * @return pins by tool
+     */
+    public Map<ToolId, String> pins() {
+        return pins;
+    }
+
+    /**
      * Identifies this exact policy in audit events and replay.
      *
      * <p>Computed from a canonical form, so it does not depend on the order in which the policy was
@@ -182,6 +204,7 @@ public final class ToolGatePolicy {
         private final Set<String> mcpServers = new LinkedHashSet<>();
         private final Map<String, AgentPolicy> agents = new LinkedHashMap<>();
         private final Map<ToolId, ToolPolicy> tools = new LinkedHashMap<>();
+        private final Map<ToolId, String> pins = new LinkedHashMap<>();
 
         private Builder() {}
 
@@ -267,6 +290,9 @@ public final class ToolGatePolicy {
             var builder = new ToolBuilder(tool);
             configurer.accept(builder);
             tools.put(tool, builder.build());
+            if (builder.pin != null) {
+                pins.put(tool, builder.pin);
+            }
             return this;
         }
 
@@ -315,6 +341,7 @@ public final class ToolGatePolicy {
         private final ToolId tool;
         private Set<Label> labels;
         private Effect effect = Effect.IRREVERSIBLE;
+        private String pin;
 
         private ToolBuilder(ToolId tool) {
             this.tool = tool;
@@ -339,6 +366,28 @@ public final class ToolGatePolicy {
          */
         public ToolBuilder effect(Effect newEffect) {
             this.effect = Objects.requireNonNull(newEffect, "effect");
+            return this;
+        }
+
+        /**
+         * Pins the tool's definition, its description and input schema, as reviewed. Once the
+         * definition changes, such as after an MCP server's update, every call to the tool is denied
+         * until the policy is updated with the new pin. The gate reads current definitions from a
+         * {@link io.toolgate.spi.ToolCatalog}, which it then requires.
+         *
+         * @param reviewedPin {@link ToolDefinition#sha256()} of the definition as reviewed
+         * @return this tool builder
+         */
+        public ToolBuilder pin(String reviewedPin) {
+            Objects.requireNonNull(reviewedPin, "pin");
+            if (!ToolDefinition.isPin(reviewedPin)) {
+                throw new InvalidPolicyException("tool " + tool + ": pin must be sha256: and 64 lowercase hex digits, was '"
+                        + reviewedPin + "'");
+            }
+            if (pin != null) {
+                throw new InvalidPolicyException("tool " + tool + " is pinned twice");
+            }
+            this.pin = reviewedPin;
             return this;
         }
 
