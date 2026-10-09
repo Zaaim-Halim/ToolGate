@@ -24,6 +24,7 @@
         <module>toolgate-jdbc</module>
         <module>toolgate-email</module>
         <module>toolgate-test</module>
+        <module>toolgate-spring-ai</module>
         <module>toolgate-fuzz</module>
         <module>toolgate-benchmarks</module>
     </modules>
