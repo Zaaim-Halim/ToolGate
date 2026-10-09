@@ -24,6 +24,8 @@ final class MockModelServer implements AutoCloseable {
     private final HttpServer server;
     private final Deque<Reply> replies = new ArrayDeque<>();
     private final List<String> requests = new CopyOnWriteArrayList<>();
+    /** When set, every request is answered by its content instead of the queue, for concurrent requests. */
+    private volatile Reply[] byContent;
 
     private sealed interface Reply permits ToolCalls, Text {}
 
@@ -37,8 +39,13 @@ final class MockModelServer implements AutoCloseable {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             requests.add(body);
             Reply reply;
-            synchronized (replies) {
-                reply = replies.pollFirst();
+            Reply[] rule = byContent;
+            if (rule != null) {
+                reply = body.contains("\"role\":\"tool\"") ? rule[1] : rule[0];
+            } else {
+                synchronized (replies) {
+                    reply = replies.pollFirst();
+                }
             }
             if (reply == null) {
                 reply = new Text("(no scripted reply left)");
@@ -72,6 +79,15 @@ final class MockModelServer implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Answers every request by its content: these tool calls when it carries no tool result yet, else
+     * this text. Each concurrent request then gets its own two replies, whatever the interleaving.
+     */
+    MockModelServer alwaysToolCallsThenText(String text, Call... calls) {
+        byContent = new Reply[] {new ToolCalls(List.of(calls)), new Text(text)};
+        return this;
+    }
+
     List<String> requests() {
         return requests;
     }
@@ -80,6 +96,7 @@ final class MockModelServer implements AutoCloseable {
         synchronized (replies) {
             replies.clear();
         }
+        byContent = null;
         requests.clear();
     }
 

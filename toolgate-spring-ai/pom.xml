@@ -62,6 +62,12 @@
             <artifactId>spring-security-core</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- Optional: present in Spring MVC applications, to tell a web request from a job. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <optional>true</optional>
+        </dependency>
         <!-- Optional: present only in applications that use MCP tools, where it names their servers. -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

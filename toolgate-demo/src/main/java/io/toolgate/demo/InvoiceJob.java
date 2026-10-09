@@ -1,8 +1,7 @@
 package io.toolgate.demo;
 
-import io.toolgate.api.Principal;
-import io.toolgate.api.Tenant;
 import io.toolgate.springai.ToolGateContext;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
@@ -10,9 +9,6 @@ import org.springframework.stereotype.Service;
 /** One run of the nightly invoice job: one invoice, one session, nobody watching. */
 @Service
 public class InvoiceJob {
-
-    /** The job acts for itself, in tenant Acme; no person is asked anything. */
-    static final Principal SERVICE = Principal.service("invoice-processor", Tenant.of("acme"));
 
     private final ChatClient chatClient;
     private final InvoiceTools tools;
@@ -34,7 +30,8 @@ public class InvoiceJob {
     public String process(String invoiceId) {
         String session = "job-" + invoiceId + "-" + UUID.randomUUID();
         return chatClient.prompt().user("Process invoice " + invoiceId).tools(tools)
-                .toolContext(ToolGateContext.of("invoice-processor", SERVICE, session))
+                // Who the job acts as is the policy's business: the agent declares its service identity.
+                .toolContext(Map.of(ToolGateContext.AGENT, "invoice-processor", ToolGateContext.SESSION, session))
                 .call().content();
     }
 }

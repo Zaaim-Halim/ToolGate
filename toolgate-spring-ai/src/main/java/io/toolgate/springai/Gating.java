@@ -3,12 +3,16 @@ package io.toolgate.springai;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Mode;
+import io.toolgate.api.Principal;
 import io.toolgate.api.ResultDecision;
+import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.ToolResult;
+import io.toolgate.api.policy.AgentPolicy;
+import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
 import java.util.HashMap;
@@ -40,7 +44,7 @@ final class Gating {
     private final ToolCatalog.Mutable catalog;
     private final Clock clock;
     private final ToolCallbackResolver resolver;
-    private final Mode mode;
+    private final ToolGatePolicy policy;
     private final ToolGatePrincipalResolver principals;
     private final String defaultAgent;
     /** Definitions by what they were built from, so a tool's pin is computed once, not on every call. */
@@ -53,34 +57,64 @@ final class Gating {
         }
     };
 
-    Gating(ToolGate gate, ToolCatalog.Mutable catalog, Clock clock, ToolCallbackResolver resolver, Mode mode,
+    Gating(ToolGate gate, ToolCatalog.Mutable catalog, Clock clock, ToolCallbackResolver resolver, ToolGatePolicy policy,
            ToolGatePrincipalResolver principals, String defaultAgent) {
         this.gate = Objects.requireNonNull(gate, "gate");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.resolver = resolver;
-        this.mode = Objects.requireNonNull(mode, "mode");
+        this.policy = Objects.requireNonNull(policy, "policy");
         this.principals = principals;
         this.defaultAgent = defaultAgent;
     }
 
+    /**
+     * Who an agent's call is for, when the request names nobody; called on the request's own thread.
+     * <ol>
+     *   <li>The service identity the policy gives the agent, such as a job's.</li>
+     *   <li>The signed-in user, from the {@link ToolGatePrincipalResolver}.</li>
+     *   <li>For a headless agent called outside any web request, as by a scheduled job or an event
+     *       consumer: the service {@code <agent>}, with no tenant and no roles, so tenant and role rules
+     *       deny it until the policy gives the agent a real identity.</li>
+     * </ol>
+     * Inside a web request with nobody signed in, and for interactive agents, nobody: the call ends the run.
+     */
+    Optional<Principal> principalFor(String agentId) {
+        Optional<AgentPolicy> agent = policy.agent(agentId);
+        Optional<Principal> declared = agent.flatMap(AgentPolicy::servicePrincipal);
+        if (declared.isPresent()) {
+            return declared;
+        }
+        Optional<Principal> signedIn = principals == null ? Optional.empty() : principals.resolve();
+        if (signedIn.isPresent()) {
+            return signedIn;
+        }
+        boolean job = agent.isPresent() && !agent.get().interactive() && !RequestThreads.servingRequest();
+        return job ? Optional.of(Principal.service(agentId, Tenant.none())) : Optional.empty();
+    }
+
+    /** The service identity the policy gives an agent; the same on any thread. */
+    Optional<Principal> declaredPrincipal(String agentId) {
+        return policy.agent(agentId).flatMap(AgentPolicy::servicePrincipal);
+    }
+
     /** The policy-wide mode, which also decides whether the adapter's own refusals block. */
     Mode mode() {
-        return mode;
+        return policy.mode();
     }
 
     /**
-     * Fills what a request's tool context leaves out, on the request's own thread: the principal from
-     * the resolver, the agent from {@code toolgate.agent}, the session from the conversation ID.
-     * Whatever the request passed wins.
+     * Fills what a request's tool context leaves out, on the request's own thread: the agent from
+     * {@code toolgate.agent}, then its principal (see {@link #principalFor}), and the session from the
+     * conversation ID. Whatever the request passed wins.
      */
     Map<String, Object> completeContext(Map<String, Object> toolContext, Map<String, Object> requestContext) {
         var complete = new HashMap<String, Object>(toolContext == null ? Map.of() : toolContext);
-        if (!complete.containsKey(ToolGateContext.PRINCIPAL) && principals != null) {
-            principals.resolve().ifPresent(principal -> complete.put(ToolGateContext.PRINCIPAL, principal));
-        }
         if (!complete.containsKey(ToolGateContext.AGENT) && defaultAgent != null && !defaultAgent.isBlank()) {
             complete.put(ToolGateContext.AGENT, defaultAgent);
+        }
+        if (!complete.containsKey(ToolGateContext.PRINCIPAL) && complete.get(ToolGateContext.AGENT) instanceof String agent) {
+            principalFor(agent).ifPresent(principal -> complete.put(ToolGateContext.PRINCIPAL, principal));
         }
         if (!complete.containsKey(ToolGateContext.SESSION)
                 && requestContext.get(ChatMemory.CONVERSATION_ID) instanceof String conversation && !conversation.isBlank()) {
@@ -189,7 +223,7 @@ final class Gating {
             output = callback.call(input, forTool(callback, toolContext));
         } catch (RuntimeException failure) {
             // An error message can carry an attacker's page as easily as a result, so it taints too.
-            gate.recordResult(callThatRuns, new ToolResult.Failed(String.valueOf(failure.getMessage())));
+            gate.recordResult(callThatRuns, new ToolResult.Failed(describe(failure)));
             throw failure;
         }
         String shown = output == null ? "" : output;
@@ -210,6 +244,19 @@ final class Gating {
         var kept = new HashMap<String, Object>(toolContext.getContext());
         kept.keySet().removeIf(ToolGateContext::isToolGateKey);
         return new ToolContext(kept);
+    }
+
+    /**
+     * A failure's message for the record. Spring AI wraps a tool's exception in its own
+     * ToolExecutionException, and either may have no message; recording must never fail on that.
+     */
+    static String describe(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause.getMessage() != null && !cause.getMessage().isBlank()) {
+                return cause.getMessage();
+            }
+        }
+        return failure.getClass().getName();
     }
 
     private static ArgValue result(String output) {

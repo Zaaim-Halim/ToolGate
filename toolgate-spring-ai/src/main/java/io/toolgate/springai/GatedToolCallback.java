@@ -66,7 +66,8 @@ final class GatedToolCallback implements ToolCallback {
         ObjectValue arguments = arguments(toolInput);
         ToolCall call;
         try {
-            call = new ToolCall(UUID.randomUUID().toString(), principal(context), text(context, ToolGateContext.AGENT),
+            String agent = text(context, ToolGateContext.AGENT);
+            call = new ToolCall(UUID.randomUUID().toString(), principal(context, agent), agent,
                     text(context, ToolGateContext.SESSION), tool, arguments == null ? ObjectValue.empty() : arguments,
                     gating.clock().instant());
         } catch (ToolGateViolationException noContext) {
@@ -143,11 +144,16 @@ final class GatedToolCallback implements ToolCallback {
 
 
 
-    private static Principal principal(Map<String, Object> context) {
+    /**
+     * The request's principal, or the service identity the policy gives the agent. Nothing else is
+     * guessed here: this may run on another thread than the request, where a job and a web request
+     * look alike; ToolGate's advisor already filled in what the request's own thread could tell.
+     */
+    private Principal principal(Map<String, Object> context, String agent) {
         if (context.get(ToolGateContext.PRINCIPAL) instanceof Principal principal) {
             return principal;
         }
-        throw missing(ToolGateContext.PRINCIPAL);
+        return gating.declaredPrincipal(agent).orElseThrow(() -> missing(ToolGateContext.PRINCIPAL));
     }
 
     private static String text(Map<String, Object> context, String key) {

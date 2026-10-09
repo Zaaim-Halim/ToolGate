@@ -168,7 +168,7 @@ class SpringAiAdapterTest {
 
         assertThatThrownBy(() -> chatClients.build().prompt().user("Weather?").tools(new TestTools()).call().content())
                 .isInstanceOf(ToolGateViolationException.class)
-                .hasMessageContaining(ToolGateContext.PRINCIPAL);
+                .hasMessageContaining("adapter.context");
         assertThat(TestTools.RAN).isEmpty();
     }
 

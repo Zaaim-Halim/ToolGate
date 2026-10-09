@@ -12,6 +12,8 @@ import static io.toolgate.api.policy.ArgumentRules.schemes;
 import static io.toolgate.email.EmailRules.emailDomains;
 
 import io.toolgate.api.Mode;
+import io.toolgate.api.Principal;
+import io.toolgate.api.Tenant;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.OwnershipResolver;
 import java.util.Optional;
@@ -35,6 +37,8 @@ class InvoicePolicy {
                 .tool("sendEmail", t -> t.labels(EXTERNAL_SINK).effect(IRREVERSIBLE))
                 .tool("draftEmail", t -> t.effect(REVERSIBLE))
                 .agent("invoice-processor", a -> a
+                        // A nightly job: it acts as this service, in tenant Acme, never as a user.
+                        .principal(Principal.service("invoice-processor", Tenant.of("acme")))
                         .allow("readInvoice", "fetchSupplierPage", "sendEmail", "draftEmail")
                         .downgrade("sendEmail", "draftEmail")
                         .rule("readInvoice.id", sameTenant("invoice"))

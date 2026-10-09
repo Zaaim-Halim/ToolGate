@@ -30,7 +30,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -50,8 +53,13 @@ class ContextAndModesTest {
         registry.add("spring.ai.openai.chat.options.model", () -> "gpt-4o");
     }
 
+    /**
+     * Without a web environment, so the test thread is like a job's: a mock web environment would put a
+     * request on every test thread. Tests that need a request set one themselves.
+     */
     @Nested
-    @SpringBootTest(classes = TestApplication.class, properties = "toolgate.agent=support-chat")
+    @SpringBootTest(classes = TestApplication.class, properties = "toolgate.agent=support-chat",
+            webEnvironment = SpringBootTest.WebEnvironment.NONE)
     class Defaults {
 
         @Autowired
@@ -111,15 +119,62 @@ class ContextAndModesTest {
                     }));
         }
 
+        /** A web request whose user cannot be identified never falls back to a service identity. */
         @Test
-        void withNobodySignedInTheRunEnds() {
+        void aWebRequestWithNobodySignedInEndsTheRun() {
+            MODEL.thenToolCalls(new Call("call_1", "getWeather", "{\"city\":\"Paris\"}")).thenText("It is sunny.");
+            RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest()));
+            try {
+                assertThatThrownBy(() -> chatClients.build().prompt().user("Weather?").tools(new TestTools())
+                        .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, conversation))
+                        .call().content())
+                        .isInstanceOf(ToolGateViolationException.class)
+                        .hasMessageContaining(ToolGateContext.PRINCIPAL);
+            } finally {
+                RequestContextHolder.resetRequestAttributes();
+            }
+            assertThat(TestTools.RAN).isEmpty();
+        }
+
+        /** A job, outside any web request and with nobody signed in, acts as the service named after its agent. */
+        @Test
+        void aJobWithNoPrincipalActsAsItsAgentsService() {
+            MODEL.thenToolCalls(new Call("call_1", "getWeather", "{\"city\":\"Paris\"}")).thenText("It is sunny.");
+
+            chatClients.build().prompt().user("Weather?").tools(new TestTools())
+                    .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, conversation))
+                    .call().content();
+
+            assertThat(TestTools.RAN).containsExactly("getWeather");
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(decisions(conversation)).singleElement()
+                    .satisfies(decided -> assertThat(decided.principal())
+                            .isEqualTo(Principal.service("support-chat", Tenant.none()))));
+        }
+
+        /** The identity the policy gives an agent wins over whoever is signed in. */
+        @Test
+        void aDeclaredServiceIdentityWinsOverTheSignedInUser() {
+            signIn("maria", "ROLE_support");
+            MODEL.thenToolCalls(new Call("call_1", "getWeather", "{\"city\":\"Paris\"}")).thenText("It is sunny.");
+
+            chatClients.build().prompt().user("Weather?").tools(new TestTools())
+                    .toolContext(java.util.Map.of(ToolGateContext.AGENT, "nightly-weather", ToolGateContext.SESSION, conversation))
+                    .call().content();
+
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(decisions(conversation)).singleElement()
+                    .satisfies(decided -> assertThat(decided.principal())
+                            .isEqualTo(Principal.service("weather-job", Tenant.of("acme")))));
+        }
+
+        /** An interactive agent expects a person; without one there is no default. */
+        @Test
+        void anInteractiveAgentWithNobodySignedInEndsTheRun() {
             MODEL.thenToolCalls(new Call("call_1", "getWeather", "{\"city\":\"Paris\"}")).thenText("It is sunny.");
 
             assertThatThrownBy(() -> chatClients.build().prompt().user("Weather?").tools(new TestTools())
-                    .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, conversation))
+                    .toolContext(java.util.Map.of(ToolGateContext.AGENT, "chat", ToolGateContext.SESSION, conversation))
                     .call().content())
-                    .isInstanceOf(ToolGateViolationException.class)
-                    .hasMessageContaining(ToolGateContext.PRINCIPAL);
+                    .isInstanceOf(ToolGateViolationException.class);
             assertThat(TestTools.RAN).isEmpty();
         }
 

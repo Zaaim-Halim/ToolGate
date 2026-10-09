@@ -50,8 +50,20 @@ class TestApplication {
                         .reviewers("finance")
                         .rule("issueRefund.amount", atMost("1000"), atMost("200").otherwise(DEFER)))
                 .agent("probe", a -> a
-                        .allow("readInvoice", "fetchStatus", "sendEmail", "draftEmail")
+                        .allow("readInvoice", "fetchStatus", "checkQuota", "sendEmail", "draftEmail")
                         .downgrade("sendEmail", "draftEmail"))
+                .agent("three-calls", a -> a
+                        .allow("getWeather")
+                        .budget(b -> b.toolCalls(3)))
+                .agent("weather-desk", a -> a
+                        .allow("getWeather", "fetchStatus")
+                        .budget(b -> b.toolCalls(2)))
+                .agent("nightly-weather", a -> a
+                        .allow("getWeather")
+                        .principal(io.toolgate.api.Principal.service("weather-job", io.toolgate.api.Tenant.of("acme"))))
+                .agent("chat", a -> a
+                        .allow("getWeather")
+                        .interactive(true))
                 .agent("one-call", a -> a
                         .allow("getWeather")
                         .budget(b -> b.toolCalls(1)))

@@ -88,7 +88,7 @@ public class ToolGateAutoConfiguration {
     Gating toolGateGating(ToolGate gate, ToolGatePolicy policy, ToolCatalog.Mutable catalog,
                           ObjectProvider<ToolCallbackResolver> resolver, ObjectProvider<Clock> clock,
                           ObjectProvider<ToolGatePrincipalResolver> principals, ToolGateProperties properties) {
-        return new Gating(gate, catalog, clock.getIfAvailable(Clock::systemUTC), resolver.getIfAvailable(), policy.mode(),
+        return new Gating(gate, catalog, clock.getIfAvailable(Clock::systemUTC), resolver.getIfAvailable(), policy,
                 principals.getIfAvailable(), properties.agent());
     }
 
