@@ -104,6 +104,7 @@ public final class PolicyHash {
             case ArgumentRule.AtLeast(var limit, var action) -> line(text, "atLeast", limit.toPlainString(), action.name());
             case ArgumentRule.TotalAtMost(var limit, var action) ->
                     line(text, "totalAtMost", limit.toPlainString(), action.name());
+            case ArgumentRule.Validated validated -> line(text, "validated", validated.kind(), validated.fingerprint());
         }
         return text.toString();
     }

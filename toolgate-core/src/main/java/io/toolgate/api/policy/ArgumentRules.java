@@ -1,5 +1,6 @@
 package io.toolgate.api.policy;
 
+import io.toolgate.spi.ArgumentValidator;
 import io.toolgate.support.Decimals;
 import java.math.BigDecimal;
 import java.util.Arrays;
@@ -155,6 +156,18 @@ public final class ArgumentRules {
     }
 
     /**
+     * A rule checked by a validator from outside core, such as {@code toolgate-email}'s. Modules
+     * usually offer their own factory, such as {@code EmailRules.emailDomains(...)}.
+     *
+     * @param validator the validator
+     * @return the rule; it cannot share an argument with URL, path, ownership or numeric rules
+     * @throws IllegalArgumentException if the validator's kind is not a short name
+     */
+    public static ArgumentRule.Validated validated(ArgumentValidator validator) {
+        return new ArgumentRule.Validated(validator);
+    }
+
+    /**
      * The kind of a rule, so a policy can give each kind at most once per argument. A limit's kind
      * includes its action, so one deny and one defer limit may share an argument.
      */
@@ -173,6 +186,7 @@ public final class ArgumentRules {
                     action == OnViolation.DENY ? "atLeast" : "atLeast otherwise " + action;
             case ArgumentRule.TotalAtMost(var limit, OnViolation action) ->
                     action == OnViolation.DENY ? "totalAtMost" : "totalAtMost otherwise " + action;
+            case ArgumentRule.Validated validated -> validated.kind();
         };
     }
 }

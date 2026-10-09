@@ -73,6 +73,8 @@ public final class BuiltInEvaluators {
                     evaluators.add(new OwnershipEvaluator(agent.id(), argument, rules, owners));
                 } else if (ArgumentChecks.isNumeric(rules)) {
                     evaluators.add(new NumericEvaluator(agent.id(), argument, rules));
+                } else if (ArgumentChecks.isValidated(rules)) {
+                    evaluators.add(new ValidatorEvaluator(agent.id(), argument, rules));
                 } else {
                     evaluators.add(new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck)));
                 }

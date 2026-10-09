@@ -29,7 +29,9 @@ public final class ArgumentChecks {
         /** SameTenant and ownedByPrincipal: the value is a record ID, or a list of them. */
         OWNERSHIP,
         /** AtMost and atLeast: the value is a number. */
-        NUMBER
+        NUMBER,
+        /** Validators from outside core, each checking the value its own way. */
+        VALIDATED
     }
 
     private ArgumentChecks() {}
@@ -46,7 +48,18 @@ public final class ArgumentChecks {
             case PATH -> pathRule(rules);
             case OWNERSHIP -> rules.forEach(ArgumentChecks::requireResourceType);
             case NUMBER -> NumericEvaluator.requireReachableLimits(rules);
+            case VALIDATED -> { }
         }
+    }
+
+    /**
+     * Whether the rules are checked by validators from outside core.
+     *
+     * @param rules an argument's rules
+     * @return {@code true} for validated rules
+     */
+    static boolean isValidated(List<ArgumentRule> rules) {
+        return family(rules) == Family.VALIDATED;
     }
 
     /**
@@ -97,13 +110,15 @@ public final class ArgumentChecks {
             }
             case OWNERSHIP -> throw new IllegalArgumentException("ownership rules are checked by OwnershipEvaluator");
             case NUMBER -> throw new IllegalArgumentException("numeric rules are checked by NumericEvaluator");
+            case VALIDATED -> throw new IllegalArgumentException("validated rules are checked by ValidatorEvaluator");
         };
     }
 
     private static Family family(List<ArgumentRule> rules) {
         Set<Family> families = rules.stream().map(ArgumentChecks::family).collect(Collectors.toSet());
         if (families.size() != 1) {
-            throw new IllegalArgumentException("an argument takes URL, path, ownership or numeric rules, not a mix");
+            throw new IllegalArgumentException(
+                    "an argument takes URL, path, ownership, numeric or validator rules, not a mix");
         }
         return families.iterator().next();
     }
@@ -120,6 +135,7 @@ public final class ArgumentChecks {
             case ArgumentRule.AtMost atMost -> Family.NUMBER;
             case ArgumentRule.AtLeast atLeast -> Family.NUMBER;
             case ArgumentRule.TotalAtMost total -> Family.NUMBER;
+            case ArgumentRule.Validated validated -> Family.VALIDATED;
         };
     }
 
