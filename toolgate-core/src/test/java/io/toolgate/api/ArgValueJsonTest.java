@@ -18,6 +18,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class ArgValueJsonTest {
 
+    /** Found by running a released refund: 480 came back as 4.8E+2 for a tool reading text. */
+    @Test
+    void writesNumbersAsAModelWouldWriteThem() {
+        assertThat(ArgValueJson.write(ArgValueJson.read("[480,1000.0,0.50,1e-7,-12]"))).isEqualTo("[480,1000,0.5,0.0000001,-12]");
+        assertThat(ArgValueJson.write(ArgValueJson.read("1e999999999"))).isEqualTo("1E+999999999");
+    }
+
     @Test
     void writesCompactJson() {
         var fields = new LinkedHashMap<String, ArgValue>();

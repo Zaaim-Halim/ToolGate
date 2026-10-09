@@ -1,6 +1,7 @@
 package io.toolgate.api;
 
 import io.toolgate.audit.AuditJson;
+import io.toolgate.support.Decimals;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,7 +59,10 @@ public final class ArgValueJson {
     private static void write(ArgValue value, StringBuilder json) {
         switch (value) {
             case TextValue(String text) -> json.append(AuditJson.quote(text));
-            case NumberValue(BigDecimal number) -> json.append(number.toString());
+            // Plain, as a model writes numbers: NumberValue strips trailing zeros, so toString() would
+            // turn 480 into 4.8E+2, and a tool reading the value as text would see that. Numbers with no
+            // reasonable plain text, such as 1e999999999, keep their exponent.
+            case NumberValue(BigDecimal number) -> json.append(Decimals.describe(number));
             case BooleanValue(boolean bool) -> json.append(bool);
             case NullValue nothing -> json.append("null");
             case ListValue(List<ArgValue> elements) -> {
