@@ -64,6 +64,11 @@ class TestApplication {
                 .agent("chat", a -> a
                         .allow("getWeather")
                         .interactive(true))
+                .tool("queueRefund", t -> t.effect(REVERSIBLE))
+                .agent("refunds-ruled", a -> a
+                        .allow("readTicket", "issueRefund", "queueRefund")
+                        .downgrade("issueRefund", "queueRefund")
+                        .rule("queueRefund.amount", atMost("1000")))
                 .agent("one-call", a -> a
                         .allow("getWeather")
                         .budget(b -> b.toolCalls(1)))

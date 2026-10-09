@@ -76,6 +76,12 @@ final class TestTools {
         throw new IllegalStateException("");
     }
 
+    @Tool(description = "Queue a refund for a reviewer")
+    String queueRefund(String order, int amount) {
+        RAN.add("queueRefund " + amount);
+        return "queued " + amount;
+    }
+
     @Tool(description = "Delete every order")
     String deleteAllOrders() {
         RAN.add("deleteAllOrders");

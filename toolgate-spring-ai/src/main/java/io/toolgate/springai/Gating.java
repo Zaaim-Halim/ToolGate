@@ -37,6 +37,11 @@ final class Gating {
     private static final String MCP_PACKAGE = "org.springframework.ai.mcp.";
     /** The server of an MCP tool whose connection is unknown or ambiguous; no policy allows it. */
     static final String UNATTRIBUTED_SERVER = "unattributed";
+    /**
+     * Distinct definitions remembered; past this, the cache starts over. A server that changes its tool's
+     * description on every listing would otherwise grow it without end.
+     */
+    private static final int MAX_DEFINITIONS = 4_096;
     /** Deferred calls whose tools are kept for approval; enough for any review queue, bounded for memory. */
     private static final int MAX_KEPT_CALLS = 10_000;
 
@@ -172,6 +177,9 @@ final class Gating {
      */
     Optional<ToolDefinition> definition(ToolId tool, ToolCallback callback) {
         var source = callback.getToolDefinition();
+        if (definitions.size() > MAX_DEFINITIONS) {
+            definitions.clear();
+        }
         Optional<ToolDefinition> definition = definitions.computeIfAbsent(
                 List.of(tool.toString(), source.description(), source.inputSchema()), key -> {
                     try {

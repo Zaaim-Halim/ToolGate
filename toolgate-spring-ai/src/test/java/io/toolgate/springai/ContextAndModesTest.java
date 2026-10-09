@@ -136,6 +136,30 @@ class ContextAndModesTest {
             assertThat(TestTools.RAN).isEmpty();
         }
 
+        /**
+         * Known gap, pinned: a web request that hands the chat call to another thread (an executor,
+         * {@code @Async}) leaves no request and no signed-in user on that thread, so a headless agent
+         * gets the default service identity there. Applications doing so pass the principal along, or
+         * give the agent a declared identity.
+         */
+        @Test
+        void gapAChatCallMovedOffTheRequestThreadActsAsTheService() throws Exception {
+            MODEL.thenToolCalls(new Call("call_1", "getWeather", "{\"city\":\"Paris\"}")).thenText("It is sunny.");
+            RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest()));
+            try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                executor.submit(() -> chatClients.build().prompt().user("Weather?").tools(new TestTools())
+                        .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, conversation))
+                        .call().content()).get();
+            } finally {
+                RequestContextHolder.resetRequestAttributes();
+            }
+
+            assertThat(TestTools.RAN).containsExactly("getWeather");
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(decisions(conversation)).singleElement()
+                    .satisfies(decided -> assertThat(decided.principal())
+                            .isEqualTo(Principal.service("support-chat", Tenant.none()))));
+        }
+
         /** A job, outside any web request and with nobody signed in, acts as the service named after its agent. */
         @Test
         void aJobWithNoPrincipalActsAsItsAgentsService() {

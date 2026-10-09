@@ -118,6 +118,21 @@ class IntegrationTest {
         assertThat(TestTools.RAN).containsExactly("readInvoice", "fetchStatus", "draftEmail");
     }
 
+    /**
+     * The safe tool has argument rules, and so needs its definition, though only the downgraded tool was
+     * called: it was offered with the same request, which is where its definition comes from.
+     */
+    @Test
+    void aDowngradeToASafeToolWithArgumentRulesRuns() {
+        MODEL.thenToolCalls(new Call("call_1", "readTicket", "{\"id\":\"48213\"}"))
+                .thenToolCalls(new Call("call_2", "issueRefund", "{\"order\":\"7731\",\"amount\":480}"))
+                .thenText("Queued.");
+
+        ask("refunds-ruled", JOB);
+
+        assertThat(TestTools.RAN).containsExactly("readTicket", "queueRefund 480");
+    }
+
     /** A tool whose result goes straight to the user: the user gets the generic denial, and the model nothing. */
     @Test
     void aDeniedDirectAnswerToolAnswersWithTheGenericDenial() {

@@ -8,6 +8,7 @@ import io.toolgate.api.Principal;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.policy.BuiltInRules;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -91,11 +92,21 @@ final class GatedToolCallback implements ToolCallback {
             return gating.gate().reject(call, BuiltInRules.ARGUMENTS_READABLE,
                     "the arguments are not one unambiguous JSON object (duplicate keys, trailing content or not JSON)");
         }
-        Optional<io.toolgate.api.ToolDefinition> offered = gating.definition(call.tool(), target);
-        return offered.isPresent()
-                ? gating.gate().check(call, offered.get())
-                : gating.gate().reject(call, BuiltInRules.DEFINITION_READABLE,
-                        "the tool's definition cannot be canonicalized (RFC 8785), so pins and declared arguments cannot be checked");
+        Optional<io.toolgate.api.ToolDefinition> own = gating.definition(call.tool(), target);
+        if (own.isEmpty()) {
+            return gating.gate().reject(call, BuiltInRules.DEFINITION_READABLE,
+                    "the tool's definition cannot be canonicalized (RFC 8785), so pins and declared arguments cannot be checked");
+        }
+        // Everything the request offered, so a downgrade's safe tool is checked against its own definition too.
+        var offered = new HashMap<ToolId, io.toolgate.api.ToolDefinition>();
+        offered.put(call.tool(), own.get());
+        for (ToolCallback sibling : siblings) {
+            ToolId siblingTool = gating.toolId(sibling);
+            if (!offered.containsKey(siblingTool)) {
+                gating.definition(siblingTool, sibling).ifPresent(definition -> offered.put(siblingTool, definition));
+            }
+        }
+        return gating.gate().check(call, tool -> Optional.ofNullable(offered.get(tool)));
     }
 
     private String apply(Decision decision, ToolCall call, ObjectValue arguments, String toolInput, ToolContext toolContext) {
