@@ -25,6 +25,11 @@ public final class ToolGateContext {
     public static final String PRINCIPAL = "toolgate.principal";
     /** The session that holds taint and budgets, such as the conversation ID or one job run. */
     public static final String SESSION = "toolgate.session";
+    /**
+     * Set when an approved deferred call runs: the same for every attempt to run that call, so a tool
+     * whose API takes an idempotency key can make its effect happen at most once.
+     */
+    public static final String IDEMPOTENCY_KEY = "toolgate.idempotencyKey";
 
     private ToolGateContext() {}
 
@@ -49,6 +54,6 @@ public final class ToolGateContext {
      * @return {@code true} for ToolGate's keys
      */
     public static boolean isToolGateKey(String key) {
-        return AGENT.equals(key) || PRINCIPAL.equals(key) || SESSION.equals(key);
+        return AGENT.equals(key) || PRINCIPAL.equals(key) || SESSION.equals(key) || IDEMPOTENCY_KEY.equals(key);
     }
 }

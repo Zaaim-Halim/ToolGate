@@ -1,0 +1,148 @@
+package io.toolgate.springai;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.toolgate.api.Approval;
+import io.toolgate.api.Decision;
+import io.toolgate.api.Principal;
+import io.toolgate.api.Tenant;
+import io.toolgate.api.policy.BuiltInRules;
+import io.toolgate.spi.PendingCall;
+import io.toolgate.springai.MockModelServer.Call;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.UUID;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+/** Paths found by probing the real integration: deferral and release, failures, refusals, direct answers. */
+@SpringBootTest(classes = TestApplication.class)
+class IntegrationTest {
+
+    private static final MockModelServer MODEL = start();
+    private static final Principal LENA = Principal.user("lena", Tenant.of("acme"), "finance");
+    private static final Principal JOB = Principal.service("refund-job", Tenant.of("acme"));
+
+    @Autowired
+    private ChatClient.Builder chatClients;
+    @Autowired
+    private ToolGateApprovals approvals;
+    @Autowired
+    private Gating gating;
+
+    private String session;
+
+    @DynamicPropertySource
+    static void model(DynamicPropertyRegistry registry) {
+        registry.add("spring.ai.openai.base-url", MODEL::baseUrl);
+        registry.add("spring.ai.openai.api-key", () -> "test");
+        registry.add("spring.ai.openai.chat.options.model", () -> "gpt-4o");
+    }
+
+    @AfterAll
+    static void stop() {
+        MODEL.close();
+    }
+
+    @BeforeEach
+    void reset() {
+        MODEL.reset();
+        TestTools.RAN.clear();
+        session = "it-" + UUID.randomUUID();
+    }
+
+    /** Case F in Spring AI: a refund over 200 waits; once approved it runs, once, as the model wrote it. */
+    @Test
+    void anApprovedDeferredCallRunsOnceWithTheModelsArguments() {
+        MODEL.thenToolCalls(new Call("call_1", "issueRefund", "{\"order\":\"7731\",\"amount\":480}")).thenText("Pending.");
+
+        ask("refund-review", JOB);
+
+        assertThat(TestTools.RAN).isEmpty();
+        assertThat(MODEL.requests().getLast()).contains(Decision.Defer.MODEL_MESSAGE);
+        PendingCall pending = pendingOfThisSession();
+
+        assertThat(approvals.approve(pending.approvalId(), LENA, JOB)).isInstanceOf(Approval.Released.class);
+        assertThat(TestTools.RAN).containsExactly("issueRefund 480");
+        assertThat(approvals.approve(pending.approvalId(), LENA, JOB)).isInstanceOf(Approval.AlreadyDecided.class);
+        assertThat(TestTools.RAN).as("released at most once").containsExactly("issueRefund 480");
+    }
+
+    /** Without the tool, nothing is approved: the release is not spent on a call that cannot run. */
+    @Test
+    void aDeferredCallWhoseToolIsNotHereStaysPending() {
+        MODEL.thenToolCalls(new Call("call_1", "issueRefund", "{\"order\":\"7731\",\"amount\":480}")).thenText("Pending.");
+        ask("refund-review", JOB);
+        PendingCall pending = pendingOfThisSession();
+        gating.forget(pending.approvalId());
+
+        assertThat(approvals.approve(pending.approvalId(), LENA, JOB)).isInstanceOf(Approval.NotPermitted.class);
+
+        assertThat(TestTools.RAN).isEmpty();
+        assertThat(approvals.pending()).extracting(PendingCall::approvalId).contains(pending.approvalId());
+    }
+
+    /** T6: ambiguous JSON is recorded as a refusal, so repeating it ends the run like any probing. */
+    @Test
+    void repeatedUnreadableArgumentsEndTheRun() {
+        var ambiguous = "{\"url\":\"https://docs.example/\",\"url\":\"https://evil.example/\"}";
+        Call[] calls = new Call[6];
+        for (int index = 0; index < calls.length; index++) {
+            calls[index] = new Call("call_" + index, "fetchPage", ambiguous);
+        }
+        MODEL.thenToolCalls(calls).thenText("never asked for");
+
+        assertThatThrownBy(() -> ask("support-chat", Principal.user("maria", Tenant.of("acme"))))
+                .isInstanceOf(ToolGateViolationException.class)
+                .hasMessageContaining(BuiltInRules.DENIAL_BUDGET);
+        assertThat(TestTools.RAN).isEmpty();
+    }
+
+    /** A failing tool's error can carry an attacker's text as easily as a result, so it taints the session. */
+    @Test
+    void aFailingUntrustedToolStillTaintsTheSession() {
+        MODEL.thenToolCalls(new Call("call_1", "readInvoice", "{\"id\":\"INV-118\"}"))
+                .thenToolCalls(new Call("call_2", "fetchStatus", "{\"url\":\"https://status.example\"}"))
+                .thenToolCalls(new Call("call_3", "sendEmail", "{\"to\":\"billing@mycompany.com\",\"body\":\"x\"}"))
+                .thenText("Done.");
+
+        ask("probe", Principal.service("probe", Tenant.of("acme")));
+
+        assertThat(TestTools.RAN).containsExactly("readInvoice", "fetchStatus", "draftEmail");
+    }
+
+    /** A tool whose result goes straight to the user: the user gets the generic denial, and the model nothing. */
+    @Test
+    void aDeniedDirectAnswerToolAnswersWithTheGenericDenial() {
+        MODEL.thenToolCalls(new Call("call_1", "lookupOrder", "{\"id\":\"7731\"}")).thenText("never asked for");
+
+        assertThat(ask("support-chat", Principal.user("maria", Tenant.of("acme")))).isEqualTo(Decision.Deny.MODEL_MESSAGE);
+        assertThat(TestTools.RAN).isEmpty();
+        assertThat(MODEL.requests()).hasSize(1);
+    }
+
+    private PendingCall pendingOfThisSession() {
+        return approvals.pending().stream().filter(pending -> pending.call().sessionId().equals(session))
+                .findFirst().orElseThrow();
+    }
+
+    private String ask(String agent, Principal principal) {
+        return chatClients.build().prompt().user("Go").tools(new TestTools())
+                .toolContext(ToolGateContext.of(agent, principal, session)).call().content();
+    }
+
+    private static MockModelServer start() {
+        try {
+            return new MockModelServer();
+        } catch (IOException failed) {
+            throw new UncheckedIOException(failed);
+        }
+    }
+}

@@ -138,6 +138,18 @@ public class ToolGateAutoConfiguration {
     }
 
     /**
+     * Decides deferred calls and runs the approved ones.
+     *
+     * @param gating the shared gating
+     * @return the approvals
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public ToolGateApprovals toolGateApprovals(ObjectProvider<Gating> gating) {
+        return new ToolGateApprovals(gating::getObject);
+    }
+
+    /**
      * Gated chat clients for applications that build them by hand.
      *
      * @param manager the gated tool calling manager, resolved when a client is built

@@ -1,18 +1,25 @@
 package io.toolgate.springai;
 
+import io.toolgate.api.ArgValue;
+import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Mode;
+import io.toolgate.api.ResultDecision;
+import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
+import io.toolgate.api.ToolResult;
 import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.resolution.ToolCallbackResolver;
 
@@ -26,6 +33,8 @@ final class Gating {
     private static final String MCP_PACKAGE = "org.springframework.ai.mcp.";
     /** The server of an MCP tool whose connection is unknown or ambiguous; no policy allows it. */
     static final String UNATTRIBUTED_SERVER = "unattributed";
+    /** Deferred calls whose tools are kept for approval; enough for any review queue, bounded for memory. */
+    private static final int MAX_KEPT_CALLS = 10_000;
 
     private final ToolGate gate;
     private final ToolCatalog.Mutable catalog;
@@ -36,6 +45,13 @@ final class Gating {
     private final String defaultAgent;
     /** Definitions by what they were built from, so a tool's pin is computed once, not on every call. */
     private final Map<List<String>, Optional<ToolDefinition>> definitions = new ConcurrentHashMap<>();
+    /** Deferred calls' tools, oldest dropped first past the bound; guarded by itself. */
+    private final Map<String, Kept> deferred = new LinkedHashMap<>(16, 0.75f, false) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Kept> eldest) {
+            return size() > MAX_KEPT_CALLS;
+        }
+    };
 
     Gating(ToolGate gate, ToolCatalog.Mutable catalog, Clock clock, ToolCallbackResolver resolver, Mode mode,
            ToolGatePrincipalResolver principals, String defaultAgent) {
@@ -114,19 +130,94 @@ final class Gating {
     }
 
     /**
-     * Puts the definition the model is offered into the catalog, so pins and declared arguments are
-     * checked against exactly what this callback declares. A definition that cannot be canonicalized
-     * stays out, which denies the tool wherever a definition is needed.
+     * The definition this callback offers the model, computed once per definition, which the call is
+     * checked against. It also goes into the catalog, for what is checked later without a callback at
+     * hand: a downgrade's safe tool, and the re-check when a deferred call is approved.
+     *
+     * @return empty if the definition cannot be canonicalized
      */
-    void define(ToolId tool, ToolCallback callback) {
+    Optional<ToolDefinition> definition(ToolId tool, ToolCallback callback) {
         var source = callback.getToolDefinition();
-        definitions.computeIfAbsent(List.of(tool.toString(), source.description(), source.inputSchema()), key -> {
-            try {
-                return Optional.of(ToolDefinition.of(tool, source.description(), source.inputSchema()));
-            } catch (IllegalArgumentException uncanonical) {
-                return Optional.empty();
-            }
-        }).ifPresentOrElse(catalog::put, () -> catalog.remove(tool));
+        Optional<ToolDefinition> definition = definitions.computeIfAbsent(
+                List.of(tool.toString(), source.description(), source.inputSchema()), key -> {
+                    try {
+                        return Optional.of(ToolDefinition.of(tool, source.description(), source.inputSchema()));
+                    } catch (IllegalArgumentException uncanonical) {
+                        return Optional.empty();
+                    }
+                });
+        definition.ifPresent(catalog::put);
+        return definition;
+    }
+
+    /**
+     * Keeps the callback and the model's own argument text of a deferred call, so an approval can run
+     * the very tool the request offered. Per instance and bounded; tools registered as beans are also
+     * found through the resolver.
+     */
+    void keep(String approvalId, ToolCallback callback, String input) {
+        synchronized (deferred) {
+            deferred.put(approvalId, new Kept(unwrap(callback), input));
+        }
+    }
+
+    /** A deferred call's tool and argument text, once, for running it after approval. */
+    Optional<Kept> kept(String approvalId) {
+        synchronized (deferred) {
+            return Optional.ofNullable(deferred.get(approvalId));
+        }
+    }
+
+    void forget(String approvalId) {
+        synchronized (deferred) {
+            deferred.remove(approvalId);
+        }
+    }
+
+    /** A local tool the application registered, for an approved call whose callback was not kept. */
+    Optional<ToolCallback> registered(ToolId tool) {
+        return resolver == null || !tool.isLocal() ? Optional.empty() : Optional.ofNullable(resolver.resolve(tool.name())).map(Gating::unwrap);
+    }
+
+    /** A deferred call's tool and the model's argument text. */
+    record Kept(ToolCallback callback, String input) {}
+
+    /** Runs a tool, records what it returned, and gives back the output unless a result rule withholds it. */
+    String run(ToolCallback callback, ToolCall callThatRuns, String input, ToolContext toolContext) {
+        String output;
+        try {
+            output = callback.call(input, forTool(callback, toolContext));
+        } catch (RuntimeException failure) {
+            // An error message can carry an attacker's page as easily as a result, so it taints too.
+            gate.recordResult(callThatRuns, new ToolResult.Failed(String.valueOf(failure.getMessage())));
+            throw failure;
+        }
+        String shown = output == null ? "" : output;
+        return switch (gate.recordResult(callThatRuns, new ToolResult.Succeeded(result(shown)))) {
+            case ResultDecision.Release release -> shown;
+            case ResultDecision.Withhold withhold -> ResultDecision.Withhold.MODEL_MESSAGE;
+        };
+    }
+
+    /**
+     * The tool context a tool may see. Spring AI sends an MCP tool's whole tool context to its server as
+     * {@code _meta}; the principal and session are no business of a third party.
+     */
+    static ToolContext forTool(ToolCallback callback, ToolContext toolContext) {
+        if (toolContext == null || !isMcp(callback)) {
+            return toolContext;
+        }
+        var kept = new HashMap<String, Object>(toolContext.getContext());
+        kept.keySet().removeIf(ToolGateContext::isToolGateKey);
+        return new ToolContext(kept);
+    }
+
+    private static ArgValue result(String output) {
+        try {
+            return ArgValueJson.read(output);
+        } catch (IllegalArgumentException notJson) {
+            return ArgValue.text(output);
+        }
     }
 
     /** The callback for a downgrade's safe tool: one offered with the request, else one the application registered. */

@@ -6,7 +6,9 @@ import static io.toolgate.api.Effect.REVERSIBLE;
 import static io.toolgate.api.Label.EXTERNAL_SINK;
 import static io.toolgate.api.Label.PRIVATE_DATA;
 import static io.toolgate.api.Label.UNTRUSTED_CONTENT;
+import static io.toolgate.api.policy.ArgumentRules.atMost;
 import static io.toolgate.api.policy.ArgumentRules.hosts;
+import static io.toolgate.api.policy.OnViolation.DEFER;
 
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.AuditEvent;
@@ -42,6 +44,14 @@ class TestApplication {
                         .downgrade("issueRefund", "createPendingRefund"))
                 .mcpServers("jira")
                 .agent("triage", a -> a.allow("mcp:jira/searchTickets"))
+                .tool("fetchStatus", t -> t.labels(UNTRUSTED_CONTENT).effect(READ))
+                .agent("refund-review", a -> a
+                        .allow("issueRefund")
+                        .reviewers("finance")
+                        .rule("issueRefund.amount", atMost("1000"), atMost("200").otherwise(DEFER)))
+                .agent("probe", a -> a
+                        .allow("readInvoice", "fetchStatus", "sendEmail", "draftEmail")
+                        .downgrade("sendEmail", "draftEmail"))
                 .agent("one-call", a -> a
                         .allow("getWeather")
                         .budget(b -> b.toolCalls(1)))

@@ -1,18 +1,16 @@
 package io.toolgate.springai;
 
-import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Mode;
 import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
-import io.toolgate.api.ResultDecision;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolId;
-import io.toolgate.api.ToolResult;
-import java.util.HashMap;
+import io.toolgate.api.policy.BuiltInRules;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
@@ -61,64 +59,58 @@ final class GatedToolCallback implements ToolCallback {
     public String call(String toolInput, ToolContext toolContext) {
         if (gating.mode() == Mode.OFF) {
             // The emergency switch: tools run straight through, as if ToolGate were not there.
-            return target.call(toolInput, Gating.isMcp(target) ? withoutToolGateKeys(toolContext) : toolContext);
+            return target.call(toolInput, Gating.forTool(target, toolContext));
         }
         Map<String, Object> context = toolContext == null ? Map.of() : toolContext.getContext();
         ToolId tool = gating.toolId(target);
         ObjectValue arguments = arguments(toolInput);
-        if (arguments == null) {
-            // Without the arguments the tool will see, no rule can be checked. Not audited: no call can be built.
-            return refuse(tool, "its arguments could not be read unambiguously", toolInput, toolContext);
-        }
         ToolCall call;
         try {
             call = new ToolCall(UUID.randomUUID().toString(), principal(context), text(context, ToolGateContext.AGENT),
-                    text(context, ToolGateContext.SESSION), tool, arguments, gating.clock().instant());
+                    text(context, ToolGateContext.SESSION), tool, arguments == null ? ObjectValue.empty() : arguments,
+                    gating.clock().instant());
         } catch (ToolGateViolationException noContext) {
             if (gating.mode() == Mode.MONITOR) {
+                // Without a principal no call can be recorded, so the warning is the only trace.
                 LOG.log(System.Logger.Level.WARNING, "monitor mode: {0} ran unchecked: {1}", tool, noContext.getMessage());
-                return target.call(toolInput, Gating.isMcp(target) ? withoutToolGateKeys(toolContext) : toolContext);
+                return target.call(toolInput, Gating.forTool(target, toolContext));
             }
             throw noContext;
         }
-        gating.define(tool, target);
-        return switch (gating.gate().check(call)) {
-            case Decision.Allow allow -> run(target, call, toolInput, toolContext);
+        return apply(decide(call, arguments), call, arguments, toolInput, toolContext);
+    }
+
+    /**
+     * Checks the call with the definition this callback offers, so concurrent requests offering another
+     * definition under the same name cannot interfere; what the adapter cannot read is recorded as a refusal,
+     * which counts toward the denial budget.
+     */
+    private Decision decide(ToolCall call, ObjectValue arguments) {
+        if (arguments == null) {
+            return gating.gate().reject(call, BuiltInRules.ARGUMENTS_READABLE,
+                    "the arguments are not one unambiguous JSON object (duplicate keys, trailing content or not JSON)");
+        }
+        Optional<io.toolgate.api.ToolDefinition> offered = gating.definition(call.tool(), target);
+        return offered.isPresent()
+                ? gating.gate().check(call, offered.get())
+                : gating.gate().reject(call, BuiltInRules.DEFINITION_READABLE,
+                        "the tool's definition cannot be canonicalized (RFC 8785), so pins and declared arguments cannot be checked");
+    }
+
+    private String apply(Decision decision, ToolCall call, ObjectValue arguments, String toolInput, ToolContext toolContext) {
+        return switch (decision) {
+            case Decision.Allow allow -> gating.run(target, call, toolInput, toolContext);
             case Decision.Deny deny -> Decision.Deny.MODEL_MESSAGE;
-            case Decision.Defer defer -> Decision.Defer.MODEL_MESSAGE;
+            case Decision.Defer defer -> {
+                gating.keep(defer.approvalId(), target, toolInput);
+                yield Decision.Defer.MODEL_MESSAGE;
+            }
             case Decision.Downgrade(String ruleId, ToolId safeTool, ObjectValue safeArgs) -> gating.safeTool(safeTool, siblings)
-                    .map(safe -> run(safe, new ToolCall(call.callId(), call.principal(), call.agentId(), call.sessionId(),
-                            safeTool, safeArgs, call.at()), safeInput(toolInput, arguments, safeArgs), toolContext))
+                    .map(safe -> gating.run(safe, call.withTool(safeTool, safeArgs), safeInput(toolInput, arguments, safeArgs),
+                            toolContext))
                     // The policy names a safe tool the application does not have; fail closed.
                     .orElse(Decision.Deny.MODEL_MESSAGE);
             case Decision.Terminate(String ruleId, String reason) -> throw new ToolGateViolationException(ruleId, reason);
-        };
-    }
-
-    /** The adapter's own refusal: the generic denial, or in monitor mode a warning and the tool run unchecked. */
-    private String refuse(ToolId tool, String why, String toolInput, ToolContext toolContext) {
-        if (gating.mode() == Mode.MONITOR) {
-            LOG.log(System.Logger.Level.WARNING, "monitor mode: {0} ran unchecked: {1}", tool, why);
-            return target.call(toolInput, Gating.isMcp(target) ? withoutToolGateKeys(toolContext) : toolContext);
-        }
-        LOG.log(System.Logger.Level.WARNING, "{0} refused: {1}", tool, why);
-        return Decision.Deny.MODEL_MESSAGE;
-    }
-
-    /** Runs a tool, records what it returned, and gives the model the output unless a result rule withholds it. */
-    private String run(ToolCallback callback, ToolCall callThatRuns, String input, ToolContext toolContext) {
-        String output;
-        try {
-            output = callback.call(input, Gating.isMcp(callback) ? withoutToolGateKeys(toolContext) : toolContext);
-        } catch (RuntimeException failure) {
-            // An error message can carry an attacker's page as easily as a result, so it taints too.
-            gating.gate().recordResult(callThatRuns, new ToolResult.Failed(String.valueOf(failure.getMessage())));
-            throw failure;
-        }
-        String shown = output == null ? "" : output;
-        return switch (gating.gate().recordResult(callThatRuns, new ToolResult.Succeeded(result(shown)))) {
-            case ResultDecision.Release release -> shown;
-            case ResultDecision.Withhold withhold -> ResultDecision.Withhold.MODEL_MESSAGE;
         };
     }
 
@@ -149,26 +141,7 @@ final class GatedToolCallback implements ToolCallback {
         }
     }
 
-    /**
-     * Spring AI sends an MCP tool's whole tool context to its server as {@code _meta}; the principal
-     * and session are no business of a third party.
-     */
-    private static ToolContext withoutToolGateKeys(ToolContext toolContext) {
-        if (toolContext == null) {
-            return null;
-        }
-        var kept = new HashMap<String, Object>(toolContext.getContext());
-        kept.keySet().removeIf(ToolGateContext::isToolGateKey);
-        return new ToolContext(kept);
-    }
 
-    private static ArgValue result(String output) {
-        try {
-            return ArgValueJson.read(output);
-        } catch (IllegalArgumentException notJson) {
-            return ArgValue.text(output);
-        }
-    }
 
     private static Principal principal(Map<String, Object> context) {
         if (context.get(ToolGateContext.PRINCIPAL) instanceof Principal principal) {
