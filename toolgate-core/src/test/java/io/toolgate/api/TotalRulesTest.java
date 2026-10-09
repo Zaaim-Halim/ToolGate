@@ -139,7 +139,7 @@ class TotalRulesTest {
     }
 
     private static ToolGate gate(ToolGatePolicy policy) {
-        return ToolGate.builder(policy).auditSink(event -> { }).build();
+        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { }).build();
     }
 
     private Decision refund(ToolGate gate, String session, ArgValue amount) {

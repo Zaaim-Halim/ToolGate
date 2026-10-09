@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -175,6 +176,23 @@ public final class ScriptedSession implements AutoCloseable {
         flush();
         catalog.put(definition);
         return this;
+    }
+
+    /**
+     * Scripts a tool whose schema declares exactly these arguments, with no description: enough for a
+     * tool with argument rules, whose calls may pass only declared arguments.
+     *
+     * @param tool      the tool, as in a policy: {@code sendEmail} or {@code mcp:jira/search_issues}
+     * @param arguments the argument names its schema declares
+     * @return this session
+     */
+    public ScriptedSession listTool(String tool, String... arguments) {
+        var properties = new LinkedHashMap<String, ArgValue>();
+        for (String argument : arguments) {
+            properties.put(argument, ArgValue.object(Map.of()));
+        }
+        return listTool(new ToolDefinition(ToolId.parse(tool), "",
+                ArgValue.object(Map.of("type", ArgValue.text("object"), "properties", ArgValue.object(properties)))));
     }
 
     /**

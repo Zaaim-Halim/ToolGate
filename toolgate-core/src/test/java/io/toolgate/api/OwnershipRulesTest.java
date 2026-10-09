@@ -136,7 +136,7 @@ class OwnershipRulesTest {
 
     @Test
     void resolverFailureDenies() {
-        ToolGate gate = ToolGate.builder(policy).auditSink(event -> { }).ownershipResolver(new OwnershipResolver() {
+        ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { }).ownershipResolver(new OwnershipResolver() {
             @Override
             public Optional<String> tenantOf(String resourceType, String id) {
                 throw new IllegalStateException("database down");
@@ -157,7 +157,7 @@ class OwnershipRulesTest {
 
     @Test
     void buildingAGateWithoutTheResolverFails() {
-        assertThatIllegalStateException().isThrownBy(() -> ToolGate.builder(policy).build())
+        assertThatIllegalStateException().isThrownBy(() -> ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).build())
                 .withMessageContaining("ownershipResolver");
         ToolGate.builder(ToolGatePolicy.builder().agent("a", a -> a.allow("x")).build()).build().close();
     }
@@ -179,7 +179,7 @@ class OwnershipRulesTest {
     }
 
     private ToolGate gate(ToolGatePolicy gatePolicy) {
-        return ToolGate.builder(gatePolicy).auditSink(event -> { }).ownershipResolver(owners).build();
+        return ToolGate.builder(gatePolicy).toolCatalog(Catalogs.declaring(gatePolicy)).auditSink(event -> { }).ownershipResolver(owners).build();
     }
 
     private Decision getInvoice(ToolGate gate, String id) {

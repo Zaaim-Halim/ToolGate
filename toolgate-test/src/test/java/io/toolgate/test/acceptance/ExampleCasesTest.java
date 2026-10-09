@@ -29,6 +29,7 @@ import io.toolgate.api.policy.ArgumentRule;
 import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
+import io.toolgate.spi.ToolCatalog;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -75,6 +76,7 @@ class ExampleCasesTest {
         @Test
         void theSendBecomesADraftThatNamesBothSources() {
             try (var s = ScriptedSession.of(policy, "invoice-processor", Principal.service("invoice-processor", Tenant.of("acme")))) {
+                s.listTool("readInvoice", "id").listTool("fetchSupplierPage", "url").listTool("sendEmail", "to", "body");
                 s.tenantOf("invoice", "INV-118", "acme");
 
                 s.call("readInvoice", Map.of("id", "INV-118")).assertAllowed();
@@ -105,6 +107,7 @@ class ExampleCasesTest {
         @Test
         void fiveCrossTenantDenialsThenTheRunEnds() {
             try (var s = ScriptedSession.of(policy, "support-chat", Principal.user("maria", Tenant.of("acme")))) {
+                s.listTool("getInvoice", "id");
                 s.tenantOf("invoice", "INV-118", "acme");
                 for (int id = 900; id <= 904; id++) {
                     s.tenantOf("invoice", "INV-" + id, "globex");
@@ -144,6 +147,7 @@ class ExampleCasesTest {
                     .build();
 
             try (var s = ScriptedSession.of(policy, "ops-assistant", Principal.user("sam", Tenant.of("acme")))) {
+                s.listTool("readLog", "path").listTool("fetch", "url");
                 s.call("readLog", Map.of("path", logs.resolve("payment.log").toString())).assertAllowed();
                 s.call("fetch", Map.of("url", "http://169.254.169.254/latest/meta-data/iam/security-credentials/"))
                         .assertDeniedBy("fetch.url");
@@ -266,6 +270,7 @@ class ExampleCasesTest {
         @Test
         void theReleaseIsRecheckedUnderTheNewCapAndRefusedOnce() {
             try (var s = ScriptedSession.of(refunds("10000"), "refund-agent", JOB)) {
+                s.listTool("issueRefund", "order", "amount");
                 ScriptedCall refund = s.call("issueRefund", Map.of("order", 7731, "amount", 480)).assertDeferred();
 
                 s.advance(Duration.ofMinutes(148)).redeploy(refunds("300"));
@@ -312,10 +317,13 @@ class ExampleCasesTest {
                         ObjectValue.of(Map.of("to", ArgValue.text("maria@customer.example"))), Instant.parse("2026-10-07T18:00:00Z")));
             }
 
-            ReplayReport strict = PolicyReplay.builder(emails(emailDomains("mycompany.com"))).build()
+            var catalog = ToolCatalog.inMemory().put(ToolDefinition.of(ToolId.local("sendEmail"), "Send an email",
+                    "{\"type\":\"object\",\"properties\":{\"to\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}}}"));
+            ReplayReport strict = PolicyReplay.builder(emails(emailDomains("mycompany.com"))).toolCatalog(catalog).build()
                     .replay(history.events().stream());
             ReplayReport withSuppliers = PolicyReplay.builder(
-                            emails(emailDomains("mycompany.com", "supplier-a.example", "supplier-b.example"))).build()
+                            emails(emailDomains("mycompany.com", "supplier-a.example", "supplier-b.example")))
+                    .toolCatalog(catalog).build()
                     .replay(history.events().stream());
 
             assertThat(strict.calls()).isEqualTo(29);

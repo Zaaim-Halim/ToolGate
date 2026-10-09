@@ -101,7 +101,7 @@ public final class PolicyReplay {
         }
 
         /**
-         * Checks pins against today's tool definitions, as the live gate does.
+         * Checks pins and declared arguments against today's tool definitions, as the live gate does.
          *
          * @param toolCatalog the tools' current definitions
          * @return this builder
@@ -116,14 +116,14 @@ public final class PolicyReplay {
          *
          * @return the replay
          * @throws IllegalStateException if the policy uses ownership rules and no resolver was given, or
-         *                               pins tools and no tool catalog was given
+         *                               pins tools or has argument rules and no tool catalog was given
          */
         public PolicyReplay build() {
             if (owners == null && BuiltInEvaluators.usesOwnership(policy)) {
                 throw new IllegalStateException("the policy uses sameTenant or ownedByPrincipal rules; set an ownershipResolver");
             }
-            if (catalog == null && !policy.pins().isEmpty()) {
-                throw new IllegalStateException("the policy pins tool definitions; set a toolCatalog");
+            if (catalog == null && BuiltInEvaluators.needsCatalog(policy)) {
+                throw new IllegalStateException("the policy pins tool definitions or has argument rules; set a toolCatalog");
             }
             return new PolicyReplay(this);
         }

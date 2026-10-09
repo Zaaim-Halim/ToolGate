@@ -65,13 +65,13 @@ class AuditTest {
     @Test
     void withAKeyArgumentsAreKeyedHashes() {
         byte[] key = "0123456789abcdef0123456789abcdef".getBytes();
-        try (ToolGate gate = ToolGate.builder(policy).auditSink(events::add).clock(CLOCK).argumentHashKey(key).build()) {
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(events::add).clock(CLOCK).argumentHashKey(key).build()) {
             gate.check(fetch("c1", "https://docs.example/a"));
             gate.check(fetch("c2", "https://docs.example/a"));
         }
 
         assertThat(decided(1).args().get("url")).startsWith("hmac:").isEqualTo(decided(2).args().get("url"));
-        assertThatIllegalArgumentException().isThrownBy(() -> ToolGate.builder(policy).argumentHashKey(new byte[16]));
+        assertThatIllegalArgumentException().isThrownBy(() -> ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).argumentHashKey(new byte[16]));
     }
 
     /** Monitor mode's purpose: show what enforcement would have blocked, without blocking it. */
@@ -153,7 +153,7 @@ class AuditTest {
 
     @Test
     void failingSinkNeverAffectsDecisions() {
-        ToolGate gate = ToolGate.builder(policy).auditSink(event -> {
+        ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> {
             throw new IllegalStateException("SIEM down");
         }).build();
 
@@ -164,7 +164,7 @@ class AuditTest {
     }
 
     private ToolGate gate(ToolGatePolicy gatePolicy) {
-        return ToolGate.builder(gatePolicy).auditSink(events::add).clock(CLOCK).build();
+        return ToolGate.builder(gatePolicy).toolCatalog(Catalogs.declaring(gatePolicy)).auditSink(events::add).clock(CLOCK).build();
     }
 
     private AuditEvent.Decided decided(int index) {

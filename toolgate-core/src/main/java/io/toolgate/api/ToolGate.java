@@ -217,8 +217,10 @@ public interface ToolGate extends AutoCloseable {
         }
 
         /**
-         * Gives each tool's current definition, for pinned tools. Required when the policy pins any
-         * tool; keep it current whenever a framework or MCP server lists its tools again.
+         * Gives each tool's current definition, for pinned tools and for tools with argument rules,
+         * whose calls may only pass the arguments the definition declares. Required when the policy
+         * pins any tool or has any argument rule; keep it current whenever a framework or MCP server
+         * lists its tools again.
          *
          * @param catalog the catalog, such as {@link ToolCatalog#inMemory()}; read on every call to a pinned tool
          * @return this builder
@@ -274,16 +276,17 @@ public interface ToolGate extends AutoCloseable {
          *
          * @return a thread-safe gate; close it at shutdown
          * @throws IllegalStateException if the policy uses ownership rules and no
-         *                               {@link #ownershipResolver} was given, or pins tools and no
-         *                               {@link #toolCatalog} was given
+         *                               {@link #ownershipResolver} was given, or pins tools or has
+         *                               argument rules and no {@link #toolCatalog} was given
          */
         public ToolGate build() {
             if (ownershipResolver == null && BuiltInEvaluators.usesOwnership(policy)) {
                 throw new IllegalStateException(
                         "the policy uses sameTenant or ownedByPrincipal rules; set an ownershipResolver");
             }
-            if (toolCatalog == null && !policy.pins().isEmpty()) {
-                throw new IllegalStateException("the policy pins tool definitions; set a toolCatalog");
+            if (toolCatalog == null && BuiltInEvaluators.needsCatalog(policy)) {
+                throw new IllegalStateException(
+                        "the policy pins tool definitions or has argument rules; set a toolCatalog");
             }
             OwnershipResolver owners = ownershipResolver != null ? ownershipResolver : BuiltInEvaluators.NO_OWNERS;
             return new DefaultToolGate(

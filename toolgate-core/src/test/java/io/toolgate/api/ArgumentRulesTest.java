@@ -181,7 +181,7 @@ class ArgumentRulesTest {
     }
 
     private static ToolGate gate(ToolGatePolicy policy) {
-        return ToolGate.builder(policy).build();
+        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).build();
     }
 
     private static ToolGatePolicy policy(Consumer<ToolGatePolicy.AgentBuilder> agent) {

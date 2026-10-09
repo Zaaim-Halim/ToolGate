@@ -24,7 +24,9 @@ class ScriptedSessionTest {
     private static final Principal JOB = Principal.service("invoice-processor", Tenant.of("acme"));
     private static final Principal LENA = Principal.user("lena", Tenant.of("acme"), "finance");
 
-    private final ScriptedSession s = ScriptedSession.of(new InvoicePolicy().get(), "invoice-processor", JOB);
+    private final ScriptedSession s = ScriptedSession.of(new InvoicePolicy().get(), "invoice-processor", JOB)
+            .listTool("readInvoice", "id")
+            .listTool("issueRefund", "order", "amount");
 
     @AfterEach
     void close() {
@@ -41,6 +43,14 @@ class ScriptedSessionTest {
                 .hasMessageContaining("expected allowed, but ToolGate decided Deny")
                 .hasMessageContaining("readInvoice.id")
                 .hasMessageContaining("globex");
+    }
+
+    @Test
+    void aToolWithRulesTakesOnlyTheArgumentsItLists() {
+        s.tenantOf("invoice", "INV-118", "acme");
+
+        s.call("readInvoice", Map.of("id", "INV-118", "includeBankDetails", true)).assertDeniedBy("arguments.declared");
+        s.call("readInvoice", Map.of("id", "INV-118")).assertAllowed();
     }
 
     @Test

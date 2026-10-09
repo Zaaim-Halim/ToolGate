@@ -21,7 +21,7 @@ public final class BuiltInEvaluators {
     /** Knows no owners, so every ownership rule denies; for policies without ownership rules. */
     public static final OwnershipResolver NO_OWNERS = new OwnershipResolver() { };
 
-    /** Knows no tools, so every pinned tool is denied; for policies without pins. */
+    /** Knows no tools, so every pinned tool and every tool with argument rules is denied. */
     public static final ToolCatalog NO_TOOLS = tool -> Optional.empty();
 
     private BuiltInEvaluators() {}
@@ -50,6 +50,17 @@ public final class BuiltInEvaluators {
     }
 
     /**
+     * Whether a policy needs a {@link ToolCatalog}: it pins tools, or has argument rules, which are
+     * checked against the tools' declared arguments.
+     *
+     * @param policy the policy
+     * @return {@code true} if a gate for it needs a catalog
+     */
+    public static boolean needsCatalog(ToolGatePolicy policy) {
+        return !policy.pins().isEmpty() || DeclaredArgumentsEvaluator.needed(policy);
+    }
+
+    /**
      * Every built-in evaluator, plus one for each argument and taint rule in the policy, with no name
      * resolution and no owners; for tests and policies without ownership rules.
      *
@@ -75,6 +86,9 @@ public final class BuiltInEvaluators {
         var evaluators = new ArrayList<>(all());
         if (!policy.pins().isEmpty()) {
             evaluators.add(new PinEvaluator(catalog));
+        }
+        if (DeclaredArgumentsEvaluator.needed(policy)) {
+            evaluators.add(new DeclaredArgumentsEvaluator(policy, catalog));
         }
         policy.agents().values().forEach(agent -> {
             agent.argumentRules().forEach((argument, rules) -> {

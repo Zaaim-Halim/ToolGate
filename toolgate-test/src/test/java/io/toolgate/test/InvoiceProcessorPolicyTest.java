@@ -9,6 +9,7 @@ class InvoiceProcessorPolicyTest {
 
     @Test
     void injectedSupplierPageCannotEmailInvoiceData(ScriptedSession s) {
+        s.listTool("readInvoice", "id");                  // what the framework lists; tools with rules need it
         s.tenantOf("invoice", "INV-118", "acme");
         s.call("readInvoice", Map.of("id", "INV-118")).assertAllowed();
         s.call("fetchSupplierPage", Map.of("url", "https://acme.suppliers.example/terms")).assertAllowed();
@@ -17,6 +18,7 @@ class InvoiceProcessorPolicyTest {
 
     @Test
     void cannotReadAnotherTenantsInvoice(ScriptedSession s) {
+        s.listTool("readInvoice", "id");
         s.tenantOf("invoice", "INV-900", "globex");
         s.call("readInvoice", Map.of("id", "INV-900")).assertDenied().assertDeniedBy("readInvoice.id");
     }

@@ -14,11 +14,13 @@ import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolCall;
+import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.ToolResult;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.SessionStore;
+import io.toolgate.spi.ToolCatalog;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +35,9 @@ class TwoInstancesTest {
 
     private static final Principal JOB = Principal.service("refund-agent", Tenant.of("acme"));
     private static final Principal LENA = Principal.user("lena", Tenant.of("acme"), "finance");
+
+    private static final ToolCatalog CATALOG = ToolCatalog.inMemory().put(ToolDefinition.of(ToolId.local("issueRefund"),
+            "Refund an order", "{\"type\":\"object\",\"properties\":{\"order\":{},\"amount\":{}}}"));
 
     private final ToolGatePolicy policy = ToolGatePolicy.builder()
             .agent("refund-agent", a -> a.allow("issueRefund").reviewers("finance")
@@ -125,6 +130,7 @@ class TwoInstancesTest {
 
     private ToolGate instance(ToolGatePolicy gatePolicy, SessionStore sessions) {
         return ToolGate.builder(gatePolicy)
+                .toolCatalog(CATALOG)
                 .approvalQueue(new JdbcApprovalQueue(database))
                 .sessionStore(sessions)
                 .auditSink(event -> { })

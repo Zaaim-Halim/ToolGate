@@ -11,8 +11,10 @@ import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
+import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.spi.ToolCatalog;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -69,7 +71,10 @@ public class CheckBenchmark {
                         .rule("fetch.url", hosts("docs.example", "*.vendor.example"), schemes("https"))
                         .rule("readFile.path", under(root.toString())))
                 .build();
-        gate = ToolGate.builder(policy).auditSink(event -> { }).build();
+        ToolCatalog catalog = ToolCatalog.inMemory()
+                .put(ToolDefinition.of(ToolId.local("fetch"), "Fetch a page", "{\"properties\":{\"url\":{\"type\":\"string\"}}}"))
+                .put(ToolDefinition.of(ToolId.local("readFile"), "Read a file", "{\"properties\":{\"path\":{\"type\":\"string\"}}}"));
+        gate = ToolGate.builder(policy).toolCatalog(catalog).auditSink(event -> { }).build();
         allowListCalls = calls("getCustomer", "id", "C-5512");
         urlCalls = calls("fetch", "url", "https://status.vendor.example/api/v2/status");
         deniedUrlCalls = calls("fetch", "url", "http://169.254.169.254/latest/meta-data/");

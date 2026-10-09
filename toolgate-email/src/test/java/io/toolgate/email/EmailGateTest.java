@@ -10,9 +10,11 @@ import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolCall;
+import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.spi.ToolCatalog;
 import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -26,7 +28,9 @@ class EmailGateTest {
                 .tool("sendEmail", t -> t.effect(Effect.IRREVERSIBLE))
                 .agent("mailer", a -> a.allow("sendEmail").rule("sendEmail.to", emailDomains("mycompany.com")))
                 .build();
-        try (ToolGate gate = ToolGate.builder(policy).auditSink(event -> { }).build()) {
+        var catalog = ToolCatalog.inMemory().put(ToolDefinition.of(ToolId.local("sendEmail"), "Send an email",
+                "{\"type\":\"object\",\"properties\":{\"to\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}}}"));
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(catalog).auditSink(event -> { }).build()) {
             assertThat(send(gate, "c1", "ops@mycompany.com")).isInstanceOf(Decision.Allow.class);
             assertThat(send(gate, "c2", "ops@mycompany.com, attacker@evil.example"))
                     .isInstanceOfSatisfying(Decision.Deny.class, deny -> {

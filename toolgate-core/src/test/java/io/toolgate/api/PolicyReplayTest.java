@@ -71,7 +71,8 @@ class PolicyReplayTest {
         assertThat(run(live, "s1", "sendEmail", Map.of("to", ArgValue.text("a@b.example"))))
                 .isInstanceOf(Decision.Downgrade.class);
 
-        ReplayReport report = PolicyReplay.builder(policy(a -> a.rule("readInvoice.id", sameTenant("invoice"))))
+        ToolGatePolicy proposed = policy(a -> a.rule("readInvoice.id", sameTenant("invoice")));
+        ReplayReport report = PolicyReplay.builder(proposed).toolCatalog(Catalogs.declaring(proposed))
                 .ownershipResolver(new OwnershipResolver() { })
                 .build().replay(history.events.stream());
 
@@ -176,11 +177,11 @@ class PolicyReplayTest {
     }
 
     private ReplayReport replay(ToolGatePolicy proposed) {
-        return PolicyReplay.builder(proposed).build().replay(history.events.stream());
+        return PolicyReplay.builder(proposed).toolCatalog(Catalogs.declaring(proposed)).build().replay(history.events.stream());
     }
 
     private ToolGate live(ToolGatePolicy policy) {
-        return ToolGate.builder(policy).sessionStore(history).auditSink(event -> { }).build();
+        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).sessionStore(history).auditSink(event -> { }).build();
     }
 
     private Decision run(ToolGate gate, String session, String tool, Map<String, ArgValue> args) {

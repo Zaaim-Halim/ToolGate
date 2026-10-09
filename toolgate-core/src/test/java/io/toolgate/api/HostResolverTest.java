@@ -54,13 +54,13 @@ class HostResolverTest {
 
     @Test
     void failsClosedWhenResolutionFails() {
-        ToolGate unknown = ToolGate.builder(policy).hostResolver(host -> {
+        ToolGate unknown = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).hostResolver(host -> {
             throw new UnknownHostException(host);
         }).build();
-        ToolGate broken = ToolGate.builder(policy).hostResolver(host -> {
+        ToolGate broken = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).hostResolver(host -> {
             throw new IllegalStateException("resolver down");
         }).build();
-        ToolGate empty = ToolGate.builder(policy).hostResolver(host -> List.of()).build();
+        ToolGate empty = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).hostResolver(host -> List.of()).build();
 
         assertThat(fetch(unknown, "https://docs.example/")).isInstanceOf(Decision.Deny.class);
         assertThat(fetch(broken, "https://docs.example/")).isInstanceOf(Decision.Deny.class);
@@ -73,7 +73,7 @@ class HostResolverTest {
         ToolGatePolicy anyHost = ToolGatePolicy.builder()
                 .agent("agent", a -> a.allow("fetch").rule("fetch.url", schemes("https")))
                 .build();
-        ToolGate gate = ToolGate.builder(anyHost).hostResolver(recordingResolver(Map.of())).build();
+        ToolGate gate = ToolGate.builder(anyHost).toolCatalog(Catalogs.declaring(anyHost)).hostResolver(recordingResolver(Map.of())).build();
 
         fetch(gate, "https://1.1.1.1/");
         fetch(gate, "https://localhost/");
@@ -84,13 +84,13 @@ class HostResolverTest {
 
     @Test
     void withoutResolverNamesAreNotResolved() {
-        ToolGate gate = ToolGate.builder(policy).build();
+        ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).build();
 
         assertThat(fetch(gate, "https://status.vendor.example/")).isInstanceOf(Decision.Allow.class);
     }
 
     private ToolGate gateResolving(Map<String, List<String>> answers) {
-        return ToolGate.builder(policy).hostResolver(recordingResolver(answers)).build();
+        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).hostResolver(recordingResolver(answers)).build();
     }
 
     private HostResolver recordingResolver(Map<String, List<String>> answers) {

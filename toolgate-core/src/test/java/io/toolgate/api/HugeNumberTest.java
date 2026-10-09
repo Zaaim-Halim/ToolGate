@@ -33,7 +33,7 @@ class HugeNumberTest {
                     .rule("getInvoice.id", sameTenant("invoice"))
                     .result("search", "items[*].tenantId", matchesTenant()))
             .build();
-    private final ToolGate gate = ToolGate.builder(policy).auditSink(event -> { })
+    private final ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { })
             .ownershipResolver(new OwnershipResolver() {
                 @Override
                 public Optional<String> tenantOf(String resourceType, String id) {

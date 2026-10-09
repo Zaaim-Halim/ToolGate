@@ -9,8 +9,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * What each tool looks like now, as the framework or MCP client last listed it. The gate reads it on
- * every call to a pinned tool, so it must be fast and thread-safe; keep it current whenever a server's
- * tool list changes.
+ * every call to a pinned tool or a tool with argument rules, so it must be fast and thread-safe; keep
+ * it current whenever a server's tool list changes.
  */
 public interface ToolCatalog {
 
