@@ -16,6 +16,20 @@ import static io.toolgate.api.policy.OnViolation.DEFER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.toolgate.api.Approval;
+import io.toolgate.api.ArgValue;
+import io.toolgate.api.ObjectValue;
+import io.toolgate.api.PolicyReplay;
+import io.toolgate.api.ReplayReport;
+import io.toolgate.api.ToolCall;
+import io.toolgate.api.ToolGate;
+import io.toolgate.api.ToolId;
+import io.toolgate.api.policy.ArgumentRule;
+import io.toolgate.spi.SessionEvent;
+import io.toolgate.spi.SessionState;
+import io.toolgate.spi.SessionStore;
+import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Label;
 import io.toolgate.api.Principal;
@@ -37,7 +51,6 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The example cases of the design document, row by row, as one acceptance suite. Each test names
  * its case; a row that needs a feature not built yet names the gap.
- * Case G needs replay, which does not exist yet.
  */
 class ExampleCasesTest {
 
@@ -234,6 +247,84 @@ class ExampleCasesTest {
                         refused -> assertThat(refused.reason()).contains("480").contains("300"));
                 assertThat(s.approve(refund, REVIEWER)).isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.REFUSED));
             }
+        }
+    }
+
+    @Nested
+    class CaseG_TestingARuleChangeOnLastWeeksTraffic {
+
+        private static final Principal AGENT = Principal.service("support-chat", Tenant.of("acme"));
+
+        private ToolGatePolicy emails(ArgumentRule... toRules) {
+            return ToolGatePolicy.builder()
+                    .tool("sendEmail", t -> t.labels(EXTERNAL_SINK).effect(REVERSIBLE))
+                    .agent("support-chat", a -> {
+                        a.allow("sendEmail");
+                        if (toRules.length > 0) {
+                            a.rule("sendEmail.to", toRules);
+                        }
+                    })
+                    .build();
+        }
+
+        @Test
+        void theReplayFindsTheSupplierNotificationsThenOnlyTheCustomerReplies() {
+            var history = new RecordingStore();
+            try (ToolGate live = ToolGate.builder(emails()).sessionStore(history).auditSink(event -> { }).build()) {
+                int call = 0;
+                for (int day = 0; day < 7; day++) {
+                    String session = "day-" + day;
+                    for (String to : List.of("ops@mycompany.com", "orders@supplier-a.example", "orders@supplier-b.example",
+                            "billing@mycompany.com")) {
+                        live.check(new ToolCall("c" + ++call, AGENT, "support-chat", session, ToolId.local("sendEmail"),
+                                ObjectValue.of(Map.of("to", ArgValue.text(to))), Instant.parse("2026-10-01T09:00:00Z").plusSeconds(call)));
+                    }
+                }
+                live.check(new ToolCall("c" + ++call, AGENT, "support-chat", "day-6", ToolId.local("sendEmail"),
+                        ObjectValue.of(Map.of("to", ArgValue.text("maria@customer.example"))), Instant.parse("2026-10-07T18:00:00Z")));
+            }
+
+            ReplayReport strict = PolicyReplay.builder(emails(emailDomains("mycompany.com"))).build()
+                    .replay(history.events().stream());
+            ReplayReport withSuppliers = PolicyReplay.builder(
+                            emails(emailDomains("mycompany.com", "supplier-a.example", "supplier-b.example"))).build()
+                    .replay(history.events().stream());
+
+            assertThat(strict.calls()).isEqualTo(29);
+            assertThat(strict.changes()).hasSize(15);
+            assertThat(strict.summary()).contains("15  local/sendEmail  allow -> deny  rule sendEmail.to");
+            assertThat(withSuppliers.changes()).singleElement()
+                    .satisfies(change -> assertThat(change.callId()).isEqualTo("c29"));
+        }
+    }
+
+    /** An in-memory store that keeps its event log, as the JDBC store does. */
+    private static final class RecordingStore implements SessionStore {
+        private final SessionStore store = SessionStore.inMemory();
+        private final List<SessionEvent> events = new CopyOnWriteArrayList<>();
+
+        List<SessionEvent> events() {
+            return List.copyOf(events);
+        }
+
+        @Override
+        public SessionState state(String sessionId) {
+            return store.state(sessionId);
+        }
+
+        @Override
+        public boolean append(SessionEvent event, long expectedVersion) {
+            boolean appended = store.append(event, expectedVersion);
+            if (appended) {
+                events.add(event);
+            }
+            return appended;
+        }
+
+        @Override
+        public void append(SessionEvent event) {
+            store.append(event);
+            events.add(event);
         }
     }
 
