@@ -10,7 +10,6 @@ import io.toolgate.api.Mode;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ResultDecision;
 import io.toolgate.api.ToolCall;
-import io.toolgate.api.ToolDefinition;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolResult;
 import io.toolgate.api.policy.AgentPolicy;
@@ -110,13 +109,10 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     @Override
-    public Decision check(ToolCall call, ToolDefinition offered) {
+    public Decision check(ToolCall call, ToolCatalog offered) {
         Objects.requireNonNull(call, "call");
         Objects.requireNonNull(offered, "offered");
-        if (!offered.tool().equals(call.tool())) {
-            throw new IllegalArgumentException("definition of " + offered.tool() + " offered for a call to " + call.tool());
-        }
-        return checkWith(call, tool -> tool.equals(offered.tool()) ? Optional.of(offered) : catalog.definition(tool));
+        return checkWith(call, tool -> offered.definition(tool).or(() -> catalog.definition(tool)));
     }
 
     @Override

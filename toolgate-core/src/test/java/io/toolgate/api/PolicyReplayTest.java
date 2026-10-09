@@ -161,6 +161,22 @@ class PolicyReplayTest {
                 policy(a -> a.rule("readInvoice.id", sameTenant("invoice")))).build());
     }
 
+    /**
+     * A call the adapter refused could not be read, so it is not replayed as a check of its empty
+     * arguments: it stays refused, never runs, and changes nothing after it.
+     */
+    @Test
+    void aRefusedCallStaysRefused() {
+        ToolGate live = live(policy(a -> { }));
+        live.reject(call("s1", "sendEmail", Map.of()), io.toolgate.api.policy.BuiltInRules.ARGUMENTS_READABLE, "duplicate key 'to'");
+        run(live, "s1", "fetch", Map.of("url", ArgValue.text("https://a.example/")));
+
+        ReplayReport report = replay(policy(a -> { }));
+
+        assertThat(report.changes()).isEmpty();
+        assertThat(report.calls()).isEqualTo(2);
+    }
+
     private static ToolGatePolicy policy(Consumer<ToolGatePolicy.AgentBuilder> extra) {
         return ToolGatePolicy.builder()
                 .tool("readInvoice", t -> t.labels(PRIVATE_DATA).effect(Effect.READ))

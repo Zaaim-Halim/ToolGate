@@ -20,6 +20,7 @@ import java.time.Clock;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * The decision point between the model and every tool: the model proposes, ToolGate decides.
@@ -57,7 +58,24 @@ public interface ToolGate extends AutoCloseable {
      * @throws IllegalArgumentException if the definition is not of the call's tool
      * @throws NullPointerException     if either is null
      */
-    Decision check(ToolCall call, ToolDefinition offered);
+    default Decision check(ToolCall call, ToolDefinition offered) {
+        if (!offered.tool().equals(call.tool())) {
+            throw new IllegalArgumentException("definition of " + offered.tool() + " offered for a call to " + call.tool());
+        }
+        return check(call, tool -> tool.equals(offered.tool()) ? Optional.of(offered) : Optional.empty());
+    }
+
+    /**
+     * Decides a call with the definitions offered to the model in the same request: the call's own tool,
+     * and any other the decision involves, such as a downgrade's safe tool. Tools the request did not
+     * offer are looked up in the gate's tool catalog.
+     *
+     * @param call    the call the model asked for
+     * @param offered the definitions the request offered, by tool
+     * @return the decision to apply
+     * @throws NullPointerException if either is null
+     */
+    Decision check(ToolCall call, ToolCatalog offered);
 
     /**
      * Records a call the adapter refused before it could be checked, such as one whose arguments it

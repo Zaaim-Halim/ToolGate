@@ -6,6 +6,7 @@ import io.toolgate.api.Mode;
 import io.toolgate.api.ReplayReport;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
+import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.rules.Spending;
 import io.toolgate.spi.ApprovalQueue;
@@ -134,7 +135,12 @@ public final class Replayer {
             clock.set(recorded.at());
             var call = new ToolCall(recorded.callId(), recorded.principal(), recorded.agentId(), recorded.sessionId(),
                     recorded.tool(), recorded.args(), recorded.at());
-            Decision applied = gate.check(call);
+            // A call the adapter refused was never read, so its recorded arguments are not what the model
+            // sent; replaying them as a check would invent a call. It is refused again, as recorded.
+            Decision applied = recorded.computed() instanceof Decision.Deny(String ruleId, String reason)
+                    && BuiltInRules.ADAPTER_REFUSALS.contains(ruleId)
+                    ? gate.reject(call, ruleId, reason)
+                    : gate.check(call);
             Decision computed = store.computed(recorded.sessionId(), recorded.callId()).orElse(applied);
             if (!same(recorded.computed(), computed)) {
                 changes.add(new ReplayReport.Change(recorded.sessionId(), recorded.callId(), recorded.agentId(),
