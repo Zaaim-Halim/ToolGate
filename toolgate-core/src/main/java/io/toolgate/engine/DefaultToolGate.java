@@ -23,16 +23,19 @@ import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionEvent.CallDecided;
+import io.toolgate.spi.SessionEvent.CallReleased;
 import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -172,6 +175,12 @@ public final class DefaultToolGate implements ToolGate {
         if (!approvals.transition(approvalId, ApprovalStatus.PENDING, outcome)) {
             return alreadyDecided(approvalId);
         }
+        if (outcome == ApprovalStatus.RELEASED) {
+            // After the queue says released, so a lost race records nothing. If this fails, approve throws:
+            // the application never gets Released and never runs the call, which fails closed.
+            sessions.append(new CallReleased(call.sessionId(), approvalId, call.callId(),
+                    spent(released, new Decision.Allow(pending.deferral().ruleId())), clock.instant()));
+        }
         auditApproval(pending, outcome, reviewer.id(), refusal.orElse("approved"));
         return refusal.<Approval>map(Approval.Refused::new)
                 .orElseGet(() -> new Approval.Released(released, approvalId));
@@ -205,6 +214,11 @@ public final class DefaultToolGate implements ToolGate {
             }
         }
         return expired;
+    }
+
+    /** What a call adds to the session's totals: nothing until total limits exist. */
+    private Map<String, BigDecimal> spent(ToolCall call, Decision applied) {
+        return Map.of();
     }
 
     /**
@@ -289,7 +303,7 @@ public final class DefaultToolGate implements ToolGate {
             Evaluation evaluation = decide(call, state);
             Decision decision = evaluation.effective();
             var event = new CallDecided(call.sessionId(), call.callId(), call.agentId(), call.principal(), call.tool(),
-                    call.args(), decision, evaluation.computed(), policy.hash(), call.at());
+                    call.args(), decision, evaluation.computed(), spent(call, decision), policy.hash(), call.at());
             if (decision instanceof Decision.Terminate) {
                 sessions.append(event);
                 audit(call, decision, evaluation.computed(), state.apply(event).toolCalls(), state);

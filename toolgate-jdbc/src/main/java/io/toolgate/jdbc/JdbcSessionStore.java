@@ -27,8 +27,8 @@ import javax.sql.DataSource;
  *
  * <p>The event log keeps every session event, including the calls' real argument values. Give the
  * store a {@link ValueCodec} to seal each event, bound to its session and version; without one,
- * events are stored in clear, and the store says so once in the log. Snapshots hold only counters
- * and labels with call IDs, so they stay in clear. Bound how long events are kept with
+ * events are stored in clear, and the store says so once in the log. Snapshots hold counters,
+ * labels with call IDs, and the sums that total limits watch, and stay in clear. Bound how long events are kept with
  * {@link #purgeIdle}. Every check costs a database round trip, which is the price of
  * consistent decisions across instances; the in-memory store remains the fast choice for one
  * instance.
@@ -194,26 +194,28 @@ public final class JdbcSessionStore implements SessionStore {
         long now = Codec.micros(clock.instant());
         if (stored.isEmpty()) {
             try (PreparedStatement insert = connection.prepareStatement("INSERT INTO toolgate_session"
-                    + " (session_id, version, tool_calls, denials, taint, updated_at) VALUES (?, ?, ?, ?, ?, ?)")) {
+                    + " (session_id, version, tool_calls, denials, taint, totals, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
                 insert.setString(1, sessionId);
                 insert.setLong(2, next.version());
                 insert.setInt(3, next.toolCalls());
                 insert.setInt(4, next.denials());
                 insert.setString(5, Codec.taint(next.taint()));
-                insert.setLong(6, now);
+                insert.setString(6, Codec.totals(next.totals()));
+                insert.setLong(7, now);
                 insert.executeUpdate();
             }
         } else {
             try (PreparedStatement update = connection.prepareStatement("UPDATE toolgate_session"
-                    + " SET version = ?, tool_calls = ?, denials = ?, taint = ?, updated_at = ?"
+                    + " SET version = ?, tool_calls = ?, denials = ?, taint = ?, totals = ?, updated_at = ?"
                     + " WHERE session_id = ? AND version = ?")) {
                 update.setLong(1, next.version());
                 update.setInt(2, next.toolCalls());
                 update.setInt(3, next.denials());
                 update.setString(4, Codec.taint(next.taint()));
-                update.setLong(5, now);
-                update.setString(6, sessionId);
-                update.setLong(7, expectedVersion);
+                update.setString(5, Codec.totals(next.totals()));
+                update.setLong(6, now);
+                update.setString(7, sessionId);
+                update.setLong(8, expectedVersion);
                 if (update.executeUpdate() != 1) {
                     return false;
                 }
@@ -243,7 +245,7 @@ public final class JdbcSessionStore implements SessionStore {
 
     private static Optional<SessionState> read(Connection connection, String sessionId) throws SQLException {
         try (PreparedStatement select = connection.prepareStatement(
-                "SELECT version, tool_calls, denials, taint FROM toolgate_session WHERE session_id = ?")) {
+                "SELECT version, tool_calls, denials, taint, totals FROM toolgate_session WHERE session_id = ?")) {
             select.setString(1, sessionId);
             try (ResultSet row = select.executeQuery()) {
                 if (!row.next()) {
@@ -251,7 +253,7 @@ public final class JdbcSessionStore implements SessionStore {
                 }
                 try {
                     return Optional.of(new SessionState(sessionId, row.getLong("version"), row.getInt("tool_calls"),
-                            row.getInt("denials"), Codec.taint(row.getString("taint"))));
+                            row.getInt("denials"), Codec.taint(row.getString("taint")), Codec.totals(row.getString("totals"))));
                 } catch (IllegalArgumentException corrupt) {
                     throw new JdbcStoreException("unreadable state of session " + sessionId, corrupt);
                 }

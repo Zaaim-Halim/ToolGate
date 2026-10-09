@@ -5,8 +5,10 @@ import static io.toolgate.support.Checks.requireNonBlank;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Label;
 import io.toolgate.spi.SessionEvent.CallDecided;
+import io.toolgate.spi.SessionEvent.CallReleased;
 import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
+import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
@@ -22,8 +24,10 @@ import java.util.Map;
  * @param toolCalls calls that used tool-call budget: allowed, deferred or downgraded ones
  * @param denials   calls that were denied, for the denial budget
  * @param taint     the source labels the session holds, each with the call that first brought it in
+ * @param totals    the sums that total limits watch, by rule ID: what allowed and released calls added
  */
-public record SessionState(String sessionId, long version, int toolCalls, int denials, Map<Label, TaintSource> taint) {
+public record SessionState(String sessionId, long version, int toolCalls, int denials, Map<Label, TaintSource> taint,
+                           Map<String, BigDecimal> totals) {
 
     /** Rejects negative counters, which only a corrupt store could produce. */
     public SessionState {
@@ -32,6 +36,7 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
             throw new IllegalArgumentException("session counters must not be negative");
         }
         taint = taint.isEmpty() ? Map.of() : Collections.unmodifiableMap(new EnumMap<>(taint));
+        totals = Totals.copy(totals);
     }
 
     /**
@@ -41,7 +46,7 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
      * @return the state at version zero
      */
     public static SessionState empty(String sessionId) {
-        return new SessionState(sessionId, 0, 0, 0, Map.of());
+        return new SessionState(sessionId, 0, 0, 0, Map.of(), Map.of());
     }
 
     /**
@@ -58,17 +63,18 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         return switch (event) {
             case CallDecided decided -> switch (decided.applied()) {
                 // A denied call releases the budget it would have used, so probing costs denials, not calls.
-                case Decision.Allow allowed -> next(toolCalls + 1, denials, taint);
-                case Decision.Defer deferred -> next(toolCalls + 1, denials, taint);
-                case Decision.Downgrade downgraded -> next(toolCalls + 1, denials, taint);
-                case Decision.Deny denied -> next(toolCalls, denials + 1, taint);
-                case Decision.Terminate terminated -> next(toolCalls, denials, taint);
+                case Decision.Allow allowed -> next(toolCalls + 1, denials, taint, Totals.add(totals, decided.spent()));
+                case Decision.Defer deferred -> next(toolCalls + 1, denials, taint, totals);
+                case Decision.Downgrade downgraded -> next(toolCalls + 1, denials, taint, totals);
+                case Decision.Deny denied -> next(toolCalls, denials + 1, taint, totals);
+                case Decision.Terminate terminated -> next(toolCalls, denials, taint, totals);
             };
+            case CallReleased released -> next(toolCalls, denials, taint, Totals.add(totals, released.spent()));
             // A withheld output counts as a denial, so probing through search results ends the run too.
             case ResultRecorded recorded -> recorded.withheld()
-                    ? next(toolCalls, denials + 1, taint)
-                    : next(toolCalls, denials, withLabels(recorded));
-            case Declassified declassified -> next(toolCalls, denials, without(declassified.label()));
+                    ? next(toolCalls, denials + 1, taint, totals)
+                    : next(toolCalls, denials, withLabels(recorded), totals);
+            case Declassified declassified -> next(toolCalls, denials, without(declassified.label()), totals);
         };
     }
 
@@ -82,8 +88,19 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         return taint.containsKey(label);
     }
 
-    private SessionState next(int newToolCalls, int newDenials, Map<Label, TaintSource> newTaint) {
-        return new SessionState(sessionId, version + 1, newToolCalls, newDenials, newTaint);
+    /**
+     * What a total limit sees so far.
+     *
+     * @param ruleId the rule ID of the argument, such as {@code issueRefund.amount}
+     * @return the sum of what allowed and released calls added; zero if nothing yet
+     */
+    public BigDecimal total(String ruleId) {
+        return totals.getOrDefault(ruleId, BigDecimal.ZERO);
+    }
+
+    private SessionState next(int newToolCalls, int newDenials, Map<Label, TaintSource> newTaint,
+                              Map<String, BigDecimal> newTotals) {
+        return new SessionState(sessionId, version + 1, newToolCalls, newDenials, newTaint, newTotals);
     }
 
     /** The first source of each label is kept: it is where the session became tainted. */

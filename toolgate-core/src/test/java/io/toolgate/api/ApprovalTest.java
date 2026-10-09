@@ -58,6 +58,18 @@ class ApprovalTest {
         assertThat(second).isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.REFUSED));
     }
 
+    /** A release counts in the session, so totals and replay see it; a refused approval records nothing. */
+    @Test
+    void releaseIsRecordedInTheSession() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+        long before = sessions.state("refunds-refund-agent").version();
+
+        gate.approve(approvalId, LENA, JOB);
+
+        assertThat(sessions.state("refunds-refund-agent").version()).isEqualTo(before + 1);
+    }
+
     @Test
     void approvalReleasesTheCallOnceWithAnIdempotencyKey() {
         ToolGate gate = gate(refundPolicy(a -> { }));

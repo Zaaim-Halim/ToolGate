@@ -7,7 +7,9 @@ import io.toolgate.api.Label;
 import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ToolId;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -18,7 +20,8 @@ import java.util.Set;
  * <p>Sealed because stores persist these events: they must know every kind they may meet.
  */
 public sealed interface SessionEvent
-        permits SessionEvent.CallDecided, SessionEvent.ResultRecorded, SessionEvent.Declassified {
+        permits SessionEvent.CallDecided, SessionEvent.ResultRecorded, SessionEvent.Declassified,
+                SessionEvent.CallReleased {
 
     /**
      * The session this event belongs to.
@@ -42,12 +45,14 @@ public sealed interface SessionEvent
      * @param args       the arguments the model gave
      * @param applied    the decision that took effect
      * @param computed   the decision a fully enforced policy would have made
+     * @param spent      what this call added to the session's totals, by rule ID; empty unless it was
+     *                   allowed and an argument has a total limit
      * @param policyHash the policy that decided, as {@code ToolGatePolicy.hash()} gives it
      * @param at         when the call was captured
      */
     record CallDecided(String sessionId, String callId, String agentId, Principal principal, ToolId tool,
-                       ObjectValue args, Decision applied, Decision computed, String policyHash, Instant at)
-            implements SessionEvent {
+                       ObjectValue args, Decision applied, Decision computed, Map<String, BigDecimal> spent,
+                       String policyHash, Instant at) implements SessionEvent {
 
         /** Requires every component. */
         public CallDecided {
@@ -59,6 +64,7 @@ public sealed interface SessionEvent
             Objects.requireNonNull(args, "args");
             Objects.requireNonNull(applied, "applied");
             Objects.requireNonNull(computed, "computed");
+            spent = Totals.copy(spent);
             requireNonBlank(policyHash, "policyHash");
             Objects.requireNonNull(at, "at");
         }
@@ -92,6 +98,29 @@ public sealed interface SessionEvent
             if (withheld && !labels.isEmpty()) {
                 throw new IllegalArgumentException("a withheld output never reached the model, so it adds no labels");
             }
+        }
+    }
+
+    /**
+     * A deferred call was approved and released to run: what it adds to the session's totals counts
+     * now. Its tool-call budget was already spent when it was deferred.
+     *
+     * @param sessionId  the session
+     * @param approvalId the released call's approval ID
+     * @param callId     the call
+     * @param spent      what it adds to the session's totals, by rule ID
+     * @param at         when it was released
+     */
+    record CallReleased(String sessionId, String approvalId, String callId, Map<String, BigDecimal> spent, Instant at)
+            implements SessionEvent {
+
+        /** Requires every component; amounts must not be negative. */
+        public CallReleased {
+            requireNonBlank(sessionId, "sessionId");
+            requireNonBlank(approvalId, "approvalId");
+            requireNonBlank(callId, "callId");
+            spent = Totals.copy(spent);
+            Objects.requireNonNull(at, "at");
         }
     }
 

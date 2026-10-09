@@ -109,7 +109,7 @@ class EncryptionAtRestTest {
         ObjectValue args = ObjectValue.of(Map.of("to", ArgValue.text(SECRET)));
         return new SessionEvent.CallDecided("s1", callId, "agent", Principal.user("maria", Tenant.of("acme")),
                 ToolId.local("sendEmail"), args, new Decision.Allow("allow-list"), new Decision.Allow("allow-list"),
-                "sha256:abc", T0);
+                Map.of(), "sha256:abc", T0);
     }
 
     private List<String> rawColumn(String sql) throws SQLException {

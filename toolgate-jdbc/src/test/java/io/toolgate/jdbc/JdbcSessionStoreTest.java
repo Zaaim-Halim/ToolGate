@@ -44,7 +44,16 @@ class JdbcSessionStoreTest {
         store.append(decided("s1/2", new Decision.Deny("allow-list", "not listed")), 2);
 
         assertThat(store.state("s1")).isEqualTo(new SessionState("s1", 3, 1, 1,
-                Map.of(Label.PRIVATE_DATA, new TaintSource("s1/1", ToolId.local("readInvoice")))));
+                Map.of(Label.PRIVATE_DATA, new TaintSource("s1/1", ToolId.local("readInvoice"))), Map.of()));
+    }
+
+    @Test
+    void keepsTotalsInTheSnapshot() {
+        store.append(new SessionEvent.CallReleased("s1", "s1:c1", "c1",
+                Map.of("issueRefund.amount", new BigDecimal("199.99"), "transfer.quantity", BigDecimal.TEN), T0));
+
+        assertThat(store.state("s1").total("issueRefund.amount")).isEqualByComparingTo("199.99");
+        assertThat(store.state("s1").total("transfer.quantity")).isEqualByComparingTo("10");
     }
 
     @Test
@@ -75,16 +84,18 @@ class JdbcSessionStoreTest {
         List<SessionEvent> events = List.of(
                 new SessionEvent.CallDecided("s1", "s1/1", "agent", MARIA, ToolId.mcp("mail", "send"), args,
                         new Decision.Downgrade("taint.trifecta", ToolId.local("draftEmail"), args),
-                        new Decision.Deny("taint.trifecta", "trifecta"), "sha256:abc", T0),
+                        new Decision.Deny("taint.trifecta", "trifecta"), Map.of(), "sha256:abc", T0),
                 new SessionEvent.CallDecided("s1", "s1/2", "agent", Principal.service("job", Tenant.none()),
                         ToolId.local("issueRefund"), ObjectValue.empty(),
                         new Decision.Defer("issueRefund.amount", "480 is above 200", "s1:s1/2"),
-                        new Decision.Terminate("budget.toolCalls", "used up"), "sha256:abc", T0.plusSeconds(1)),
+                        new Decision.Terminate("budget.toolCalls", "used up"), Map.of(), "sha256:abc", T0.plusSeconds(1)),
                 new SessionEvent.ResultRecorded("s1", "s1/1", ToolId.local("draftEmail"), false, true, Set.of(),
                         T0.plusSeconds(2)),
                 new SessionEvent.ResultRecorded("s1", "s1/3", ToolId.local("fetch"), true, false,
                         Set.of(Label.UNTRUSTED_CONTENT, Label.PRIVATE_DATA), T0.plusSeconds(3)),
-                new SessionEvent.Declassified("s1", Label.UNTRUSTED_CONTENT, "parsed into a schema", T0.plusSeconds(4)));
+                new SessionEvent.Declassified("s1", Label.UNTRUSTED_CONTENT, "parsed into a schema", T0.plusSeconds(4)),
+                new SessionEvent.CallReleased("s1", "s1:s1/2", "s1/2", Map.of("issueRefund.amount", new BigDecimal("480.5")),
+                        T0.plusSeconds(5)));
         for (SessionEvent event : events) {
             store.append(event);
         }
@@ -110,7 +121,7 @@ class JdbcSessionStoreTest {
 
     private static SessionEvent decided(String callId, Decision applied, String sessionId) {
         return new SessionEvent.CallDecided(sessionId, callId, "agent", MARIA, ToolId.local("t"), ObjectValue.empty(),
-                applied, applied, "sha256:abc", T0);
+                applied, applied, Map.of(), "sha256:abc", T0);
     }
 
     private static SessionEvent result(String callId, String tool, Label label) {

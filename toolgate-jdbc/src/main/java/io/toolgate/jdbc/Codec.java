@@ -15,6 +15,7 @@ import io.toolgate.api.TextValue;
 import io.toolgate.api.ToolId;
 import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.TaintSource;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -45,6 +46,7 @@ final class Codec {
                     "args", decided.args(),
                     "applied", decision(decided.applied()),
                     "computed", decision(decided.computed()),
+                    "spent", amounts(decided.spent()),
                     "policyHash", text(decided.policyHash()),
                     "at", number(decided.at()));
             case SessionEvent.ResultRecorded recorded -> object(
@@ -56,6 +58,13 @@ final class Codec {
                     "withheld", ArgValue.bool(recorded.withheld()),
                     "labels", ArgValue.list(recorded.labels().stream().sorted().map(label -> text(label.name())).toList()),
                     "at", number(recorded.at()));
+            case SessionEvent.CallReleased released -> object(
+                    "type", text("CallReleased"),
+                    "sessionId", text(released.sessionId()),
+                    "approvalId", text(released.approvalId()),
+                    "callId", text(released.callId()),
+                    "spent", amounts(released.spent()),
+                    "at", number(released.at()));
             case SessionEvent.Declassified declassified -> object(
                     "type", text("Declassified"),
                     "sessionId", text(declassified.sessionId()),
@@ -71,7 +80,9 @@ final class Codec {
             case "CallDecided" -> new SessionEvent.CallDecided(string(event, "sessionId"), string(event, "callId"),
                     string(event, "agentId"), principal(field(event, "principal")), ToolId.parse(string(event, "tool")),
                     asObject(field(event, "args")), decision(field(event, "applied")), decision(field(event, "computed")),
-                    string(event, "policyHash"), instant(event, "at"));
+                    amounts(field(event, "spent")), string(event, "policyHash"), instant(event, "at"));
+            case "CallReleased" -> new SessionEvent.CallReleased(string(event, "sessionId"), string(event, "approvalId"),
+                    string(event, "callId"), amounts(field(event, "spent")), instant(event, "at"));
             case "ResultRecorded" -> new SessionEvent.ResultRecorded(string(event, "sessionId"), string(event, "callId"),
                     ToolId.parse(string(event, "tool")), bool(event, "succeeded"), bool(event, "withheld"),
                     labels(field(event, "labels")), instant(event, "at"));
@@ -93,6 +104,14 @@ final class Codec {
         asObject(ArgValueJson.read(json)).fields().forEach((label, source) -> taint.put(Label.valueOf(label),
                 new TaintSource(string(asObject(source), "callId"), ToolId.parse(string(asObject(source), "tool")))));
         return taint;
+    }
+
+    static String totals(Map<String, BigDecimal> totals) {
+        return ArgValueJson.write(amounts(totals));
+    }
+
+    static Map<String, BigDecimal> totals(String json) {
+        return amounts(ArgValueJson.read(json));
     }
 
     static long micros(Instant instant) {
@@ -129,6 +148,23 @@ final class Codec {
             case "terminate" -> new Decision.Terminate(ruleId, string(decision, "reason"));
             default -> throw new IllegalArgumentException("unknown decision kind " + string(decision, "kind"));
         };
+    }
+
+    private static ObjectValue amounts(Map<String, BigDecimal> amounts) {
+        var fields = new LinkedHashMap<String, ArgValue>();
+        amounts.forEach((ruleId, amount) -> fields.put(ruleId, ArgValue.number(amount)));
+        return new ObjectValue(fields);
+    }
+
+    private static Map<String, BigDecimal> amounts(ArgValue value) {
+        var amounts = new LinkedHashMap<String, BigDecimal>();
+        asObject(value).fields().forEach((ruleId, amount) -> {
+            if (!(amount instanceof NumberValue(BigDecimal number))) {
+                throw new IllegalArgumentException("total " + ruleId + " is not a number");
+            }
+            amounts.put(ruleId, number);
+        });
+        return amounts;
     }
 
     private static ArgValue principal(Principal principal) {
