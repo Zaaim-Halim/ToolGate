@@ -3,6 +3,7 @@ package io.toolgate.benchmarks;
 import static io.toolgate.api.policy.ArgumentRules.hosts;
 import static io.toolgate.api.policy.ArgumentRules.schemes;
 import static io.toolgate.api.policy.ArgumentRules.under;
+import static io.toolgate.sql.SqlRules.readOnlySql;
 
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.Decision;
@@ -59,6 +60,7 @@ public class CheckBenchmark {
     private ToolCall[] urlCalls;
     private ToolCall[] deniedUrlCalls;
     private ToolCall[] pathCalls;
+    private ToolCall[] sqlCalls;
     private int next;
 
     @Setup(Level.Trial)
@@ -67,18 +69,22 @@ public class CheckBenchmark {
         Files.writeString(root.resolve("q3.csv"), "q3");
         ToolGatePolicy policy = ToolGatePolicy.builder()
                 .agent("support-chat", a -> a
-                        .allow("getCustomer", "fetch", "readFile")
+                        .allow("getCustomer", "fetch", "readFile", "runQuery")
                         .rule("fetch.url", hosts("docs.example", "*.vendor.example"), schemes("https"))
-                        .rule("readFile.path", under(root.toString())))
+                        .rule("readFile.path", under(root.toString()))
+                        .rule("runQuery.sql", readOnlySql()))
                 .build();
         ToolCatalog catalog = ToolCatalog.inMemory()
                 .put(ToolDefinition.of(ToolId.local("fetch"), "Fetch a page", "{\"properties\":{\"url\":{\"type\":\"string\"}}}"))
-                .put(ToolDefinition.of(ToolId.local("readFile"), "Read a file", "{\"properties\":{\"path\":{\"type\":\"string\"}}}"));
+                .put(ToolDefinition.of(ToolId.local("readFile"), "Read a file", "{\"properties\":{\"path\":{\"type\":\"string\"}}}"))
+                .put(ToolDefinition.of(ToolId.local("runQuery"), "Run a query", "{\"properties\":{\"sql\":{\"type\":\"string\"}}}"));
         gate = ToolGate.builder(policy).toolCatalog(catalog).auditSink(event -> { }).build();
         allowListCalls = calls("getCustomer", "id", "C-5512");
         urlCalls = calls("fetch", "url", "https://status.vendor.example/api/v2/status");
         deniedUrlCalls = calls("fetch", "url", "http://169.254.169.254/latest/meta-data/");
         pathCalls = calls("readFile", "path", root.resolve("q3.csv").toString());
+        sqlCalls = calls("runQuery", "sql", "SELECT o.id, o.status, c.name FROM orders o JOIN customers c"
+                + " ON c.id = o.customer_id WHERE o.id = 42 AND c.tenant = 'acme' ORDER BY o.id LIMIT 10");
     }
 
     @TearDown(Level.Trial)
@@ -110,6 +116,12 @@ public class CheckBenchmark {
     @Benchmark
     public Decision pathAllowed() {
         return gate.check(pathCalls[nextIndex()]);
+    }
+
+    /** readOnlySql on a join a support agent might write: text checks, then a JSqlParser parse. */
+    @Benchmark
+    public Decision sqlAllowed() {
+        return gate.check(sqlCalls[nextIndex()]);
     }
 
     private int nextIndex() {

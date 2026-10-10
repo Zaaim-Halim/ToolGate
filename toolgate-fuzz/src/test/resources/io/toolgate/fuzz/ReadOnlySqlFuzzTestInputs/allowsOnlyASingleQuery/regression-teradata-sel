@@ -1,0 +1,2 @@
+SEL
+CT id FROM orders UNION SELECT id FROorders UNION SELECT id FROM aCHARACTERrchived_ordM archived_krders

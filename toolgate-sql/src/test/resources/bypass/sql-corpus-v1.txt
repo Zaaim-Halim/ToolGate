@@ -1,0 +1,89 @@
+# ToolGate SQL bypass corpus, format version 1 (the same format as core's corpus-v1.txt).
+#
+# One case per line:  kind | expect | input | why
+#   kind    sql        readOnlySql() on a string argument
+#   expect  allow or deny
+#   input   the argument, exactly as a model would write it; \uXXXX escapes stand for one
+#           character, so this file stays ASCII and nothing in it is invisible
+#   why     the trap, or the source of the case
+#
+# The rule is a pre-check: "allow" means only that the text reads as one query. The database
+# still enforces read-only through SafeJdbc or a read-only role.
+#
+# Every reported bypass becomes a case here before its fix is merged. Never edit a case to make
+# it pass; add a new format version instead if the meaning of a field must change.
+
+# --- Queries a support agent writes
+sql | allow | SELECT id, status FROM orders WHERE id = 42 | plain query
+sql | allow | select id from orders where id = 42; | one trailing semicolon
+sql | allow | SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.tenant = 'acme' ORDER BY o.id LIMIT 10 | join, order and limit
+sql | allow | SELECT status, count(*) FROM orders GROUP BY status HAVING count(*) > 1 | aggregates
+sql | allow | WITH recent AS (SELECT * FROM orders WHERE created_at > '2026-10-01') SELECT id FROM recent | WITH whose part is a query
+sql | allow | SELECT id FROM orders UNION SELECT id FROM archived_orders | set operation
+sql | allow | SELECT * FROM orders WHERE id IN (SELECT order_id FROM refunds) | subquery
+sql | allow | SELECT updated_at, last_update_by FROM orders | words that contain UPDATE are not the word UPDATE
+sql | allow | SELECT id::text FROM orders WHERE status ILIKE 'open%' | PostgreSQL cast and ILIKE
+sql | allow | SELECT\u000a  id\u000aFROM orders | line breaks
+
+# --- Not a query
+sql | deny  | DELETE FROM orders WHERE 1=1 | design document: the support agent's runQuery
+sql | deny  | UPDATE orders SET status = 'refunded' | write
+sql | deny  | INSERT INTO orders (id) VALUES (1) | write
+sql | deny  | DROP TABLE orders | schema change
+sql | deny  | TRUNCATE orders | schema change
+sql | deny  | GRANT ALL ON orders TO PUBLIC | privileges
+sql | deny  | CALL refund_all() | procedure call
+sql | deny  | VALUES (1) | not a plain query
+sql | deny  | TABLE orders | not a plain query
+sql | deny  | SET transaction_read_only = off | a setting that could undo the read-only transaction
+sql | deny  |  | empty
+sql | deny  | SELEC id FROM orders | unreadable
+sql | deny  | SEL\u000aCT id FROM orders UNION SELECT id FROM t | JSqlParser reads Teradata's SEL as SELECT; only standard starts pass (found by fuzzing)
+
+# --- Writes that look like a query
+sql | deny  | WITH t AS (DELETE FROM orders RETURNING *) SELECT * FROM t | PostgreSQL writable WITH, which parses as a SELECT
+sql | deny  | SELECT * FROM orders WHERE id IN (WITH t AS (UPDATE orders SET s = 1 RETURNING id) SELECT id FROM t) | writable WITH in a subquery: JSqlParser's own SELECT validation allows it (probed, 5.4)
+sql | deny  | SELECT * INTO backup FROM orders | SELECT INTO creates a table
+sql | deny  | SELECT 1 INTO OUTFILE '/tmp/x' | MySQL writes a file; JSqlParser's tree shows no INTO tables (probed, 5.4)
+sql | deny  | SELECT * FROM orders FOR UPDATE | locks rows
+sql | deny  | SELECT * FROM orders FOR SHARE | locks rows
+sql | deny  | SELECT * FROM (SELECT * FROM orders FOR UPDATE) x | lock in a subquery
+sql | deny  | SELECT * FROM orders LOCK IN SHARE MODE | MySQL lock
+sql | allow | SELECT FILE_WRITE('leaked', '/tmp/out.txt') | H2 writes a file from a SELECT: no pre-check catches functions with side effects; the role must (SafeJdbcH2Test)
+sql | allow | SELECT pg_terminate_backend(42) | PostgreSQL ends a session from a SELECT: allowed by the pre-check, documented limit
+sql | deny  | (SELECT 1) UNION (SELECT * INTO backup FROM orders) | INTO inside a set operation
+
+# --- Several statements
+sql | deny  | SELECT 1; DELETE FROM orders | stacked statement
+sql | deny  | SELECT 1; SELECT 2 | stacked queries
+sql | deny  | SELECT ';' FROM orders | semicolon in a literal: denied, since literals end differently per database
+sql | deny  | SELECT 'a\'; DELETE FROM orders; SELECT \'' | MySQL reads the backslash as an escape and finds a DELETE
+
+# --- Comments
+sql | deny  | SELECT 1 /*!50000 , (DELETE FROM orders) */ | MySQL runs /*! comments as code; JSqlParser drops them (probed, 5.4)
+sql | deny  | SELECT 1 /*!50000 UNION SELECT password FROM users */ | MySQL conditional comment without a writing word
+sql | deny  | SELECT 1 -- ; DROP TABLE orders | line comment
+sql | deny  | SELECT 1 # comment | MySQL line comment
+sql | deny  | SELECT data #> '{a}' FROM docs | PostgreSQL #> operator: denied with MySQL's # comments (fails closed)
+sql | deny  | SELECT 1 */ | stray comment end
+
+# --- Words anywhere
+sql | deny  | SELECT * FROM notes WHERE body = 'please update' | a writing word inside a string (fails closed)
+sql | deny  | SELECT "update" FROM t | a writing word as a quoted name (fails closed)
+sql | deny  | SELECT * FROM t WHERE x = 1 AND EXECUTE | EXECUTE anywhere
+sql | deny  | SeLeCt 1 InTo backup | mixed case
+sql | deny  | SELECT 1INTO backup FROM orders | PostgreSQL 14 and older read 1INTO as 1 INTO and create a table; JSqlParser reads one word (found in verification)
+sql | deny  | SELECT 1e1INTO backup | keyword glued to a float
+sql | deny  | SELECT 0x1INTO backup | keyword glued to a hex literal
+sql | deny  | SELECT $1INTO backup | keyword glued to a PostgreSQL parameter
+sql | deny  | SELECT a$into FROM t | dollar inside a name splits words too (fails closed)
+sql | deny  | SELECT col1update FROM t | digits split words, so a name like this is denied (fails closed)
+sql | allow | SELECT set_config('transaction_read_only', 'off', true) | passes the pre-check; PostgreSQL refuses read-write mode once a query has run
+sql | allow | SELECT pg_read_file('/etc/passwd') | reads a server file: no read-only transaction stops reads; only the role's privileges do
+
+# --- Characters and size
+sql | deny  | SELECT 1\u0000; DELETE FROM orders | NUL
+sql | deny  | SELECT 1​ FROM orders | zero-width space
+sql | deny  | SELECT 1  FROM orders | line separator
+sql | allow | SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) | 100 levels of parentheses
+sql | deny  | SELECT (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) | 101 levels of parentheses

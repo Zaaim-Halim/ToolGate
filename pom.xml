@@ -23,6 +23,8 @@
         <module>toolgate-core</module>
         <module>toolgate-jdbc</module>
         <module>toolgate-email</module>
+        <module>toolgate-sql</module>
+        <module>toolgate-safe-jdbc</module>
         <module>toolgate-test</module>
         <module>toolgate-spring-ai</module>
         <module>toolgate-demo</module>
@@ -46,6 +48,7 @@
         <!-- 2.5.252 is a patch released 2026-09-26; take it at the next dependency update. -->
         <h2.version>2.5.250</h2.version>
         <jakarta.mail.version>2.1.5</jakarta.mail.version>
+        <jsqlparser.version>5.4</jsqlparser.version>
     </properties>
 
     <dependencyManagement>
@@ -86,6 +89,11 @@
                 <groupId>jakarta.mail</groupId>
                 <artifactId>jakarta.mail-api</artifactId>
                 <version>${jakarta.mail.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.jsqlparser</groupId>
+                <artifactId>jsqlparser</artifactId>
+                <version>${jsqlparser.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

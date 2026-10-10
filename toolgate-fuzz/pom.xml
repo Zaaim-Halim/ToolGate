@@ -12,7 +12,7 @@
 
     <artifactId>toolgate-fuzz</artifactId>
     <name>ToolGate Fuzz Tests</name>
-    <description>Coverage-guided fuzz targets for the parsers and validators in toolgate-core and toolgate-email. Never published.</description>
+    <description>Coverage-guided fuzz targets for the parsers and validators in toolgate-core, toolgate-email and toolgate-sql. Never published.</description>
 
     <properties>
         <!-- Test-only module: nothing here may reach users. -->
@@ -43,6 +43,12 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>io.toolgate</groupId>
+            <artifactId>toolgate-sql</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>com.code-intelligence</groupId>
             <artifactId>jazzer-junit</artifactId>
             <scope>test</scope>
@@ -69,6 +75,11 @@
                          self-attach, ByteBuddy needs an external helper process, which fails in
                          sandboxed builds; JDK 21 also warns on dynamic agents unless enabled. -->
                     <argLine>-Djdk.attach.allowAttachSelf=true -XX:+EnableDynamicAgentLoading</argLine>
+                    <!-- By default Jazzer instruments only the fuzz test's own package, so it had no
+                         coverage inside the code under test (3 edges for readOnlySql, 890 with this). -->
+                    <systemPropertyVariables>
+                        <jazzer.instrumentation_includes>io.toolgate.**:net.sf.jsqlparser.**:jakarta.mail.**</jazzer.instrumentation_includes>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
         </plugins>
