@@ -918,6 +918,26 @@ class ApprovalTest {
         });
     }
 
+    /** Behind a load balancer, decisions spread over instances; the shared queue still sees the burst. */
+    @Test
+    void aSuperAdminBurstSpreadOverTwoInstancesIsSeen() {
+        ToolGatePolicy policy = refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin"));
+        try (ToolGate first = ToolGate.builder(policy).approvalQueue(queue).sessionStore(sessions).clock(clock)
+                .noDefaultLog().auditSink(events::add).superAdminAlert(2, Duration.ofHours(1)).build();
+             ToolGate second = ToolGate.builder(policy).approvalQueue(queue).sessionStore(sessions).clock(clock)
+                     .noDefaultLog().auditSink(events::add).superAdminAlert(2, Duration.ofHours(1)).build()) {
+            first.reject(deferRefund(first, JOB, "c2"), ROOT, "cleanup");
+            clock.advance(Duration.ofMinutes(1));
+            second.reject(deferRefund(second, JOB, "c3"), ROOT, "cleanup");
+            clock.advance(Duration.ofMinutes(1));
+            first.reject(deferRefund(first, JOB, "c4"), ROOT, "cleanup");
+        }
+
+        // Neither instance made three decisions; together they did.
+        assertThat(events).filteredOn(AuditEvent.SuperAdminBurst.class::isInstance).singleElement()
+                .satisfies(event -> assertThat(((AuditEvent.SuperAdminBurst) event).decisions()).isEqualTo(3));
+    }
+
     @Test
     void theSuperAdminAlertIsOnByDefaultAndCanBeTurnedOff() {
         ToolGatePolicy policy = refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin"));

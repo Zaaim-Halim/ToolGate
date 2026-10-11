@@ -645,7 +645,7 @@ public final class DefaultToolGate implements ToolGate {
 
     private void watchSuperAdmin(ApprovalAccess access, Principal by, Instant at) {
         if (access == ApprovalAccess.SUPER_ADMIN) {
-            superAdminWatch.decided(at).ifPresent(decisions -> audit.submit(() ->
+            superAdminWatch.decided(at, approvals).ifPresent(decisions -> audit.submit(() ->
                     new AuditEvent.SuperAdminBurst(at, decisions, superAdminWatch.window(), by.id())));
         }
     }

@@ -35,6 +35,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
@@ -305,6 +306,25 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             }
         } catch (SQLException failure) {
             throw new JdbcStoreException("could not search the approval queue", failure);
+        }
+    }
+
+    /** One indexed count over the decision table, which every instance writes to. */
+    @Override
+    public OptionalLong countDecisions(ApprovalAccess access, Instant after, Instant upTo) {
+        requireSchema();
+        String sql = "SELECT COUNT(*) FROM " + decisionTable + " WHERE access = ? AND decided_at > ? AND decided_at <= ?";
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement select = connection.prepareStatement(sql)) {
+            select.setString(1, access.name());
+            select.setLong(2, micros(after));
+            select.setLong(3, micros(upTo));
+            try (ResultSet row = select.executeQuery()) {
+                row.next();
+                return OptionalLong.of(row.getLong(1));
+            }
+        } catch (SQLException failure) {
+            throw new JdbcStoreException("could not count " + access + " decisions", failure);
         }
     }
 

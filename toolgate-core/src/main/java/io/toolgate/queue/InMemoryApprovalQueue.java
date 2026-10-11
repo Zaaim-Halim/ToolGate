@@ -1,11 +1,14 @@
 package io.toolgate.queue;
 
+import io.toolgate.api.ApprovalAccess;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.PendingCall;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,5 +54,14 @@ public final class InMemoryApprovalQueue implements ApprovalQueue {
                 .filter(call -> call.status() == status)
                 .sorted(Comparator.comparing(PendingCall::deferredAt).thenComparing(PendingCall::approvalId))
                 .toList();
+    }
+
+    /** Counts across every gate sharing this queue in the JVM; a scan, fine for the rare decisions it serves. */
+    @Override
+    public OptionalLong countDecisions(ApprovalAccess access, Instant after, Instant upTo) {
+        return OptionalLong.of(calls.values().stream()
+                .flatMap(call -> call.decisions().stream())
+                .filter(decision -> decision.access() == access && decision.at().isAfter(after) && !decision.at().isAfter(upTo))
+                .count());
     }
 }

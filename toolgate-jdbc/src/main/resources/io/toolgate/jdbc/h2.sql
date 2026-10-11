@@ -38,6 +38,8 @@ CREATE TABLE toolgate_pending_call_decision (
     comment     CLOB,
     PRIMARY KEY (approval_id, seq)
 );
+-- Counts super admin decisions across instances for the burst alert.
+CREATE INDEX toolgate_pending_call_decision_access ON toolgate_pending_call_decision (access, decided_at);
 
 -- ToolGate session store. One row per session: the state every check reads. The event log keeps
 -- every session event, including the calls' REAL ARGUMENT VALUES, sealed by the store's ValueCodec

@@ -109,6 +109,26 @@ class JdbcApprovalQueueTest {
     }
 
     @Test
+    void countsDecisionsByAccessInAWindow() {
+        PendingCall first = refund("refunds:c1", T0);
+        PendingCall second = refund("refunds:c2", T0);
+        queue.add(first);
+        queue.add(second);
+        queue.replace(first, first.withDecision(new ApprovalDecision(ApprovalDecision.Kind.REJECT, "root",
+                ApprovalAccess.SUPER_ADMIN, T0.plusSeconds(10), "cleanup"), ApprovalStatus.REJECTED));
+        queue.replace(second, second.withDecision(new ApprovalDecision(ApprovalDecision.Kind.APPROVE, "root",
+                ApprovalAccess.SUPER_ADMIN, T0.plusSeconds(20), "finance is away"), ApprovalStatus.PENDING));
+        PendingCall recorded = queue.get("refunds:c2").orElseThrow();
+        queue.replace(recorded, recorded.withDecision(new ApprovalDecision(ApprovalDecision.Kind.APPROVE, "lena",
+                ApprovalAccess.REVIEWER, T0.plusSeconds(30), null), ApprovalStatus.RELEASED));
+
+        assertThat(queue.countDecisions(ApprovalAccess.SUPER_ADMIN, T0, T0.plusSeconds(60))).hasValue(2);
+        // After is exclusive, upTo inclusive, as the burst window needs.
+        assertThat(queue.countDecisions(ApprovalAccess.SUPER_ADMIN, T0.plusSeconds(10), T0.plusSeconds(20))).hasValue(1);
+        assertThat(queue.countDecisions(ApprovalAccess.REVIEWER, T0, T0.plusSeconds(60))).hasValue(1);
+    }
+
+    @Test
     void refusesAReplacementThatRewritesHistory() {
         PendingCall queued = refund("refunds:c2", T0);
         queue.add(queued);

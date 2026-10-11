@@ -19,13 +19,16 @@ import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.ToolResult;
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.SessionStore;
 import io.toolgate.spi.ToolCatalog;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
@@ -35,6 +38,7 @@ class TwoInstancesTest {
 
     private static final Principal JOB = Principal.service("refund-agent", Tenant.of("acme"));
     private static final Principal LENA = Principal.user("lena", Tenant.of("acme"), "finance");
+    private static final Principal ROOT = Principal.user("root", Tenant.none(), "toolgate-admin");
 
     private static final ToolCatalog CATALOG = ToolCatalog.inMemory().put(ToolDefinition.of(ToolId.local("issueRefund"),
             "Refund an order", "{\"type\":\"object\",\"properties\":{\"order\":{},\"amount\":{}}}"));
@@ -122,6 +126,41 @@ class TwoInstancesTest {
         assertThat(decisions).filteredOn(Decision.Allow.class::isInstance).hasSize(40);
         assertThat(decisions).filteredOn(Decision.Terminate.class::isInstance).hasSize(80)
                 .allSatisfy(decision -> assertThat(decision.ruleId()).isEqualTo("budget.toolCalls"));
+    }
+
+    /** The burst alert counts every instance's super admin decisions, from the shared decision table. */
+    @Test
+    void aSuperAdminBurstSpreadOverInstancesIsSeen() {
+        ToolGatePolicy withSuperAdmins = ToolGatePolicy.builder().superAdmins("toolgate-admin")
+                .agent("refund-agent", a -> a.allow("issueRefund").reviewers("finance")
+                        .rule("issueRefund.amount", atMost("1000"), atMost("200").otherwise(DEFER)))
+                .build();
+        var events = new CopyOnWriteArrayList<AuditEvent>();
+        SessionStore sharedSessions = new JdbcSessionStore(database);
+        ToolGate first = alerting(withSuperAdmins, sharedSessions, events);
+        ToolGate second = alerting(withSuperAdmins, sharedSessions, events);
+
+        first.reject(defer(first, "c1"), ROOT, "cleanup");
+        second.reject(defer(second, "c2"), ROOT, "cleanup");
+        first.reject(defer(first, "c3"), ROOT, "cleanup");
+        first.close();
+        second.close();
+
+        assertThat(events).filteredOn(AuditEvent.SuperAdminBurst.class::isInstance).singleElement()
+                .satisfies(burst -> assertThat(((AuditEvent.SuperAdminBurst) burst).decisions()).isEqualTo(3));
+    }
+
+    /** An instance that alerts on a third super admin decision within an hour. */
+    private ToolGate alerting(ToolGatePolicy gatePolicy, SessionStore sessions, List<AuditEvent> events) {
+        return ToolGate.builder(gatePolicy).toolCatalog(CATALOG).approvalQueue(new JdbcApprovalQueue(database))
+                .sessionStore(sessions).noDefaultLog().superAdminAlert(2, Duration.ofHours(1)).auditSink(events::add)
+                .build();
+    }
+
+    private static String defer(ToolGate gate, String callId) {
+        var call = new ToolCall(callId, JOB, "refund-agent", "refunds-" + callId, ToolId.local("issueRefund"),
+                ObjectValue.of(Map.of("order", ArgValue.number(7731), "amount", ArgValue.number(480))), Instant.EPOCH);
+        return ((Decision.Defer) gate.check(call)).approvalId();
     }
 
     private ToolGate instance(SessionStore sessions) {

@@ -87,7 +87,9 @@ tenant, and `auditors("compliance")` who may see them all and decide none. Neith
 name it. A super admin can never approve their own call, must justify every decision with a comment,
 and is audited as a super admin; `superAdminConfirmation()` adds break-glass, where a super admin's
 approval waits for a second person. More than 5 super admin decisions in an hour raise the audit event
-`toolgate.superadmin.burst` (`superAdminAlert(...)` on the gate's builder changes the threshold).
+`toolgate.superadmin.burst` (`superAdminAlert(...)` on the gate's builder changes the threshold). With
+the JDBC queue the count covers every instance, so a burst spread behind a load balancer is still seen;
+each instance raises it at most once an hour.
 
 Every decision is kept with the call (who, under which access, when, and their comment). An approved
 call is `RELEASED`; an executor `claim`s it under a lease, runs it, and reports with `finished`, so the

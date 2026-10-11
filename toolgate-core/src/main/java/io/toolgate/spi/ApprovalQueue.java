@@ -1,11 +1,13 @@
 package io.toolgate.spi;
 
+import io.toolgate.api.ApprovalAccess;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.queue.InMemoryApprovalQueue;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /**
@@ -81,6 +83,21 @@ public interface ApprovalQueue {
                 .filter(call -> !call.deferredAt().isBefore(deferredSince))
                 .sorted(Comparator.comparing(PendingCall::deferredAt).thenComparing(PendingCall::approvalId).reversed())
                 .skip(offset).limit(limit).toList();
+    }
+
+    /**
+     * How many decisions made under an access the queue holds in {@code (after, upTo]}, across every
+     * instance that shares it. The gate counts super admin decisions this way, so a burst spread over
+     * several instances still raises {@code toolgate.superadmin.burst}. The default cannot count, and the
+     * gate then counts only the decisions it made itself; a shared store should override it.
+     *
+     * @param access the access the decisions were made under, such as {@link ApprovalAccess#SUPER_ADMIN}
+     * @param after  only decisions made after this instant
+     * @param upTo   only decisions made at or before this instant
+     * @return the count, or empty if this queue cannot count decisions
+     */
+    default OptionalLong countDecisions(ApprovalAccess access, Instant after, Instant upTo) {
+        return OptionalLong.empty();
     }
 
     /**
