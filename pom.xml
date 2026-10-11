@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>io.toolgate</groupId>
+    <groupId>io.github.zaaim-halim.toolgate</groupId>
     <artifactId>toolgate-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
@@ -18,6 +18,21 @@
             <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
         </license>
     </licenses>
+
+    <url>https://github.com/Zaaim-Halim/ToolGate</url>
+
+    <developers>
+        <developer>
+            <name>Halim Zaaim</name>
+            <url>https://github.com/Zaaim-Halim</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/Zaaim-Halim/ToolGate.git</connection>
+        <developerConnection>scm:git:git@github.com:Zaaim-Halim/ToolGate.git</developerConnection>
+        <url>https://github.com/Zaaim-Halim/ToolGate</url>
+    </scm>
 
     <modules>
         <module>toolgate-core</module>
@@ -188,4 +203,99 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            What Maven Central needs: sources, javadoc, signatures and an SBOM for every published module.
+                ./mvnw -Prelease deploy            signs with your GPG key and uploads to the Central Portal,
+                                                   where the deployment waits until you publish it there
+                ./mvnw -Prelease -Dgpg.skip verify builds everything but the signatures, to check locally
+            Credentials: a <server> with id "central" in ~/.m2/settings.xml, holding a Central Portal token.
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.4.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.12.0</version>
+                        <configuration>
+                            <quiet>true</quiet>
+                            <!-- Public API is held to complete Javadoc by the compiler's doclint; internal packages are not. -->
+                            <doclint>all,-missing</doclint>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.cyclonedx</groupId>
+                        <artifactId>cyclonedx-maven-plugin</artifactId>
+                        <version>2.9.3</version>
+                        <executions>
+                            <execution>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>makeBom</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <outputFormat>json</outputFormat>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.8</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.11.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <!-- Uploaded and validated, then published by hand in the Central Portal. -->
+                            <autoPublish>false</autoPublish>
+                            <waitUntil>validated</waitUntil>
+                            <excludeArtifacts>
+                                <artifact>toolgate-demo</artifact>
+                                <artifact>toolgate-fuzz</artifact>
+                                <artifact>toolgate-benchmarks</artifact>
+                            </excludeArtifacts>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
