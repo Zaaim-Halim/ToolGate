@@ -132,6 +132,7 @@ public final class JdbcSessionStore implements SessionStore {
      * @param sessionId the session
      * @return its events, oldest first; empty for an unknown or purged session
      */
+    @Override
     public List<SessionEvent> events(String sessionId) {
         String sql = "SELECT version, event FROM toolgate_session_event WHERE session_id = ? ORDER BY version";
         try (Connection connection = dataSource.getConnection();

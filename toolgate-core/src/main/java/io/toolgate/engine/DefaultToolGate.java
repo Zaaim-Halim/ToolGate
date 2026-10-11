@@ -11,6 +11,7 @@ import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Execution;
+import io.toolgate.api.Journey;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.Principal;
@@ -415,6 +416,24 @@ public final class DefaultToolGate implements ToolGate {
                     viewer.id(), access.get()));
         }
         return Optional.of(item(pending, viewer, access.get()));
+    }
+
+    @Override
+    public Optional<Journey> journey(String approvalId, Principal viewer) {
+        Objects.requireNonNull(viewer, "viewer");
+        PendingCall pending = pendingCall(approvalId);
+        ToolCall call = pending.call();
+        Optional<ApprovalAccess> access = access(call, viewer);
+        if (access.isEmpty()) {
+            return Optional.empty();
+        }
+        if (isPrivileged(access.get())) {
+            Instant at = clock.instant();
+            audit.submit(() -> new AuditEvent.ApprovalViewed(at, approvalId, call.sessionId(), call.agentId(), call.tool(),
+                    viewer.id(), access.get()));
+        }
+        String shownReason = ReviewViews.show(approvalId, policy.agent(call.agentId()), call, pending.deferral()).reason();
+        return Optional.of(Journeys.of(pending, sessions.events(call.sessionId()), shownReason));
     }
 
     /** One call as a viewer sees it, masked by its agent's review view, which may be gone after a redeploy. */

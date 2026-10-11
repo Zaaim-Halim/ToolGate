@@ -1,6 +1,7 @@
 package io.toolgate.spi;
 
 import io.toolgate.session.InMemorySessionStore;
+import java.util.List;
 
 /**
  * Keeps each session's events and current state.
@@ -50,4 +51,15 @@ public interface SessionStore {
      * @param event the event
      */
     void append(SessionEvent event);
+
+    /**
+     * Every event of a session, oldest first, for investigations such as a review screen's graph of what
+     * the agent did. A store that keeps no event log returns nothing.
+     *
+     * @param sessionId the session
+     * @return its events; empty for an unknown session, or when the store keeps none
+     */
+    default List<SessionEvent> events(String sessionId) {
+        return List.of();
+    }
 }

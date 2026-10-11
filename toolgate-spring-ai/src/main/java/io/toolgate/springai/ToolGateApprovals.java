@@ -5,6 +5,7 @@ import io.toolgate.api.ApprovalQuery;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
+import io.toolgate.api.Journey;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ReviewItem;
 import io.toolgate.api.ToolCall;
@@ -140,6 +141,17 @@ public final class ToolGateApprovals {
      */
     public List<ReviewItem> history(Principal viewer, ApprovalQuery query) {
         return gating.get().gate().history(viewer, query);
+    }
+
+    /**
+     * The story of one deferred call as a graph; see {@link io.toolgate.api.ToolGate#journey}.
+     *
+     * @param approvalId the call
+     * @param viewer     who is looking
+     * @return the journey, or empty if the viewer may not see the call
+     */
+    public Optional<Journey> journey(String approvalId, Principal viewer) {
+        return gating.get().gate().journey(approvalId, viewer);
     }
 
     /**

@@ -234,6 +234,18 @@ public interface ToolGate extends AutoCloseable {
     Optional<ReviewItem> reviewItem(String approvalId, Principal viewer);
 
     /**
+     * The story of one deferred call as a graph: its session's tool calls and decisions, where taint came
+     * from and went, what people decided, and how it ran, without argument values. Visible to whoever may
+     * see the call; a super admin's or auditor's view is audited.
+     *
+     * @param approvalId the call
+     * @param viewer     who is looking
+     * @return the journey, or empty if the viewer may not see the call
+     * @throws IllegalArgumentException if no call has that ID
+     */
+    Optional<Journey> journey(String approvalId, Principal viewer);
+
+    /**
      * Every queued call in a status, of every agent and tenant, oldest first, such as
      * {@link ApprovalStatus#RELEASED} calls waiting for an executor. For executors, operators and the
      * application's own jobs only, like {@link #pending()}.

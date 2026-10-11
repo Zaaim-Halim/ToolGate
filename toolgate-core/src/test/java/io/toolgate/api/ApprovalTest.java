@@ -22,6 +22,7 @@ import io.toolgate.spi.ApprovalListener;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionEvent;
+import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
 import java.time.Clock;
 import java.time.Duration;
@@ -807,6 +808,79 @@ class ApprovalTest {
                 .singleElement().satisfies(item -> assertThat(item.mayDecide()).isTrue());
         gate.resolve(lost, LENA, true, "ran at the provider");
         assertThat(gate.reviewItem(lost, LENA).orElseThrow().mayDecide()).isFalse();
+    }
+
+    /** The whole story of a refund: what the agent read, why it was held, who approved, how it ran. */
+    @Test
+    void aJourneyTellsTheStoryOfACallAndWhereItsTaintCameFrom() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        gate.check(call("c1", "ping", JOB, Map.of()));
+        String approvalId = deferRefund(gate, JOB, "c2");
+        gate.approve(approvalId, LENA, JOB, "order checked");
+        gate.claim(approvalId, "node-1", Duration.ofMinutes(1));
+        gate.finished(approvalId, "node-1", new ToolResult.Succeeded(ArgValue.text("refund R-1")));
+
+        Journey journey = gate.journey(approvalId, LENA).orElseThrow();
+
+        assertThat(journey.complete()).isTrue();
+        assertThat(journey.steps()).extracting(Journey.Step::kind, Journey.Step::title, Journey.Step::outcome)
+                .containsExactly(
+                        tuple(Journey.Kind.CALL, "local/ping", "deny"),
+                        tuple(Journey.Kind.CALL, "local/readReturnRequest", "allow"),
+                        tuple(Journey.Kind.CALL, "local/issueRefund", "defer"),
+                        tuple(Journey.Kind.PERSON, "lena (reviewer)", "approve"),
+                        tuple(Journey.Kind.RUN, "Ran", "executed"));
+        assertThat(journey.steps().get(1).labelsAdded()).containsExactly(Label.UNTRUSTED_CONTENT);
+        assertThat(journey.steps().get(2)).satisfies(held -> {
+            assertThat(held.subject()).isTrue();
+            assertThat(held.ruleId()).isEqualTo(BuiltInRules.TAINT_IRREVERSIBLE);
+            assertThat(held.detail()).contains("UNTRUSTED_CONTENT");
+        });
+        assertThat(journey.steps().get(0).detail()).as("another call's reason can quote its arguments").isNull();
+        assertThat(journey.steps().get(3).detail()).isEqualTo("order checked");
+        assertThat(journey.flows()).containsExactly(new Journey.Flow("c2-read", "c2", Label.UNTRUSTED_CONTENT));
+    }
+
+    @Test
+    void aJourneyIsVisibleOnlyToWhoeverMaySeeTheCall() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB, "c2");
+
+        assertThat(gate.journey(approvalId, Principal.user("gus", Tenant.of("globex"), "finance"))).isEmpty();
+        assertThat(gate.journey(approvalId, Principal.user("omar", Tenant.of("acme"), "support"))).isEmpty();
+        assertThat(gate.journey(approvalId, JOB)).isPresent();
+    }
+
+    /** A store that keeps no event log still shows the held call and what people did with it. */
+    @Test
+    void withoutAnEventLogTheJourneyStartsAtTheHeldCall() {
+        SessionStore snapshotsOnly = new SessionStore() {
+            @Override
+            public SessionState state(String sessionId) {
+                return sessions.state(sessionId);
+            }
+
+            @Override
+            public boolean append(SessionEvent event, long expectedVersion) {
+                return sessions.append(event, expectedVersion);
+            }
+
+            @Override
+            public void append(SessionEvent event) {
+                sessions.append(event);
+            }
+        };
+        ToolGate gate = ToolGate.builder(refundPolicy(a -> { })).approvalQueue(queue).sessionStore(snapshotsOnly)
+                .clock(clock).noDefaultLog().build();
+        String approvalId = deferRefund(gate, JOB, "c2");
+        gate.reject(approvalId, LENA, "duplicate");
+
+        Journey journey = gate.journey(approvalId, LENA).orElseThrow();
+
+        assertThat(journey.complete()).isFalse();
+        assertThat(journey.steps()).extracting(Journey.Step::kind, Journey.Step::outcome)
+                .containsExactly(tuple(Journey.Kind.CALL, "defer"), tuple(Journey.Kind.PERSON, "reject"));
+        assertThat(journey.flows()).isEmpty();
     }
 
     @Test
