@@ -9,7 +9,8 @@ import org.springframework.stereotype.Component;
 public class InvoiceTools {
 
     /** Invoices by ID, with the tenant that owns each. */
-    static final Map<String, String> TENANT_OF_INVOICE = Map.of("INV-118", "acme", "INV-900", "globex");
+    static final Map<String, String> TENANT_OF_INVOICE = Map.of("INV-118", "acme", "INV-900", "globex",
+            "INV-901", "globex", "INV-902", "globex", "INV-903", "globex", "INV-904", "globex");
 
     private final Mailbox mailbox;
 

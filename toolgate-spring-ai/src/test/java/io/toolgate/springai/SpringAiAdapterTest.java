@@ -209,7 +209,11 @@ class SpringAiAdapterTest {
         assertThat(TestTools.RAN).isEmpty();
     }
 
-    /** ChatClient.create(model) is the documented gap; ToolGateChatClients closes it. */
+    /**
+     * ChatClient.create(model) runs tools without ToolGate. For tool beans the guard refuses them
+     * ({@link ToolBeanGuardTest}); tools passed as plain objects, as here, remain the documented gap, which
+     * ToolGateChatClients closes.
+     */
     @Test
     void aClientBuiltByHandIsGatedOnlyThroughToolGateChatClients() {
         MODEL.thenToolCalls(new Call("call_1", "deleteAllOrders", "{}")).thenText("Done.");

@@ -228,7 +228,7 @@ final class Gating {
     String run(ToolCallback callback, ToolCall callThatRuns, String input, ToolContext toolContext) {
         String output;
         try {
-            output = callback.call(input, forTool(callback, toolContext));
+            output = ToolBeanGuard.gatedRun(() -> callback.call(input, forTool(callback, toolContext)));
         } catch (RuntimeException failure) {
             // An error message can carry an attacker's page as easily as a result, so it taints too.
             gate.recordResult(callThatRuns, new ToolResult.Failed(describe(failure)));

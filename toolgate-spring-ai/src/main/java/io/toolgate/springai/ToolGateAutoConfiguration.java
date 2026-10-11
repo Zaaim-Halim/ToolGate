@@ -105,7 +105,8 @@ public class ToolGateAutoConfiguration {
     }
 
     /**
-     * Wraps the application's tool calling manager and callback resolver as they are created.
+     * Wraps the application's tool calling manager and callback resolver as they are created, and guards
+     * the application's tool beans against chat clients that run them without ToolGate.
      *
      * @param gating resolved when the first tool runs, so the gate is built after the beans it needs
      * @return the post-processor
@@ -120,7 +121,7 @@ public class ToolGateAutoConfiguration {
                     case GatedToolCallbackResolver gated -> gated;
                     case ToolCallingManager manager -> new GatedToolCallingManager(manager, gating::getObject);
                     case ToolCallbackResolver resolver -> new GatedToolCallbackResolver(resolver, gating::getObject);
-                    default -> bean;
+                    default -> ToolBeanGuard.guard(bean, beanName, gating::getObject);
                 };
             }
         };

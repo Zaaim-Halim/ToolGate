@@ -58,6 +58,11 @@ final class GatedToolCallback implements ToolCallback {
 
     @Override
     public String call(String toolInput, ToolContext toolContext) {
+        // Marks the run, so the application's tool beans know this call went through ToolGate.
+        return ToolBeanGuard.gatedRun(() -> checkAndRun(toolInput, toolContext));
+    }
+
+    private String checkAndRun(String toolInput, ToolContext toolContext) {
         if (gating.mode() == Mode.OFF) {
             // The emergency switch: tools run straight through, as if ToolGate were not there.
             return target.call(toolInput, Gating.forTool(target, toolContext));

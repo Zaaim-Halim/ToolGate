@@ -26,3 +26,19 @@ ticket's `customer` field, set by the ticket system, is as untrusted as the body
   for interactive agents.
 
 The bound-argument figures are analysis, not measurement; re-run `TrifectaRateTest` once any of this lands.
+
+## Spring AI: some tools still run unchecked in a `ChatClient` built by hand
+
+**Found:** October 9, 2026, by the M0 spike; narrowed October 11, 2026.
+
+**What happens.** `ChatClient.create(model)` and `ChatClient.builder(model)` create their own tool calling manager,
+so ToolGate never sees their tool calls. Since October 11, the adapter guards every application bean with `@Tool`
+methods: when Spring AI runs one without ToolGate, the guard refuses it (enforce) or logs it (monitor). The same guard
+covers an application `ToolAdvisor` at exactly the highest precedence, which wins the tie with ToolGate's advisor.
+Still unchecked in a client built by hand: tools passed as plain objects (`.tools(new MyTools())`), function
+callbacks, MCP tools, and tool classes declared `final` (warned at startup).
+
+**Workaround.** Build chat clients from Spring Boot's `ChatClient.Builder`, or with `ToolGateChatClients.builder(model)`.
+
+**Direction of the fix.** An official tool-dispatch interceptor in Spring AI (an open question in the design), so
+every callback type is covered without proxies.
