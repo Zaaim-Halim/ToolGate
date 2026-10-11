@@ -46,11 +46,14 @@ public final class PolicyHash {
      * @param pins         pinned tool definitions; absent from the text when empty, so policies
      *                     without pins keep the hash they had before pins existed
      * @param agents       agents by ID
+     * @param superAdmins  super admin roles; absent from the text when empty, as pins are
+     * @param auditors     auditor roles; absent from the text when empty
      * @return {@code sha256:} and 64 hex digits
      */
     public static String of(Mode mode, Map<String, Mode> ruleModes, int denialBudget,
                             Collection<String> mcpServers, Map<ToolId, ToolPolicy> tools,
-                            Map<ToolId, String> pins, Map<String, AgentPolicy> agents) {
+                            Map<ToolId, String> pins, Map<String, AgentPolicy> agents,
+                            Collection<String> superAdmins, Collection<String> auditors) {
         var text = new StringBuilder(FORMAT_VERSION).append('\n');
         line(text, "mode", mode.toString());
         ruleModes.entrySet().stream()
@@ -66,6 +69,12 @@ public final class PolicyHash {
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
                 .forEach(entry -> line(text, "pin", entry.getKey().toString(), entry.getValue()));
         agents.values().stream().sorted(Comparator.comparing(AgentPolicy::id)).forEach(agent -> agent(text, agent));
+        if (!superAdmins.isEmpty()) {
+            line(text, "superAdmins", superAdmins.stream().sorted().toArray(String[]::new));
+        }
+        if (!auditors.isEmpty()) {
+            line(text, "auditors", auditors.stream().sorted().toArray(String[]::new));
+        }
         return PREFIX + HexFormat.of().formatHex(sha256(text.toString()));
     }
 

@@ -1,6 +1,7 @@
 package io.toolgate.springai;
 
 import io.toolgate.api.Approval;
+import io.toolgate.api.ApprovalItem;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ToolCall;
@@ -33,12 +34,24 @@ public final class ToolGateApprovals {
     }
 
     /**
-     * Calls waiting for review, oldest first.
+     * Every call waiting for review, of every agent and tenant, oldest first: for operators and the
+     * application's own jobs only. A screen a person uses calls {@link #pending(Principal)}.
      *
      * @return the pending calls, with their arguments
      */
     public List<PendingCall> pending() {
         return gating.get().gate().pending();
+    }
+
+    /**
+     * The calls waiting for review that a viewer may see, oldest first, each saying whether the viewer
+     * may decide it.
+     *
+     * @param viewer who is looking, such as the signed-in reviewer
+     * @return the calls, with their arguments; see {@link io.toolgate.api.ToolGate#pending(Principal)}
+     */
+    public List<ApprovalItem> pending(Principal viewer) {
+        return gating.get().gate().pending(viewer);
     }
 
     /**

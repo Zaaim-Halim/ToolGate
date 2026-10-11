@@ -61,6 +61,8 @@ public final class ToolGatePolicy {
     private final Map<String, AgentPolicy> agents;
     private final Map<ToolId, ToolPolicy> tools;
     private final Map<ToolId, String> pins;
+    private final Set<String> superAdmins;
+    private final Set<String> auditors;
     private final String hash;
 
     private ToolGatePolicy(Builder builder) {
@@ -71,7 +73,9 @@ public final class ToolGatePolicy {
         this.agents = Map.copyOf(builder.agents);
         this.tools = Map.copyOf(builder.tools);
         this.pins = Map.copyOf(builder.pins);
-        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, tools, pins, agents);
+        this.superAdmins = Set.copyOf(builder.superAdmins);
+        this.auditors = Set.copyOf(builder.auditors);
+        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, tools, pins, agents, superAdmins, auditors);
     }
 
     /**
@@ -196,6 +200,25 @@ public final class ToolGatePolicy {
         return agents;
     }
 
+    /**
+     * Roles that may see and decide every deferred call, of every agent and tenant, though never
+     * their own call. Every action they take is audited as a super admin's.
+     *
+     * @return the roles; empty unless the policy names them, so nobody is a super admin by default
+     */
+    public Set<String> superAdmins() {
+        return superAdmins;
+    }
+
+    /**
+     * Roles that may see every deferred call, of every agent and tenant, and decide none.
+     *
+     * @return the roles; empty unless the policy names them
+     */
+    public Set<String> auditors() {
+        return auditors;
+    }
+
     /** Collects a policy and validates all of it in {@link #build}. */
     public static final class Builder {
 
@@ -206,8 +229,48 @@ public final class ToolGatePolicy {
         private final Map<String, AgentPolicy> agents = new LinkedHashMap<>();
         private final Map<ToolId, ToolPolicy> tools = new LinkedHashMap<>();
         private final Map<ToolId, String> pins = new LinkedHashMap<>();
+        private Set<String> superAdmins = Set.of();
+        private Set<String> auditors = Set.of();
 
         private Builder() {}
+
+        /**
+         * Names the roles of super admins, who may see and decide every deferred call, of every agent
+         * and tenant. They still may never approve their own call, and their actions are audited as a
+         * super admin's. Give the role to as few people as possible: it is the account most worth
+         * stealing.
+         *
+         * @param roles the roles
+         * @return this builder
+         * @throws InvalidPolicyException if a role is blank, none is given, or this is called twice
+         */
+        public Builder superAdmins(String... roles) {
+            this.superAdmins = accessRoles("superAdmins", superAdmins, roles);
+            return this;
+        }
+
+        /**
+         * Names the roles of auditors, who may see every deferred call, of every agent and tenant,
+         * and decide none.
+         *
+         * @param roles the roles
+         * @return this builder
+         * @throws InvalidPolicyException if a role is blank, none is given, or this is called twice
+         */
+        public Builder auditors(String... roles) {
+            this.auditors = accessRoles("auditors", auditors, roles);
+            return this;
+        }
+
+        private static Set<String> accessRoles(String setting, Set<String> current, String... roles) {
+            if (roles.length == 0 || Arrays.stream(roles).anyMatch(role -> role == null || role.isBlank())) {
+                throw new InvalidPolicyException(setting + " needs non-blank roles");
+            }
+            if (!current.isEmpty()) {
+                throw new InvalidPolicyException(setting + " is set twice");
+            }
+            return Set.copyOf(Arrays.asList(roles));
+        }
 
         /**
          * Sets the policy-wide mode.

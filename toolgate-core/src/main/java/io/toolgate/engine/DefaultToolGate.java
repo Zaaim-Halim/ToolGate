@@ -3,6 +3,8 @@ package io.toolgate.engine;
 import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.Approval;
+import io.toolgate.api.ApprovalAccess;
+import io.toolgate.api.ApprovalItem;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Label;
@@ -244,7 +246,7 @@ public final class DefaultToolGate implements ToolGate {
             sessions.append(new CallReleased(call.sessionId(), approvalId, call.callId(),
                     spent(released, new Decision.Allow(pending.deferral().ruleId())), clock.instant()));
         }
-        auditApproval(pending, outcome, reviewer.id(), refusal.orElse("approved"));
+        auditApproval(pending, outcome, reviewer.id(), decidingAccess(call, reviewer), refusal.orElse("approved"));
         return refusal.<Approval>map(Approval.Refused::new)
                 .orElseGet(() -> new Approval.Released(released, approvalId));
     }
@@ -257,7 +259,7 @@ public final class DefaultToolGate implements ToolGate {
                 || !approvals.transition(approvalId, ApprovalStatus.PENDING, ApprovalStatus.REJECTED)) {
             return false;
         }
-        auditApproval(pending, ApprovalStatus.REJECTED, reviewer.id(), reason);
+        auditApproval(pending, ApprovalStatus.REJECTED, reviewer.id(), decidingAccess(pending.call(), reviewer), reason);
         return true;
     }
 
@@ -265,6 +267,15 @@ public final class DefaultToolGate implements ToolGate {
     public List<PendingCall> pending() {
         Instant now = clock.instant();
         return approvals.pending().stream().filter(call -> now.isBefore(call.expiresAt())).toList();
+    }
+
+    @Override
+    public List<ApprovalItem> pending(Principal viewer) {
+        Objects.requireNonNull(viewer, "viewer");
+        return pending().stream()
+                .flatMap(waiting -> access(waiting.call(), viewer).stream().map(access ->
+                        new ApprovalItem(waiting, access, permissionProblem(waiting.call(), viewer).isEmpty())))
+                .toList();
     }
 
     @Override
@@ -289,11 +300,41 @@ public final class DefaultToolGate implements ToolGate {
      * interactive agent confirms their own calls; anyone else needs one of the agent's reviewer
      * roles, and nobody approves their own call in a headless agent.
      */
+    /**
+     * The strongest reason a viewer may see a call, if any. A reviewer's role counts only in the
+     * call's own tenant, or a reviewer of one customer could read and decide another's calls.
+     */
+    private Optional<ApprovalAccess> access(ToolCall call, Principal viewer) {
+        if (holdsAny(viewer, policy.superAdmins())) {
+            return Optional.of(ApprovalAccess.SUPER_ADMIN);
+        }
+        boolean reviewsThisAgent = policy.agent(call.agentId()).map(agent -> holdsAny(viewer, agent.reviewers())).orElse(false);
+        if (reviewsThisAgent && viewer.tenant().equals(call.principal().tenant())) {
+            return Optional.of(ApprovalAccess.REVIEWER);
+        }
+        if (holdsAny(viewer, policy.auditors())) {
+            return Optional.of(ApprovalAccess.AUDITOR);
+        }
+        return isOwn(call, viewer) ? Optional.of(ApprovalAccess.REQUESTER) : Optional.empty();
+    }
+
+    /** Why a principal may not decide a call, if they may not. */
     private Optional<String> permissionProblem(ToolCall call, Principal reviewer) {
         Optional<AgentPolicy> agent = policy.agent(call.agentId());
-        boolean ownCall = reviewer.id().equals(call.principal().id());
-        if (agent.isPresent() && agent.get().interactive() && ownCall) {
-            return Optional.empty();
+        if (isOwn(call, reviewer)) {
+            // The signed-in user confirms their own call in an interactive agent; anywhere else,
+            // approving one's own call would make the review meaningless, for every role.
+            return agent.map(AgentPolicy::interactive).orElse(false)
+                    ? Optional.empty()
+                    : Optional.of("principal " + reviewer.id() + " may not approve its own call");
+        }
+        Optional<ApprovalAccess> access = access(call, reviewer);
+        if (access.isPresent()) {
+            return switch (access.get()) {
+                case SUPER_ADMIN, REVIEWER -> Optional.empty();
+                case AUDITOR -> Optional.of("auditor " + reviewer.id() + " may see calls but not decide them");
+                case REQUESTER -> Optional.of("principal " + reviewer.id() + " may not approve its own call");
+            };
         }
         Set<String> reviewers = agent.map(AgentPolicy::reviewers).orElse(Set.of());
         if (reviewers.isEmpty()) {
@@ -302,10 +343,21 @@ public final class DefaultToolGate implements ToolGate {
         if (Collections.disjoint(reviewers, reviewer.roles())) {
             return Optional.of("reviewer " + reviewer.id() + " has none of the reviewer roles " + new TreeSet<>(reviewers));
         }
-        if (ownCall) {
-            return Optional.of("principal " + reviewer.id() + " may not approve its own call");
-        }
-        return Optional.empty();
+        return Optional.of("reviewer " + reviewer.id() + " is not in the call's tenant");
+    }
+
+    /** The access a decision is recorded under: the requester's own when confirming in an interactive agent. */
+    private ApprovalAccess decidingAccess(ToolCall call, Principal reviewer) {
+        return isOwn(call, reviewer) ? ApprovalAccess.REQUESTER : access(call, reviewer).orElseThrow();
+    }
+
+    /** IDs are unique only within a tenant, so a call is one's own only in one's own tenant. */
+    private static boolean isOwn(ToolCall call, Principal viewer) {
+        return viewer.id().equals(call.principal().id()) && viewer.tenant().equals(call.principal().tenant());
+    }
+
+    private static boolean holdsAny(Principal principal, Set<String> roles) {
+        return !roles.isEmpty() && !Collections.disjoint(roles, principal.roles());
     }
 
     /**
@@ -339,15 +391,16 @@ public final class DefaultToolGate implements ToolGate {
         if (!approvals.transition(pending.approvalId(), ApprovalStatus.PENDING, ApprovalStatus.EXPIRED)) {
             return false;
         }
-        auditApproval(pending, ApprovalStatus.EXPIRED, "toolgate", "nobody decided before " + pending.expiresAt());
+        auditApproval(pending, ApprovalStatus.EXPIRED, "toolgate", null, "nobody decided before " + pending.expiresAt());
         return true;
     }
 
-    private void auditApproval(PendingCall pending, ApprovalStatus status, String decidedBy, String reason) {
+    private void auditApproval(PendingCall pending, ApprovalStatus status, String decidedBy, ApprovalAccess access,
+                               String reason) {
         Instant at = clock.instant();
         ToolCall call = pending.call();
         audit.submit(() -> new AuditEvent.ApprovalDecided(at, pending.approvalId(), call.sessionId(), call.agentId(),
-                call.tool(), status, decidedBy, reason));
+                call.tool(), status, decidedBy, access, reason));
     }
 
     @Override

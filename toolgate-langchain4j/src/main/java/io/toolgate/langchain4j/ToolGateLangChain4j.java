@@ -9,6 +9,7 @@ import dev.langchain4j.service.tool.BeforeToolExecution;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolService;
 import io.toolgate.api.Approval;
+import io.toolgate.api.ApprovalItem;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ToolCall;
@@ -88,12 +89,23 @@ public final class ToolGateLangChain4j implements AutoCloseable {
     }
 
     /**
-     * The calls waiting for review.
+     * Every call waiting for review, of every agent and tenant: for operators and the application's
+     * own jobs only. A screen a person uses calls {@link #pending(Principal)}.
      *
      * @return the pending calls
      */
     public List<PendingCall> pending() {
         return gating.gate().pending();
+    }
+
+    /**
+     * The calls waiting for review that a viewer may see, each saying whether the viewer may decide it.
+     *
+     * @param viewer who is looking
+     * @return the calls; see {@link io.toolgate.api.ToolGate#pending(Principal)}
+     */
+    public List<ApprovalItem> pending(Principal viewer) {
+        return gating.gate().pending(viewer);
     }
 
     /**

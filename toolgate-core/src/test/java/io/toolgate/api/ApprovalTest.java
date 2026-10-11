@@ -230,6 +230,104 @@ class ApprovalTest {
                 .withMessageContaining("not the call's principal");
     }
 
+    /** A reviewer of one customer must never read or decide another customer's calls. */
+    @Test
+    void aReviewerInAnotherTenantCanNeitherSeeNorDecide() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+        Principal globexFinance = Principal.user("gus", Tenant.of("globex"), "finance");
+
+        assertThat(gate.pending(globexFinance)).isEmpty();
+        assertThat(gate.approve(approvalId, globexFinance, JOB)).isInstanceOfSatisfying(Approval.NotPermitted.class,
+                notPermitted -> assertThat(notPermitted.reason()).contains("not in the call's tenant"));
+        assertThat(gate.reject(approvalId, globexFinance, "not yours")).isFalse();
+        assertThat(gate.pending(LENA)).singleElement()
+                .isEqualTo(new ApprovalItem(gate.pending().getFirst(), ApprovalAccess.REVIEWER, true));
+    }
+
+    @Test
+    void aSuperAdminSeesAndDecidesEveryTenantAndIsAuditedAsOne() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")));
+        String approvalId = deferRefund(gate, JOB);
+        Principal admin = Principal.user("root", Tenant.of("operator"), "toolgate-admin");
+
+        assertThat(gate.pending(admin)).singleElement().satisfies(item -> {
+            assertThat(item.access()).isEqualTo(ApprovalAccess.SUPER_ADMIN);
+            assertThat(item.mayDecide()).isTrue();
+        });
+        assertThat(gate.approve(approvalId, admin, JOB)).isInstanceOf(Approval.Released.class);
+        gate.close();
+
+        assertThat(events).filteredOn(AuditEvent.ApprovalDecided.class::isInstance).singleElement().satisfies(event -> {
+            assertThat(((AuditEvent.ApprovalDecided) event).access()).isEqualTo(ApprovalAccess.SUPER_ADMIN);
+            assertThat(AuditJson.format(event)).contains("\"access\":\"super_admin\"");
+        });
+    }
+
+    /** The account most worth stealing still cannot wave its own requests through. */
+    @Test
+    void aSuperAdminMayNeverApproveTheirOwnCall() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")));
+        Principal admin = Principal.user("root", Tenant.of("acme"), "toolgate-admin");
+        String approvalId = deferRefund(gate, admin);
+
+        assertThat(gate.pending(admin)).singleElement().satisfies(item -> assertThat(item.mayDecide()).isFalse());
+        assertThat(gate.approve(approvalId, admin, admin)).isInstanceOfSatisfying(Approval.NotPermitted.class,
+                notPermitted -> assertThat(notPermitted.reason()).contains("its own call"));
+        assertThat(gate.reject(approvalId, admin, "withdrawn")).isFalse();
+    }
+
+    @Test
+    void anAuditorSeesEveryTenantAndDecidesNothing() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.auditors("compliance")));
+        String approvalId = deferRefund(gate, JOB);
+        Principal auditor = Principal.user("ada", Tenant.of("operator"), "compliance");
+
+        assertThat(gate.pending(auditor)).singleElement()
+                .isEqualTo(new ApprovalItem(gate.pending().getFirst(), ApprovalAccess.AUDITOR, false));
+        assertThat(gate.approve(approvalId, auditor, JOB)).isInstanceOfSatisfying(Approval.NotPermitted.class,
+                notPermitted -> assertThat(notPermitted.reason()).contains("not decide"));
+        assertThat(gate.reject(approvalId, auditor, "no")).isFalse();
+    }
+
+    @Test
+    void aRequesterSeesTheirOwnCallAndConfirmsItOnlyInAnInteractiveAgent() {
+        ToolGate headless = gate(refundPolicy(a -> { }));
+        deferRefund(headless, MARIA);
+        assertThat(headless.pending(MARIA)).singleElement()
+                .isEqualTo(new ApprovalItem(headless.pending().getFirst(), ApprovalAccess.REQUESTER, false));
+
+        InMemoryApprovalQueue otherQueue = new InMemoryApprovalQueue();
+        ToolGate interactive = ToolGate.builder(refundPolicy(a -> a.interactive(true))).approvalQueue(otherQueue)
+                .sessionStore(new InMemorySessionStore()).clock(clock).noDefaultLog().build();
+        deferRefund(interactive, MARIA);
+        assertThat(interactive.pending(MARIA)).singleElement().satisfies(item -> {
+            assertThat(item.access()).isEqualTo(ApprovalAccess.REQUESTER);
+            assertThat(item.mayDecide()).isTrue();
+        });
+    }
+
+    @Test
+    void aViewerWithNoAccessSeesNothing() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin").auditors("compliance")));
+        deferRefund(gate, JOB);
+
+        assertThat(gate.pending(Principal.user("omar", Tenant.of("acme"), "support"))).isEmpty();
+    }
+
+    @Test
+    void superAdminsAndAuditorsMustBeValidAndChangeTheHashOnlyWhenSet() {
+        assertThatThrownBy(() -> ToolGatePolicy.builder().superAdmins()).isInstanceOf(InvalidPolicyException.class);
+        assertThatThrownBy(() -> ToolGatePolicy.builder().auditors(" ")).isInstanceOf(InvalidPolicyException.class);
+        assertThatThrownBy(() -> ToolGatePolicy.builder().superAdmins("a").superAdmins("b"))
+                .isInstanceOf(InvalidPolicyException.class).hasMessageContaining("twice");
+
+        String plain = refundPolicy(a -> { }).hash();
+        assertThat(refundPolicy(a -> { }, p -> { }).hash()).isEqualTo(plain);
+        assertThat(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")).hash()).isNotEqualTo(plain);
+        assertThat(refundPolicy(a -> { }, p -> p.auditors("compliance")).hash()).isNotEqualTo(plain);
+    }
+
     @Test
     void everyOutcomeIsAudited() {
         try (ToolGate gate = gate(refundPolicy(a -> { }))) {
@@ -258,7 +356,14 @@ class ApprovalTest {
      * after reading one, a refund waits for review. The refund also pays out, so it is a sink.
      */
     private static ToolGatePolicy refundPolicy(Consumer<ToolGatePolicy.AgentBuilder> extra) {
-        return ToolGatePolicy.builder()
+        return refundPolicy(extra, policy -> { });
+    }
+
+    private static ToolGatePolicy refundPolicy(Consumer<ToolGatePolicy.AgentBuilder> extra,
+                                               Consumer<ToolGatePolicy.Builder> policyWide) {
+        ToolGatePolicy.Builder builder = ToolGatePolicy.builder();
+        policyWide.accept(builder);
+        return builder
                 .tool("readReturnRequest", t -> t.labels(UNTRUSTED_CONTENT).effect(Effect.READ))
                 .tool("lookupCustomer", t -> t.labels(PRIVATE_DATA).effect(Effect.READ))
                 .tool("issueRefund", t -> t.labels(EXTERNAL_SINK))

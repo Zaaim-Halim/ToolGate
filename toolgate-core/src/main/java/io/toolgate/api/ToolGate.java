@@ -135,9 +135,11 @@ public interface ToolGate extends AutoCloseable {
      * this approval. Any denial, a new reason to defer, or a downgrade refuses the release.
      *
      * <p>A call is released at most once: a second approval returns {@link Approval.AlreadyDecided}.
-     * Only a principal with one of the agent's reviewer roles may approve, and in a headless agent
-     * never their own call; in an interactive agent, the signed-in user confirms their own calls.
-     * Anyone else gets {@link Approval.NotPermitted}, and the call stays pending.
+     * Who may approve, as {@link ApprovalItem#mayDecide()} reports it: a principal with one of the
+     * agent's reviewer roles in the call's tenant, or with one of the policy's super admin roles in
+     * any tenant, and in either case never their own call; in an interactive agent, the signed-in
+     * user confirms their own calls. Anyone else gets {@link Approval.NotPermitted}, and the call
+     * stays pending.
      *
      * @param approvalId       from {@link Decision.Defer#approvalId()}
      * @param reviewer         who approves
@@ -161,11 +163,23 @@ public interface ToolGate extends AutoCloseable {
     boolean reject(String approvalId, Principal reviewer, String reason);
 
     /**
-     * Calls waiting for review that have not expired, oldest first, for a review screen.
+     * Every call waiting for review that has not expired, of every agent and tenant, oldest first.
+     * For operators and the application's own jobs only: a screen a person uses must call
+     * {@link #pending(Principal)}, or it shows every tenant's arguments to whoever opens it.
      *
      * @return the pending calls, with their real arguments
      */
     List<PendingCall> pending();
+
+    /**
+     * The calls waiting for review that a viewer may see, oldest first: as a super admin or auditor,
+     * every call; as a reviewer, the calls of agents naming one of their roles, in their tenant; and
+     * their own calls, as the requester. Each says whether the viewer may decide it.
+     *
+     * @param viewer who is looking
+     * @return the calls, with their real arguments; empty if the viewer may see none
+     */
+    List<ApprovalItem> pending(Principal viewer);
 
     /**
      * Expires every pending call past its expiry. Approving checks expiry too, so this only keeps

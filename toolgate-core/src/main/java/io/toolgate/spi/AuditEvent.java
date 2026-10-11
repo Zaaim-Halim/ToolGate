@@ -2,6 +2,7 @@ package io.toolgate.spi;
 
 import static io.toolgate.support.Checks.requireNonBlank;
 
+import io.toolgate.api.ApprovalAccess;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Label;
@@ -120,10 +121,13 @@ public sealed interface AuditEvent
      * @param tool       the tool it calls
      * @param status     how it was decided
      * @param decidedBy  the reviewer's ID, or {@code toolgate} for an expiry
+     * @param access     the access the reviewer decided under, such as {@link ApprovalAccess#SUPER_ADMIN};
+     *                   null only for ToolGate's own decisions, such as an expiry
      * @param reason     why: the rejection's reason, what changed for a refusal
      */
     record ApprovalDecided(Instant time, String approvalId, String sessionId, String agentId, ToolId tool,
-                           ApprovalStatus status, String decidedBy, String reason) implements AuditEvent {
+                           ApprovalStatus status, String decidedBy, ApprovalAccess access, String reason)
+            implements AuditEvent {
 
         /** Requires every component, and a final status. */
         public ApprovalDecided {

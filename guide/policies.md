@@ -78,9 +78,16 @@ value at that path belongs to another tenant. The model gets a generic message i
 ## Approvals
 
 A deferred call waits in the review queue, in memory or in your database with `toolgate-jdbc`.
-`.reviewers("finance")` says who may approve; without it, nobody may, except the signed-in user of an
-interactive agent. An approved call is re-checked against the policy running at that moment, and runs
-once.
+`.reviewers("finance")` says who may approve, in the call's own tenant; without it, nobody may, except
+the signed-in user of an interactive agent. Nobody may approve their own call anywhere else. An approved
+call is re-checked against the policy running at that moment, and runs once.
+
+Policy-wide, `superAdmins("toolgate-admin")` names who may see and decide every agent's calls in every
+tenant (never their own, and audited as a super admin), and `auditors("compliance")` who may see them
+all and decide none. Neither exists unless you name it.
+
+A review screen lists `pending(viewer)`: only the calls that viewer may see, each saying whether they
+may decide it. `pending()` returns every tenant's calls, for operators and jobs only.
 
 ## Modes
 
