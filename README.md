@@ -8,6 +8,8 @@ The model proposes; ToolGate decides.
 
 > **Status:** early development. Nothing is published yet and every API may change.
 
+Start with the [guide](guide/README.md): ToolGate in monitor mode on Spring AI or LangChain4j in a few minutes.
+
 ## Building
 
 Requires JDK 21 or later. The Maven wrapper downloads the right Maven version.
@@ -39,6 +41,9 @@ java -jar toolgate-benchmarks/target/benchmarks.jar
 | `toolgate-sql` | The `readOnlySql` rule: a pre-check on JSqlParser that denies anything but one query. It only denies; the database enforces read-only. |
 | `toolgate-safe-jdbc` | `SafeJdbc`, for tool authors: runs a model's query in a read-only transaction on PostgreSQL, MySQL and MariaDB (or as a read-only role elsewhere), with a timeout and limits on what comes back. |
 | `toolgate-spring-ai` | Spring AI 2.0 adapter and Spring Boot auto-configuration: every local and MCP tool call is checked by ToolGate, with principals from Spring Security or the agent's service identity, and enforce, monitor or off modes. |
+| `toolgate-safe-http` | `SafeHttp`, for tool authors: an Apache HttpClient 5 client that checks every request and redirect against URL rules before connecting, and connects only to the addresses it checked. |
+| `toolgate-cli` | The `toolgate` command: `validate` a policy, and `replay` recorded tool calls through a proposed one before deploying it. |
+| `toolgate-langchain4j` | LangChain4j 1.22 adapter: tools registered through ToolGate for an agent are checked in a fail-closed `beforeToolExecution` hook, which ends the run on a Terminate or an unregistered tool; their executors apply the decision. Covers sync, async, streaming, concurrent and immediate-return tools and MCP tool providers. |
 | `toolgate-test` | Test your policies: scripted sessions play tool calls as a compromised model would, and assert what ToolGate decides. A JUnit 5 extension (`@ToolGateTest`) or plain `ScriptedSession.of(...)`. For test scope. |
 | `toolgate-demo` | Three agents on Spring AI behind one policy: Case A's invoice job, Case E's ticket triage and an interactive inbox assistant. Its tests run the design's cases and the trifecta measurement end to end against a scripted model. Never published. |
 | `toolgate-fuzz` | Jazzer fuzz targets for the parsers and validators. Test-only, never published. |
