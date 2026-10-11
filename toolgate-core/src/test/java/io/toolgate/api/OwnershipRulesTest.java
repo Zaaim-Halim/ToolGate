@@ -14,9 +14,11 @@ import io.toolgate.spi.OwnershipResolver;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -160,6 +162,57 @@ class OwnershipRulesTest {
         assertThatIllegalStateException().isThrownBy(() -> ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).build())
                 .withMessageContaining("ownershipResolver");
         ToolGate.builder(ToolGatePolicy.builder().agent("a", a -> a.allow("x")).build()).build().close();
+    }
+
+    /** A resolver that answers lists in one query, as one backed by a database would. */
+    @Test
+    void aListOfIdsIsLookedUpInOneBatch() {
+        var batches = new ArrayList<Set<String>>();
+        OwnershipResolver batching = new OwnershipResolver() {
+            @Override
+            public Map<String, String> tenantsOf(String resourceType, Set<String> ids) {
+                batches.add(Set.copyOf(ids));
+                var known = new HashMap<String, String>();
+                ids.stream().filter(INVOICE_TENANTS::containsKey).forEach(id -> known.put(id, INVOICE_TENANTS.get(id)));
+                return known;
+            }
+        };
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { })
+                .ownershipResolver(batching).build()) {
+            assertThat(gate.check(call(MARIA, "mergeInvoices", ids("INV-118", "INV-119", "INV-118"))))
+                    .isInstanceOf(Decision.Allow.class);
+            assertThat(gate.check(call(MARIA, "mergeInvoices", ids("INV-118", "INV-900", "INV-404"))))
+                    .isInstanceOfSatisfying(Decision.Deny.class,
+                            deny -> assertThat(deny.reason()).contains("INV-900").contains("globex"));
+            assertThat(gate.check(call(MARIA, "mergeInvoices", ids("INV-118", "INV-404"))))
+                    .as("an ID the batch leaves out is unknown").isInstanceOfSatisfying(Decision.Deny.class,
+                            deny -> assertThat(deny.reason()).contains("'INV-404' is unknown"));
+        }
+        assertThat(batches).as("one lookup per call, duplicates removed").containsExactly(
+                Set.of("INV-118", "INV-119"), Set.of("INV-118", "INV-900", "INV-404"), Set.of("INV-118", "INV-404"));
+    }
+
+    /** The default batch asks the single-record method once per distinct ID. */
+    @Test
+    void theDefaultBatchLooksUpEachDistinctIdOnce() {
+        try (ToolGate gate = gate(policy)) {
+            gate.check(call(MARIA, "mergeInvoices", ids("INV-118", "INV-119", "INV-118")));
+        }
+        assertThat(lookups).containsExactlyInAnyOrder("invoice:INV-118", "invoice:INV-119");
+    }
+
+    @Test
+    void aBatchThatReturnsNullDenies() {
+        OwnershipResolver broken = new OwnershipResolver() {
+            @Override
+            public Map<String, String> tenantsOf(String resourceType, Set<String> ids) {
+                return null;
+            }
+        };
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { })
+                .ownershipResolver(broken).build()) {
+            assertThat(getInvoice(gate, "INV-118")).isInstanceOf(Decision.Deny.class);
+        }
     }
 
     @Test

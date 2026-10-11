@@ -90,6 +90,11 @@ public final class DecisionEngine {
         } catch (RuntimeException failure) {
             // Fail closed: a rule that cannot decide must never let the call through.
             return new Verdict.Deny("rule failed to evaluate: " + failure, Origin.ACCESS);
+        } catch (StackOverflowError overflow) {
+            // Input nested deeper than the rule could follow. The overflow unwinds only this rule's own frames,
+            // so the thread can go on; the run ends, since a model sending such input is not to be trusted
+            // further. Other errors, such as OutOfMemoryError, propagate: the JVM may be in no state to decide.
+            return new Verdict.Terminate("rule ran out of stack evaluating the call");
         }
     }
 

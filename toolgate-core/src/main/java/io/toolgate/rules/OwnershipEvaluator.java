@@ -16,7 +16,9 @@ import io.toolgate.engine.Verdict;
 import io.toolgate.support.Decimals;
 import io.toolgate.spi.OwnershipResolver;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -62,9 +64,16 @@ final class OwnershipEvaluator implements Evaluator {
             return deny("must be an ID or a list of IDs");
         }
         Principal principal = context.call().principal();
+        // One lookup per rule for all the IDs, so a list of N records costs one call to the resolver, not N.
+        var owners = new HashMap<ArgumentRule, Map<String, String>>();
+        for (ArgumentRule rule : rules) {
+            if (!(rule instanceof ArgumentRule.SameTenant && principal.tenant() instanceof Tenant.Unscoped)) {
+                owners.put(rule, OwnershipLookup.owners(resolver, rule, ids.get()));
+            }
+        }
         for (String id : ids.get()) {
             for (ArgumentRule rule : rules) {
-                Optional<String> problem = problem(rule, id, principal);
+                Optional<String> problem = problem(rule, id, principal, owners.getOrDefault(rule, Map.of()));
                 if (problem.isPresent()) {
                     return deny(problem.get());
                 }
@@ -73,18 +82,18 @@ final class OwnershipEvaluator implements Evaluator {
         return Verdict.PASS;
     }
 
-    private Optional<String> problem(ArgumentRule rule, String id, Principal principal) {
+    private static Optional<String> problem(ArgumentRule rule, String id, Principal principal, Map<String, String> owners) {
         return switch (rule) {
             case ArgumentRule.SameTenant(String type) -> switch (principal.tenant()) {
                 case Tenant.Unscoped unscoped -> Optional.of("principal " + principal.id() + " has no tenant");
-                case Tenant.Scoped(String tenant) -> resolver.tenantOf(type, id)
+                case Tenant.Scoped(String tenant) -> Optional.ofNullable(owners.get(id))
                         .map(owner -> owner.equals(tenant)
                                 ? Optional.<String>empty()
                                 : Optional.of(type + " '" + id + "' belongs to tenant " + owner
                                         + ", principal " + principal.id() + " is in tenant " + tenant))
                         .orElseGet(() -> Optional.of(type + " '" + id + "' is unknown"));
             };
-            case ArgumentRule.OwnedByPrincipal(String type) -> resolver.ownerOf(type, id)
+            case ArgumentRule.OwnedByPrincipal(String type) -> Optional.ofNullable(owners.get(id))
                     .map(owner -> owner.equals(principal.id())
                             ? Optional.<String>empty()
                             : Optional.of(type + " '" + id + "' belongs to " + owner + ", not " + principal.id()))

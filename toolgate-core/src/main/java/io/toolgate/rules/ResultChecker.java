@@ -16,6 +16,7 @@ import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.support.Decimals;
 import io.toolgate.validate.OutputPath;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -81,49 +82,59 @@ public final class ResultChecker {
         if (values.isEmpty()) {
             return Optional.of("the output does not have the shape of " + rule.path());
         }
+        var texts = new ArrayList<String>();
         for (ArgValue value : values.get()) {
             Optional<String> text = text(value);
             if (text.isEmpty()) {
                 return Optional.of("a value at " + rule.path() + " is not a string or number");
             }
-            Optional<String> problem = valueProblem(rule.check(), text.get(), principal);
-            if (problem.isPresent()) {
-                return Optional.of(rule.path() + ": " + problem.get());
-            }
+            texts.add(text.get());
         }
-        return Optional.empty();
-    }
-
-    private Optional<String> valueProblem(ResultCheck check, String value, Principal principal) {
         try {
-            return switch (check) {
-                case ResultCheck.MatchesTenant matches -> switch (principal.tenant()) {
-                    case Tenant.Scoped(String tenant) -> value.equals(tenant)
-                            ? Optional.empty()
-                            : Optional.of("'" + value + "' is not tenant " + tenant);
-                    case Tenant.Unscoped unscoped -> Optional.of("principal " + principal.id() + " has no tenant");
-                };
-                case ResultCheck.MatchesPrincipal matches -> value.equals(principal.id())
-                        ? Optional.empty()
-                        : Optional.of("'" + value + "' is not principal " + principal.id());
-                case ArgumentRule.SameTenant(String type) -> switch (principal.tenant()) {
-                    case Tenant.Scoped(String tenant) -> owners.tenantOf(type, value)
-                            .map(owner -> owner.equals(tenant)
-                                    ? Optional.<String>empty()
-                                    : Optional.of(type + " '" + value + "' belongs to tenant " + owner))
-                            .orElseGet(() -> Optional.of(type + " '" + value + "' is unknown"));
-                    case Tenant.Unscoped unscoped -> Optional.of("principal " + principal.id() + " has no tenant");
-                };
-                case ArgumentRule.OwnedByPrincipal(String type) -> owners.ownerOf(type, value)
-                        .map(owner -> owner.equals(principal.id())
-                                ? Optional.<String>empty()
-                                : Optional.of(type + " '" + value + "' belongs to " + owner))
-                        .orElseGet(() -> Optional.of(type + " '" + value + "' is unknown"));
-            };
+            // One lookup for every value the path reaches, so a list of N records costs one call to the resolver.
+            Map<String, String> known = rule.check() instanceof ArgumentRule ownership
+                    && !(ownership instanceof ArgumentRule.SameTenant && principal.tenant() instanceof Tenant.Unscoped)
+                    ? OwnershipLookup.owners(owners, ownership, texts)
+                    : Map.of();
+            for (String text : texts) {
+                Optional<String> problem = valueProblem(rule.check(), text, principal, known);
+                if (problem.isPresent()) {
+                    return Optional.of(rule.path() + ": " + problem.get());
+                }
+            }
         } catch (RuntimeException resolverFailure) {
             // Fail closed: a resolver that cannot answer must not let the output through.
             return Optional.of("ownership lookup failed: " + resolverFailure);
         }
+        return Optional.empty();
+    }
+
+    private static Optional<String> valueProblem(ResultCheck check, String value, Principal principal,
+                                                 Map<String, String> owners) {
+        return switch (check) {
+            case ResultCheck.MatchesTenant matches -> switch (principal.tenant()) {
+                case Tenant.Scoped(String tenant) -> value.equals(tenant)
+                        ? Optional.empty()
+                        : Optional.of("'" + value + "' is not tenant " + tenant);
+                case Tenant.Unscoped unscoped -> Optional.of("principal " + principal.id() + " has no tenant");
+            };
+            case ResultCheck.MatchesPrincipal matches -> value.equals(principal.id())
+                    ? Optional.empty()
+                    : Optional.of("'" + value + "' is not principal " + principal.id());
+            case ArgumentRule.SameTenant(String type) -> switch (principal.tenant()) {
+                case Tenant.Scoped(String tenant) -> Optional.ofNullable(owners.get(value))
+                        .map(owner -> owner.equals(tenant)
+                                ? Optional.<String>empty()
+                                : Optional.of(type + " '" + value + "' belongs to tenant " + owner))
+                        .orElseGet(() -> Optional.of(type + " '" + value + "' is unknown"));
+                case Tenant.Unscoped unscoped -> Optional.of("principal " + principal.id() + " has no tenant");
+            };
+            case ArgumentRule.OwnedByPrincipal(String type) -> Optional.ofNullable(owners.get(value))
+                    .map(owner -> owner.equals(principal.id())
+                            ? Optional.<String>empty()
+                            : Optional.of(type + " '" + value + "' belongs to " + owner))
+                    .orElseGet(() -> Optional.of(type + " '" + value + "' is unknown"));
+        };
     }
 
     private static Optional<String> text(ArgValue value) {

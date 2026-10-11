@@ -84,6 +84,33 @@ class ValidatorRulesTest {
         assertThat(paint(returningNull, ArgValue.text("red"))).isInstanceOf(Decision.Deny.class);
     }
 
+    /** A rule that overflows the stack ends the run, audited; the thread goes on checking. */
+    @Test
+    void aValidatorThatOverflowsTheStackEndsTheRun() {
+        ToolGate gate = gate(policy(validated(new Failing(ValidatorRulesTest::recurse))));
+
+        assertThat(paint(gate, ArgValue.text("red"))).isInstanceOfSatisfying(Decision.Terminate.class, ended -> {
+            assertThat(ended.ruleId()).isEqualTo("paint.color");
+            assertThat(ended.reason()).contains("ran out of stack");
+        });
+        assertThat(paint(gate(policy(validated(new Colors(Set.of("red"))))), ArgValue.text("red")))
+                .isInstanceOf(Decision.Allow.class);
+    }
+
+    /** Errors other than a stack overflow are not decisions: they reach the caller, which ends the run. */
+    @Test
+    void anOutOfMemoryErrorIsNotSwallowed() {
+        ToolGate gate = gate(policy(validated(new Failing(value -> {
+            throw new OutOfMemoryError("simulated");
+        }))));
+
+        assertThatThrownBy(() -> paint(gate, ArgValue.text("red"))).isInstanceOf(OutOfMemoryError.class);
+    }
+
+    private static Optional<String> recurse(ArgValue value) {
+        return recurse(value).or(Optional::empty);
+    }
+
     @Test
     void severalValidatorsOfDifferentKindsShareAnArgument() {
         ToolGate gate = gate(policy(validated(new Colors(Set.of("red", "green"))),

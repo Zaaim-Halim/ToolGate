@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -170,6 +171,27 @@ class ResultRulesTest {
         assertThat(store.state("maria-chat").denials()).isZero();
         assertThat(events).filteredOn(AuditEvent.ResultWithheld.class::isInstance).singleElement()
                 .isInstanceOfSatisfying(AuditEvent.ResultWithheld.class, withheld -> assertThat(withheld.enforced()).isFalse());
+    }
+
+    /** Every ID a result names is looked up in one batch. */
+    @Test
+    void theIdsAResultNamesAreLookedUpInOneBatch() {
+        var batches = new ArrayList<Set<String>>();
+        OwnershipResolver batching = new OwnershipResolver() {
+            @Override
+            public Map<String, String> tenantsOf(String resourceType, Set<String> ids) {
+                batches.add(Set.copyOf(ids));
+                return Map.of("INV-118", "acme", "INV-119", "acme");
+            }
+        };
+        try (ToolGate gate = ToolGate.builder(policy).sessionStore(store).auditSink(events::add)
+                .ownershipResolver(batching).build()) {
+            assertThat(record(gate, "findInvoiceIds", ids("INV-118", "INV-119", "INV-118")))
+                    .isEqualTo(ResultDecision.RELEASE);
+            assertThat(record(gate, "findInvoiceIds", ids("INV-118", "INV-404")))
+                    .isInstanceOf(ResultDecision.Withhold.class);
+        }
+        assertThat(batches).containsExactly(Set.of("INV-118", "INV-119"), Set.of("INV-118", "INV-404"));
     }
 
     private ToolGate gate(ToolGatePolicy gatePolicy) {
