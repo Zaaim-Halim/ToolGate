@@ -32,22 +32,23 @@ public final class InMemoryApprovalQueue implements ApprovalQueue {
     }
 
     @Override
-    public boolean transition(String approvalId, ApprovalStatus from, ApprovalStatus to) {
+    public boolean replace(PendingCall expected, PendingCall next) {
+        ApprovalQueue.requireNextVersion(expected, next);
         var changed = new AtomicBoolean();
-        calls.computeIfPresent(approvalId, (id, current) -> {
-            if (current.status() != from) {
+        calls.computeIfPresent(expected.approvalId(), (id, current) -> {
+            if (current.version() != expected.version()) {
                 return current;
             }
             changed.set(true);
-            return current.withStatus(to);
+            return next;
         });
         return changed.get();
     }
 
     @Override
-    public List<PendingCall> pending() {
+    public List<PendingCall> withStatus(ApprovalStatus status) {
         return calls.values().stream()
-                .filter(call -> call.status() == ApprovalStatus.PENDING)
+                .filter(call -> call.status() == status)
                 .sorted(Comparator.comparing(PendingCall::deferredAt).thenComparing(PendingCall::approvalId))
                 .toList();
     }

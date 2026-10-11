@@ -103,12 +103,12 @@ class DeferralQueueingTest {
             }
 
             @Override
-            public boolean transition(String approvalId, ApprovalStatus from, ApprovalStatus to) {
+            public boolean replace(PendingCall expected, PendingCall next) {
                 return false;
             }
 
             @Override
-            public List<PendingCall> pending() {
+            public List<PendingCall> withStatus(ApprovalStatus status) {
                 return List.of();
             }
         };

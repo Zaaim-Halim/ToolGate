@@ -4,9 +4,13 @@ import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.Approval;
 import io.toolgate.api.ApprovalAccess;
+import io.toolgate.api.ApprovalDecision;
 import io.toolgate.api.ApprovalItem;
 import io.toolgate.api.ApprovalStatus;
+import io.toolgate.api.ArgValue;
+import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Decision;
+import io.toolgate.api.Execution;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.Principal;
@@ -62,6 +66,9 @@ public final class DefaultToolGate implements ToolGate {
      * by the number of parallel calls. Far past any real burst, the store is broken, not busy.
      */
     private static final int MAX_APPEND_ATTEMPTS = 1024;
+    /** Decisions on one call rarely race; a few attempts settle any honest contention. */
+    private static final int MAX_DECISION_ATTEMPTS = 16;
+    private static final int MAX_SUMMARY_CHARS = 500;
 
     /** The labels a session can hold; EXTERNAL_SINK describes tools, not data. */
     private static final Set<Label> SOURCE_LABELS = EnumSet.of(Label.PRIVATE_DATA, Label.UNTRUSTED_CONTENT);
@@ -77,6 +84,7 @@ public final class DefaultToolGate implements ToolGate {
     private final ResultChecker results;
     private final AuditChannel audit;
     private final List<DecisionObserver> observers;
+    private final SuperAdminWatch superAdminWatch;
     /** Observer calls that threw; counted with the dropped audit events, since both leave gaps. */
     private final AtomicLong failedObservations = new AtomicLong();
     private final ArgumentSummary argumentSummary;
@@ -85,8 +93,8 @@ public final class DefaultToolGate implements ToolGate {
 
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, ResultChecker results,
                            SessionStore sessions, ApprovalQueue approvals, AuditChannel audit,
-                           List<DecisionObserver> observers, ArgumentSummary argumentSummary, Clock clock,
-                           ToolCatalog catalog) {
+                           List<DecisionObserver> observers, SuperAdminWatch superAdminWatch,
+                           ArgumentSummary argumentSummary, Clock clock, ToolCatalog catalog) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.engine = new DecisionEngine(policy, evaluators);
@@ -98,6 +106,7 @@ public final class DefaultToolGate implements ToolGate {
         this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.audit = Objects.requireNonNull(audit, "audit");
         this.observers = List.copyOf(observers);
+        this.superAdminWatch = Objects.requireNonNull(superAdminWatch, "superAdminWatch");
         this.argumentSummary = Objects.requireNonNull(argumentSummary, "argumentSummary");
         this.clock = Objects.requireNonNull(clock, "clock");
         Instant loadedAt = clock.instant();
@@ -107,7 +116,7 @@ public final class DefaultToolGate implements ToolGate {
     /** A gate without audit, for tests of decisions alone. */
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions) {
         this(policy, evaluators, new ResultChecker(policy, BuiltInEvaluators.NO_OWNERS), sessions,
-                new InMemoryApprovalQueue(), AuditChannel.NONE, List.of(), ArgumentSummary.typesOnly(), Clock.systemUTC(),
+                new InMemoryApprovalQueue(), AuditChannel.NONE, List.of(), SuperAdminWatch.OFF, ArgumentSummary.typesOnly(), Clock.systemUTC(),
                 BuiltInEvaluators.NO_TOOLS);
     }
 
@@ -214,53 +223,161 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     @Override
-    public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal) {
+    public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment) {
         Objects.requireNonNull(reviewer, "reviewer");
         Objects.requireNonNull(currentPrincipal, "currentPrincipal");
-        PendingCall pending = pendingCall(approvalId);
-        ToolCall call = pending.call();
-        if (!currentPrincipal.id().equals(call.principal().id())) {
-            throw new IllegalArgumentException("currentPrincipal " + currentPrincipal.id()
-                    + " is not the call's principal " + call.principal().id());
+        if (comment != null) {
+            requireNonBlank(comment, "comment");
         }
-        if (pending.status() != ApprovalStatus.PENDING) {
-            return new Approval.AlreadyDecided(pending.status());
+        for (int attempt = 0; attempt < MAX_DECISION_ATTEMPTS; attempt++) {
+            PendingCall pending = pendingCall(approvalId);
+            ToolCall call = pending.call();
+            if (!currentPrincipal.id().equals(call.principal().id())) {
+                throw new IllegalArgumentException("currentPrincipal " + currentPrincipal.id()
+                        + " is not the call's principal " + call.principal().id());
+            }
+            if (pending.status() != ApprovalStatus.PENDING) {
+                return new Approval.AlreadyDecided(pending.status());
+            }
+            Instant now = clock.instant();
+            if (!now.isBefore(pending.expiresAt())) {
+                return expire(pending) ? new Approval.Expired() : alreadyDecided(approvalId);
+            }
+            Optional<String> notPermitted = permissionProblem(call, reviewer);
+            if (notPermitted.isPresent()) {
+                return new Approval.NotPermitted(notPermitted.get());
+            }
+            ApprovalAccess access = decidingAccess(call, reviewer);
+            if (access == ApprovalAccess.SUPER_ADMIN && comment == null) {
+                return new Approval.NotPermitted("a super admin must justify the decision with a comment");
+            }
+            if (approvedBy(pending, reviewer)) {
+                return new Approval.NotPermitted("principal " + reviewer.id()
+                        + " already approved this call; the next approval must come from another person");
+            }
+            var decision = new ApprovalDecision(ApprovalDecision.Kind.APPROVE, reviewer.id(), access, now, comment);
+            if (!releasable(pending, decision)) {
+                if (!approvals.replace(pending, pending.withDecision(decision, ApprovalStatus.PENDING))) {
+                    continue;
+                }
+                watchSuperAdmin(access, reviewer, now);
+                audit.submit(() -> new AuditEvent.ApprovalRecorded(now, approvalId, call.sessionId(), call.agentId(),
+                        call.tool(), reviewer.id(), access, comment));
+                return new Approval.AwaitingConfirmation("a super admin's approval needs a second person: another"
+                        + " super admin, or a reviewer of the call's tenant");
+            }
+            ToolCall released = new ToolCall(call.callId(), currentPrincipal, call.agentId(), call.sessionId(),
+                    call.tool(), call.args(), call.at());
+            Optional<String> refusal = recheck(released, pending.deferral());
+            ApprovalStatus outcome = refusal.isPresent() ? ApprovalStatus.REFUSED : ApprovalStatus.RELEASED;
+            PendingCall decided = pending.withDecision(decision, outcome);
+            if (!approvals.replace(pending, decided)) {
+                continue;
+            }
+            watchSuperAdmin(access, reviewer, now);
+            if (outcome == ApprovalStatus.RELEASED) {
+                recordRelease(decided, released);
+            }
+            auditApproval(pending, outcome, reviewer.id(), access,
+                    refusal.orElse(comment != null ? comment : "approved"));
+            return refusal.<Approval>map(Approval.Refused::new)
+                    .orElseGet(() -> new Approval.Released(released, approvalId));
         }
-        if (!clock.instant().isBefore(pending.expiresAt())) {
-            return expire(pending) ? new Approval.Expired() : alreadyDecided(approvalId);
-        }
-        Optional<String> notPermitted = permissionProblem(call, reviewer);
-        if (notPermitted.isPresent()) {
-            return new Approval.NotPermitted(notPermitted.get());
-        }
-        ToolCall released = new ToolCall(call.callId(), currentPrincipal, call.agentId(), call.sessionId(), call.tool(),
-                call.args(), call.at());
-        Optional<String> refusal = recheck(released, pending.deferral());
-        ApprovalStatus outcome = refusal.isPresent() ? ApprovalStatus.REFUSED : ApprovalStatus.RELEASED;
-        if (!approvals.transition(approvalId, ApprovalStatus.PENDING, outcome)) {
-            return alreadyDecided(approvalId);
-        }
-        if (outcome == ApprovalStatus.RELEASED) {
-            // After the queue says released, so a lost race records nothing. If this fails, approve throws:
-            // the application never gets Released and never runs the call, which fails closed.
-            sessions.append(new CallReleased(call.sessionId(), approvalId, call.callId(),
-                    spent(released, new Decision.Allow(pending.deferral().ruleId())), clock.instant()));
-        }
-        auditApproval(pending, outcome, reviewer.id(), decidingAccess(call, reviewer), refusal.orElse("approved"));
-        return refusal.<Approval>map(Approval.Refused::new)
-                .orElseGet(() -> new Approval.Released(released, approvalId));
+        throw new IllegalStateException("approval " + approvalId + " changed on each of " + MAX_DECISION_ATTEMPTS
+                + " attempts");
     }
 
     @Override
     public boolean reject(String approvalId, Principal reviewer, String reason) {
         Objects.requireNonNull(reviewer, "reviewer");
-        PendingCall pending = pendingCall(approvalId);
-        if (permissionProblem(pending.call(), reviewer).isPresent()
-                || !approvals.transition(approvalId, ApprovalStatus.PENDING, ApprovalStatus.REJECTED)) {
-            return false;
+        requireNonBlank(reason, "reason");
+        for (int attempt = 0; attempt < MAX_DECISION_ATTEMPTS; attempt++) {
+            PendingCall pending = pendingCall(approvalId);
+            if (pending.status() != ApprovalStatus.PENDING || permissionProblem(pending.call(), reviewer).isPresent()) {
+                return false;
+            }
+            Instant now = clock.instant();
+            ApprovalAccess access = decidingAccess(pending.call(), reviewer);
+            var decision = new ApprovalDecision(ApprovalDecision.Kind.REJECT, reviewer.id(), access, now, reason);
+            if (approvals.replace(pending, pending.withDecision(decision, ApprovalStatus.REJECTED))) {
+                watchSuperAdmin(access, reviewer, now);
+                auditApproval(pending, ApprovalStatus.REJECTED, reviewer.id(), access, reason);
+                return true;
+            }
         }
-        auditApproval(pending, ApprovalStatus.REJECTED, reviewer.id(), decidingAccess(pending.call(), reviewer), reason);
-        return true;
+        return false;
+    }
+
+    @Override
+    public boolean cancel(String approvalId, Principal by, String reason) {
+        Objects.requireNonNull(by, "by");
+        requireNonBlank(reason, "reason");
+        for (int attempt = 0; attempt < MAX_DECISION_ATTEMPTS; attempt++) {
+            PendingCall pending = pendingCall(approvalId);
+            if (pending.status() != ApprovalStatus.PENDING) {
+                return false;
+            }
+            ApprovalAccess access;
+            if (isOwn(pending.call(), by)) {
+                access = ApprovalAccess.REQUESTER;
+            } else if (holdsAny(by, policy.superAdmins())) {
+                access = ApprovalAccess.SUPER_ADMIN;
+            } else {
+                return false;
+            }
+            Instant now = clock.instant();
+            var decision = new ApprovalDecision(ApprovalDecision.Kind.CANCEL, by.id(), access, now, reason);
+            if (approvals.replace(pending, pending.withDecision(decision, ApprovalStatus.CANCELLED))) {
+                watchSuperAdmin(access, by, now);
+                auditApproval(pending, ApprovalStatus.CANCELLED, by.id(), access, reason);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public Optional<Approval.Released> claim(String approvalId, String executor, Duration lease) {
+        requireNonBlank(executor, "executor");
+        if (lease.isNegative() || lease.isZero()) {
+            throw new IllegalArgumentException("a lease must be positive");
+        }
+        for (int attempt = 0; attempt < MAX_DECISION_ATTEMPTS; attempt++) {
+            PendingCall released = pendingCall(approvalId);
+            if (released.status() != ApprovalStatus.RELEASED) {
+                return Optional.empty();
+            }
+            Instant now = clock.instant();
+            var run = new Execution(executor, now, now.plus(lease), null, null);
+            if (approvals.replace(released, released.withExecution(run, ApprovalStatus.EXECUTING))) {
+                return Optional.of(new Approval.Released(released.call(), approvalId));
+            }
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public boolean finished(String approvalId, String executor, ToolResult result) {
+        requireNonBlank(executor, "executor");
+        Objects.requireNonNull(result, "result");
+        for (int attempt = 0; attempt < MAX_DECISION_ATTEMPTS; attempt++) {
+            PendingCall running = pendingCall(approvalId);
+            Optional<Execution> run = running.run();
+            boolean awaitingOutcome = running.status() == ApprovalStatus.EXECUTING || running.status() == ApprovalStatus.UNKNOWN;
+            if (!awaitingOutcome || run.isEmpty() || !run.get().executor().equals(executor)
+                    || run.get().finishedAt() != null) {
+                return false;
+            }
+            Instant now = clock.instant();
+            ApprovalStatus outcome = result instanceof ToolResult.Succeeded ? ApprovalStatus.EXECUTED : ApprovalStatus.FAILED;
+            if (approvals.replace(running, running.withExecution(run.get().finished(now, outcomeSummary(result)), outcome))) {
+                // The audit gets no output or error text: either can carry data the log must not hold.
+                auditApproval(running, outcome, executor, null,
+                        outcome == ApprovalStatus.EXECUTED ? "the tool ran" : "the tool failed");
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -279,7 +396,7 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     @Override
-    public int expirePending() {
+    public Sweep sweep() {
         Instant now = clock.instant();
         int expired = 0;
         for (PendingCall call : approvals.pending()) {
@@ -287,7 +404,71 @@ public final class DefaultToolGate implements ToolGate {
                 expired++;
             }
         }
-        return expired;
+        int unknown = 0;
+        for (PendingCall running : approvals.withStatus(ApprovalStatus.EXECUTING)) {
+            Optional<Execution> run = running.run();
+            if (run.isPresent() && !now.isBefore(run.get().leaseUntil())
+                    && approvals.replace(running, running.withStatus(ApprovalStatus.UNKNOWN))) {
+                unknown++;
+                auditApproval(running, ApprovalStatus.UNKNOWN, "toolgate", null, "the lease of " + run.get().executor()
+                        + " ran out at " + run.get().leaseUntil() + " with no outcome; check whether the tool ran");
+            }
+        }
+        return new Sweep(expired, unknown);
+    }
+
+    /**
+     * Records the release in the session, after the queue says released, so a lost race records
+     * nothing. If the session store fails, the call is refused instead: an executor must never run a
+     * call whose spending the session does not know about.
+     */
+    private void recordRelease(PendingCall released, ToolCall call) {
+        try {
+            sessions.append(new CallReleased(call.sessionId(), released.approvalId(), call.callId(),
+                    spent(call, new Decision.Allow(released.deferral().ruleId())), clock.instant()));
+        } catch (RuntimeException storeFailure) {
+            if (approvals.replace(released, released.withStatus(ApprovalStatus.REFUSED))) {
+                auditApproval(released, ApprovalStatus.REFUSED, "toolgate", null,
+                        "session store failed while recording the release: " + storeFailure);
+            }
+            throw storeFailure;
+        }
+    }
+
+    /** Whether the approvals so far, with this one, release the call. */
+    private boolean releasable(PendingCall pending, ApprovalDecision approval) {
+        if (!policy.superAdminConfirmation()) {
+            return true;
+        }
+        var approvalsSoFar = new ArrayList<ApprovalDecision>(pending.decisions());
+        approvalsSoFar.add(approval);
+        List<ApprovalDecision> approved = approvalsSoFar.stream()
+                .filter(decision -> decision.kind() == ApprovalDecision.Kind.APPROVE).toList();
+        // Anyone else who may decide could have released it alone; two different super admins are
+        // the break-glass path.
+        return approved.stream().anyMatch(decision -> decision.access() != ApprovalAccess.SUPER_ADMIN)
+                || approved.stream().map(ApprovalDecision::by).distinct().count() >= 2;
+    }
+
+    private static boolean approvedBy(PendingCall pending, Principal reviewer) {
+        return pending.decisions().stream().anyMatch(decision ->
+                decision.kind() == ApprovalDecision.Kind.APPROVE && decision.by().equals(reviewer.id()));
+    }
+
+    private void watchSuperAdmin(ApprovalAccess access, Principal by, Instant at) {
+        if (access == ApprovalAccess.SUPER_ADMIN) {
+            superAdminWatch.decided(at).ifPresent(decisions -> audit.submit(() ->
+                    new AuditEvent.SuperAdminBurst(at, decisions, superAdminWatch.window(), by.id())));
+        }
+    }
+
+    /** What the queue keeps of a run's outcome: shortened, since it is for a person to read. */
+    private static String outcomeSummary(ToolResult result) {
+        String text = switch (result) {
+            case ToolResult.Succeeded(ArgValue output) -> "returned " + ArgValueJson.write(output);
+            case ToolResult.Failed(String message) -> "failed: " + message;
+        };
+        return text.length() <= MAX_SUMMARY_CHARS ? text : text.substring(0, MAX_SUMMARY_CHARS) + "…";
     }
 
     /** What a call adds to the session's totals: only a call that runs, which an allowed call does. */
@@ -388,7 +569,7 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     private boolean expire(PendingCall pending) {
-        if (!approvals.transition(pending.approvalId(), ApprovalStatus.PENDING, ApprovalStatus.EXPIRED)) {
+        if (!approvals.replace(pending, pending.withStatus(ApprovalStatus.EXPIRED))) {
             return false;
         }
         auditApproval(pending, ApprovalStatus.EXPIRED, "toolgate", null, "nobody decided before " + pending.expiresAt());

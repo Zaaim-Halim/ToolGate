@@ -1,9 +1,12 @@
 package io.toolgate.jdbc;
 
+import io.toolgate.api.ApprovalAccess;
+import io.toolgate.api.ApprovalDecision;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Decision;
+import io.toolgate.api.Execution;
 import io.toolgate.api.ListValue;
 import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
@@ -33,6 +36,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
 
@@ -43,8 +47,10 @@ import javax.sql.DataSource;
  * <p>A call is released at most once: a status change is an {@code UPDATE ... WHERE status = ?},
  * which succeeds for exactly one of any number of concurrent approvers, on any instance.
  *
- * <p>Create the table with the DDL for your database, {@link Dialect#ddl()}, through your usual
- * migrations. Each row's payload holds the call's real arguments and the deferral reason, which can
+ * <p>Create the tables with the DDL for your database, {@link Dialect#ddl()}, through your usual
+ * migrations. Decisions are kept in a second table, the queue's name with {@code _decision} appended. The queue
+ * checks its tables on first use, or when {@link #verifySchema()} is called at startup, and refuses to
+ * work with tables it cannot use. Each row's payload holds the call's real arguments and the deferral reason, which can
  * quote them. Give the queue a {@link ValueCodec} to seal it, bound to the row; without one it is
  * stored in clear, and the queue says so once in the log. An ID longer than its column fails the
  * insert, and ToolGate then denies the call rather than report it as pending.
@@ -56,10 +62,15 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
 
     /** SQL state class 23 is an integrity constraint violation in every major database. */
     private static final String INTEGRITY_VIOLATION_CLASS = "23";
-    private static final Pattern TABLE_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
-    private static final String COLUMNS = "approval_id, status, call_id, session_id, agent_id, principal_kind,"
+    /** At most 54 characters, so the decision table's name, 9 more, fits every database's 63-character limit. */
+    private static final Pattern TABLE_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,53}");
+    private static final String DECISION_SUFFIX = "_decision";
+    private static final String INSERT_COLUMNS = "approval_id, status, call_id, session_id, agent_id, principal_kind,"
             + " principal_id, principal_tenant, principal_roles, tool, call_at, defer_rule, payload, deferred_at,"
             + " expires_at";
+    private static final String COLUMNS = INSERT_COLUMNS
+            + ", version, executor, claimed_at, lease_until, finished_at, outcome";
+    private static final String DECISION_COLUMNS = "approval_id, seq, kind, decided_by, access, decided_at, comment";
 
     /** The databases whose DDL ships with this module. */
     public enum Dialect {
@@ -90,7 +101,9 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
 
     private final DataSource dataSource;
     private final String table;
+    private final String decisionTable;
     private final ValueCodec codec;
+    private final AtomicBoolean schemaVerified = new AtomicBoolean();
 
     /**
      * A queue in the default table, storing payloads in clear.
@@ -127,10 +140,38 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             throw new IllegalArgumentException("table name must be a plain SQL identifier, was " + table);
         }
         this.table = table;
+        this.decisionTable = table + DECISION_SUFFIX;
+    }
+
+    /**
+     * Checks that the queue's tables have every column this version uses, so a missed upgrade fails at
+     * startup rather than on a reviewer's first click. Every operation also checks, once.
+     *
+     * @throws JdbcStoreException if a table or column is missing, naming the upgrade to run
+     */
+    public void verifySchema() {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement calls = connection.prepareStatement("SELECT " + COLUMNS + " FROM " + table + " WHERE 1 = 0");
+             PreparedStatement decisions = connection.prepareStatement(
+                     "SELECT " + DECISION_COLUMNS + " FROM " + decisionTable + " WHERE 1 = 0")) {
+            calls.executeQuery().close();
+            decisions.executeQuery().close();
+            schemaVerified.set(true);
+        } catch (SQLException failure) {
+            throw new JdbcStoreException("the approval queue tables " + table + " and " + decisionTable
+                    + " are missing or out of date; create them with JdbcApprovalQueue.Dialect.ddl()", failure);
+        }
+    }
+
+    private void requireSchema() {
+        if (!schemaVerified.get()) {
+            verifySchema();
+        }
     }
 
     @Override
     public void add(PendingCall call) {
+        requireSchema();
         if (call.status() != ApprovalStatus.PENDING) {
             throw new IllegalArgumentException("a call enters the queue pending, not " + call.status());
         }
@@ -140,7 +181,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             throw new IllegalArgumentException("expiry is less than a microsecond after the deferral");
         }
         ToolCall toolCall = call.call();
-        String sql = "INSERT INTO " + table + " (" + COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO " + table + " (" + INSERT_COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection connection = dataSource.getConnection();
              PreparedStatement insert = connection.prepareStatement(sql)) {
             insert.setString(1, call.approvalId());
@@ -175,12 +216,13 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
 
     @Override
     public Optional<PendingCall> get(String approvalId) {
+        requireSchema();
         String sql = "SELECT " + COLUMNS + " FROM " + table + " WHERE approval_id = ?";
         try (Connection connection = dataSource.getConnection();
              PreparedStatement select = connection.prepareStatement(sql)) {
             select.setString(1, approvalId);
             try (ResultSet row = select.executeQuery()) {
-                return row.next() ? Optional.of(read(row)) : Optional.empty();
+                return row.next() ? Optional.of(read(connection, row)) : Optional.empty();
             }
         } catch (SQLException failure) {
             throw new JdbcStoreException("could not read " + approvalId, failure);
@@ -188,34 +230,107 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
     }
 
     @Override
-    public boolean transition(String approvalId, ApprovalStatus from, ApprovalStatus to) {
-        String sql = "UPDATE " + table + " SET status = ? WHERE approval_id = ? AND status = ?";
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement update = connection.prepareStatement(sql)) {
-            update.setString(1, to.name());
-            update.setString(2, approvalId);
-            update.setString(3, from.name());
-            return update.executeUpdate() == 1;
+    public boolean replace(PendingCall expected, PendingCall next) {
+        ApprovalQueue.requireNextVersion(expected, next);
+        requireSchema();
+        String sql = "UPDATE " + table + " SET status = ?, version = ?, executor = ?, claimed_at = ?, lease_until = ?,"
+                + " finished_at = ?, outcome = ? WHERE approval_id = ? AND version = ?";
+        try (Connection connection = dataSource.getConnection()) {
+            boolean autoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                boolean replaced = update(connection, sql, expected, next)
+                        && insertDecisions(connection, next, expected.decisions().size());
+                if (replaced) {
+                    connection.commit();
+                } else {
+                    connection.rollback();
+                }
+                return replaced;
+            } catch (SQLException | RuntimeException failure) {
+                connection.rollback();
+                throw failure;
+            } finally {
+                connection.setAutoCommit(autoCommit);
+            }
         } catch (SQLException failure) {
-            throw new JdbcStoreException("could not move " + approvalId + " to " + to, failure);
+            throw new JdbcStoreException("could not update " + expected.approvalId(), failure);
         }
     }
 
     @Override
-    public List<PendingCall> pending() {
+    public List<PendingCall> withStatus(ApprovalStatus status) {
+        requireSchema();
         String sql = "SELECT " + COLUMNS + " FROM " + table + " WHERE status = ? ORDER BY deferred_at, approval_id";
         try (Connection connection = dataSource.getConnection();
              PreparedStatement select = connection.prepareStatement(sql)) {
-            select.setString(1, ApprovalStatus.PENDING.name());
+            select.setString(1, status.name());
             try (ResultSet rows = select.executeQuery()) {
                 var calls = new ArrayList<PendingCall>();
                 while (rows.next()) {
-                    calls.add(read(rows));
+                    calls.add(read(connection, rows));
                 }
                 return calls;
             }
         } catch (SQLException failure) {
-            throw new JdbcStoreException("could not list pending calls", failure);
+            throw new JdbcStoreException("could not list " + status + " calls", failure);
+        }
+    }
+
+    private boolean update(Connection connection, String sql, PendingCall expected, PendingCall next) throws SQLException {
+        try (PreparedStatement update = connection.prepareStatement(sql)) {
+            update.setString(1, next.status().name());
+            update.setLong(2, next.version());
+            Execution run = next.execution();
+            if (run == null) {
+                for (int column = 3; column <= 6; column++) {
+                    update.setNull(column, column == 3 ? Types.VARCHAR : Types.BIGINT);
+                }
+                update.setNull(7, Types.VARCHAR);
+            } else {
+                update.setString(3, run.executor());
+                update.setLong(4, micros(run.claimedAt()));
+                update.setLong(5, micros(run.leaseUntil()));
+                if (run.finishedAt() == null) {
+                    update.setNull(6, Types.BIGINT);
+                    update.setNull(7, Types.VARCHAR);
+                } else {
+                    update.setLong(6, micros(run.finishedAt()));
+                    update.setString(7, codec.seal(run.summary(), outcomeContext(next.approvalId())));
+                }
+            }
+            update.setString(8, expected.approvalId());
+            update.setLong(9, expected.version());
+            return update.executeUpdate() == 1;
+        }
+    }
+
+    /** Inserts the decisions {@code next} adds; a key conflict means another writer won, so nothing is replaced. */
+    private boolean insertDecisions(Connection connection, PendingCall next, int from) throws SQLException {
+        String sql = "INSERT INTO " + decisionTable + " (" + DECISION_COLUMNS + ") VALUES (?, ?, ?, ?, ?, ?, ?)";
+        try (PreparedStatement insert = connection.prepareStatement(sql)) {
+            for (int seq = from; seq < next.decisions().size(); seq++) {
+                ApprovalDecision decision = next.decisions().get(seq);
+                insert.setString(1, next.approvalId());
+                insert.setInt(2, seq);
+                insert.setString(3, decision.kind().name());
+                insert.setString(4, decision.by());
+                insert.setString(5, decision.access().name());
+                insert.setLong(6, micros(decision.at()));
+                if (decision.comment() == null) {
+                    insert.setNull(7, Types.VARCHAR);
+                } else {
+                    insert.setString(7, codec.seal(decision.comment(), decisionContext(next.approvalId(), seq)));
+                }
+                insert.addBatch();
+            }
+            insert.executeBatch();
+            return true;
+        } catch (SQLException failure) {
+            if (isIntegrityViolation(failure)) {
+                return false;
+            }
+            throw failure;
         }
     }
 
@@ -229,7 +344,15 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
         return table + ":" + approvalId;
     }
 
-    private PendingCall read(ResultSet row) throws SQLException {
+    private String outcomeContext(String approvalId) {
+        return table + ":" + approvalId + ":outcome";
+    }
+
+    private String decisionContext(String approvalId, int seq) {
+        return decisionTable + ":" + approvalId + ":" + seq;
+    }
+
+    private PendingCall read(Connection connection, ResultSet row) throws SQLException {
         String approvalId = row.getString("approval_id");
         try {
             String tenant = row.getString("principal_tenant");
@@ -246,9 +369,42 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
                     instant(row.getLong("call_at")));
             var deferral = new Decision.Defer(row.getString("defer_rule"), reason, approvalId);
             return new PendingCall(approvalId, call, deferral, instant(row.getLong("deferred_at")),
-                    instant(row.getLong("expires_at")), ApprovalStatus.valueOf(row.getString("status")));
+                    instant(row.getLong("expires_at")), ApprovalStatus.valueOf(row.getString("status")),
+                    row.getLong("version"), decisions(connection, approvalId), execution(row, approvalId));
         } catch (IllegalArgumentException | NullPointerException corrupt) {
             throw new JdbcStoreException("unreadable queue row " + approvalId, corrupt);
+        }
+    }
+
+    private Execution execution(ResultSet row, String approvalId) throws SQLException {
+        String executor = row.getString("executor");
+        if (executor == null) {
+            return null;
+        }
+        long finishedAt = row.getLong("finished_at");
+        boolean finished = !row.wasNull();
+        String outcome = row.getString("outcome");
+        return new Execution(executor, instant(row.getLong("claimed_at")), instant(row.getLong("lease_until")),
+                finished ? instant(finishedAt) : null,
+                outcome == null ? null : codec.open(outcome, outcomeContext(approvalId)));
+    }
+
+    private List<ApprovalDecision> decisions(Connection connection, String approvalId) throws SQLException {
+        String sql = "SELECT " + DECISION_COLUMNS + " FROM " + decisionTable + " WHERE approval_id = ? ORDER BY seq";
+        try (PreparedStatement select = connection.prepareStatement(sql)) {
+            select.setString(1, approvalId);
+            try (ResultSet rows = select.executeQuery()) {
+                var decisions = new ArrayList<ApprovalDecision>();
+                while (rows.next()) {
+                    int seq = rows.getInt("seq");
+                    String comment = rows.getString("comment");
+                    decisions.add(new ApprovalDecision(ApprovalDecision.Kind.valueOf(rows.getString("kind")),
+                            rows.getString("decided_by"), ApprovalAccess.valueOf(rows.getString("access")),
+                            instant(rows.getLong("decided_at")),
+                            comment == null ? null : codec.open(comment, decisionContext(approvalId, seq))));
+                }
+                return decisions;
+            }
         }
     }
 

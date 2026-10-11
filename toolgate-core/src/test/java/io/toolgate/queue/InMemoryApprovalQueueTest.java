@@ -37,7 +37,7 @@ class InMemoryApprovalQueueTest {
     @Test
     void addingTheSameApprovalTwiceKeepsTheFirst() {
         queue.add(pending("refunds/1", T0));
-        queue.transition("refunds/1", ApprovalStatus.PENDING, ApprovalStatus.REJECTED);
+        move("refunds/1", ApprovalStatus.REJECTED);
 
         queue.add(pending("refunds/1", T0.plusSeconds(5)));
 
@@ -45,12 +45,26 @@ class InMemoryApprovalQueueTest {
     }
 
     @Test
-    void transitionOnlyFromTheStatusSeen() {
-        queue.add(pending("refunds/1", T0));
+    void replacesOnlyTheVersionSeen() {
+        PendingCall seen = pending("refunds/1", T0);
+        queue.add(seen);
 
-        assertThat(queue.transition("refunds/1", ApprovalStatus.PENDING, ApprovalStatus.RELEASED)).isTrue();
-        assertThat(queue.transition("refunds/1", ApprovalStatus.PENDING, ApprovalStatus.RELEASED)).isFalse();
-        assertThat(queue.transition("unknown", ApprovalStatus.PENDING, ApprovalStatus.RELEASED)).isFalse();
+        assertThat(queue.replace(seen, seen.withStatus(ApprovalStatus.RELEASED))).isTrue();
+        assertThat(queue.replace(seen, seen.withStatus(ApprovalStatus.REJECTED))).isFalse();
+        assertThat(queue.get("refunds/1").orElseThrow().status()).isEqualTo(ApprovalStatus.RELEASED);
+        PendingCall unknown = pending("unknown", T0);
+        assertThat(queue.replace(unknown, unknown.withStatus(ApprovalStatus.RELEASED))).isFalse();
+    }
+
+    @Test
+    void refusesAReplacementThatIsNotTheNextVersion() {
+        PendingCall seen = pending("refunds/1", T0);
+        queue.add(seen);
+
+        assertThatIllegalArgumentException().isThrownBy(() ->
+                queue.replace(seen, seen.withStatus(ApprovalStatus.RELEASED).withStatus(ApprovalStatus.EXECUTING)));
+        assertThatIllegalArgumentException().isThrownBy(() ->
+                queue.replace(seen, pending("refunds/2", T0).withStatus(ApprovalStatus.RELEASED)));
     }
 
     /** Case F's double click, many times over: exactly one approval wins. */
@@ -59,7 +73,7 @@ class InMemoryApprovalQueueTest {
         queue.add(pending("refunds/1", T0));
         var approvals = new ArrayList<Callable<Boolean>>();
         for (int reviewer = 0; reviewer < 50; reviewer++) {
-            approvals.add(() -> queue.transition("refunds/1", ApprovalStatus.PENDING, ApprovalStatus.RELEASED));
+            approvals.add(() -> move("refunds/1", ApprovalStatus.RELEASED));
         }
 
         int released = 0;
@@ -77,7 +91,7 @@ class InMemoryApprovalQueueTest {
         queue.add(pending("refunds/2", T0.plusSeconds(60)));
         queue.add(pending("refunds/1", T0));
         queue.add(pending("refunds/3", T0.plusSeconds(120)));
-        queue.transition("refunds/3", ApprovalStatus.PENDING, ApprovalStatus.REJECTED);
+        move("refunds/3", ApprovalStatus.REJECTED);
 
         assertThat(queue.pending()).extracting(PendingCall::approvalId).containsExactly("refunds/1", "refunds/2");
     }
@@ -88,6 +102,12 @@ class InMemoryApprovalQueueTest {
                 queue.add(pending("refunds/1", T0).withStatus(ApprovalStatus.RELEASED)));
         assertThatIllegalArgumentException().isThrownBy(() -> new PendingCall("refunds/1", call(), defer(), T0, T0,
                 ApprovalStatus.PENDING));
+    }
+
+    /** Moves a pending call to a status, as a reviewer would: only from the version read, and only once. */
+    private boolean move(String approvalId, ApprovalStatus status) {
+        PendingCall seen = queue.get(approvalId).orElseThrow();
+        return seen.status() == ApprovalStatus.PENDING && queue.replace(seen, seen.withStatus(status));
     }
 
     private static PendingCall pending(String approvalId, Instant at) {

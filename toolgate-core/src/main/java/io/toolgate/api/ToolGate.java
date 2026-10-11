@@ -7,6 +7,7 @@ import io.toolgate.audit.AuditChannel;
 import io.toolgate.audit.FanOutSink;
 import io.toolgate.audit.SystemLoggerSink;
 import io.toolgate.engine.DefaultToolGate;
+import io.toolgate.engine.SuperAdminWatch;
 import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.rules.ResultChecker;
@@ -20,6 +21,7 @@ import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionStore;
 import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -147,7 +149,26 @@ public interface ToolGate extends AutoCloseable {
      * @return the outcome; on {@link Approval.Released}, run the tool
      * @throws IllegalArgumentException if no call has that ID, or the principal is not the call's
      */
-    Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal);
+    default Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal) {
+        return approve(approvalId, reviewer, currentPrincipal, null);
+    }
+
+    /**
+     * Approves a deferred call as {@link #approve(String, Principal, Principal)} does, with the
+     * reviewer's comment kept with the decision. A super admin must give one, and when the policy asks
+     * for {@link io.toolgate.api.policy.ToolGatePolicy.Builder#superAdminConfirmation()}, a super
+     * admin's approval is recorded and the call waits, as {@link Approval.AwaitingConfirmation}, for a
+     * second person: another super admin or a reviewer of the call's tenant.
+     *
+     * @param approvalId       from {@link Decision.Defer#approvalId()}
+     * @param reviewer         who approves
+     * @param currentPrincipal the call's principal as resolved now, so that revoked roles count
+     * @param comment          the reviewer's justification; null for none, which a super admin may not give
+     * @return the outcome; on {@link Approval.Released}, run the tool
+     * @throws IllegalArgumentException if no call has that ID, the principal is not the call's, or the
+     *                                  comment is blank
+     */
+    Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment);
 
     /**
      * Rejects a deferred call. Rejecting needs the same permission as approving, so nobody can
@@ -182,12 +203,62 @@ public interface ToolGate extends AutoCloseable {
     List<ApprovalItem> pending(Principal viewer);
 
     /**
-     * Expires every pending call past its expiry. Approving checks expiry too, so this only keeps
-     * the queue and the audit trail current; run it on a schedule, such as every minute.
+     * Withdraws a deferred call nobody decided yet, such as when the customer changed their mind.
+     * Only the call's own principal or a super admin may, and a super admin's reason is their
+     * justification.
      *
-     * @return how many calls expired
+     * @param approvalId from {@link Decision.Defer#approvalId()}
+     * @param by         who withdraws it
+     * @param reason     why, for the audit trail
+     * @return {@code true} if the call was pending and is now cancelled; {@code false} if it was
+     *         already decided, or {@code by} may not cancel it
+     * @throws IllegalArgumentException if no call has that ID, or the reason is blank
      */
-    int expirePending();
+    boolean cancel(String approvalId, Principal by, String reason);
+
+    /**
+     * Claims a released call to run it, under a lease: the executor runs the tool with the
+     * idempotency key, then reports with {@link #finished}. A call is claimed once, by one executor
+     * on any instance; if the lease runs out with no outcome, {@link #sweep} marks it
+     * {@link ApprovalStatus#UNKNOWN} and nothing runs it again.
+     *
+     * @param approvalId the released call
+     * @param executor   who claims it, such as an instance name
+     * @param lease      how long the run may take before its outcome counts as lost
+     * @return the call to run, or empty if it is not released or another executor claimed it
+     * @throws IllegalArgumentException if no call has that ID, or the lease is not positive
+     */
+    Optional<Approval.Released> claim(String approvalId, String executor, Duration lease);
+
+    /**
+     * Records how a claimed call's run ended. Also accepted after its lease ran out and it became
+     * {@link ApprovalStatus#UNKNOWN}, since a late outcome is still the truth. Recording what the
+     * tool returned for the session is {@link #recordResult}'s job, as for any call.
+     *
+     * @param approvalId the claimed call
+     * @param executor   the executor that claimed it
+     * @param result     what the tool returned, or how it failed
+     * @return {@code true} if recorded; {@code false} if the call is not running under this executor
+     * @throws IllegalArgumentException if no call has that ID
+     */
+    boolean finished(String approvalId, String executor, ToolResult result);
+
+    /**
+     * Keeps the queue current: expires pending calls past their expiry, and marks calls whose
+     * executor's lease ran out {@link ApprovalStatus#UNKNOWN}. Approving checks expiry too, so this
+     * only keeps the queue and the audit trail current; run it on a schedule, such as every minute.
+     *
+     * @return what changed
+     */
+    Sweep sweep();
+
+    /**
+     * What one {@link #sweep} changed.
+     *
+     * @param expired pending calls that expired
+     * @param unknown runs whose lease ran out with no outcome
+     */
+    record Sweep(int expired, int unknown) {}
 
     /**
      * Gaps in the audit trail: events not delivered to every sink, because their queue was full, a sink
@@ -216,6 +287,11 @@ public interface ToolGate extends AutoCloseable {
         return new Builder(policy);
     }
 
+    /** How many super admin decisions within {@link #DEFAULT_SUPER_ADMIN_ALERT_WINDOW} raise an alert, by default. */
+    int DEFAULT_SUPER_ADMIN_ALERT_DECISIONS = 5;
+    /** The window the super admin alert counts decisions in, by default. */
+    Duration DEFAULT_SUPER_ADMIN_ALERT_WINDOW = Duration.ofHours(1);
+
     /** Builds a {@link ToolGate}; every setting except the policy has a default. */
     final class Builder {
 
@@ -228,6 +304,8 @@ public interface ToolGate extends AutoCloseable {
         private final List<AuditSink> auditSinks = new ArrayList<>();
         private boolean defaultLog = true;
         private final List<DecisionObserver> decisionObservers = new ArrayList<>();
+        private int superAdminAlertDecisions = DEFAULT_SUPER_ADMIN_ALERT_DECISIONS;
+        private Duration superAdminAlertWindow = DEFAULT_SUPER_ADMIN_ALERT_WINDOW;
         private byte[] argumentHashKey;
         private Clock clock = Clock.systemUTC();
 
@@ -324,6 +402,36 @@ public interface ToolGate extends AutoCloseable {
         }
 
         /**
+         * Raises an alert, the audit event {@code toolgate.superadmin.burst}, when super admins make
+         * more than {@code decisions} decisions within {@code window}: a stolen super admin account
+         * tends to act fast. At most one alert per window. On by default, more than 5 in an hour. The
+         * count is per gate, so in a cluster each instance counts its own.
+         *
+         * @param decisions how many decisions are normal within the window
+         * @param window    the window
+         * @return this builder
+         * @throws IllegalArgumentException if {@code decisions} is negative or the window not positive
+         */
+        public Builder superAdminAlert(int decisions, Duration window) {
+            if (decisions < 0 || window.isNegative() || window.isZero()) {
+                throw new IllegalArgumentException("superAdminAlert needs decisions >= 0 and a positive window");
+            }
+            this.superAdminAlertDecisions = decisions;
+            this.superAdminAlertWindow = window;
+            return this;
+        }
+
+        /**
+         * Turns off the super admin alert.
+         *
+         * @return this builder
+         */
+        public Builder noSuperAdminAlert() {
+            this.superAdminAlertWindow = null;
+            return this;
+        }
+
+        /**
          * Also tells an observer about each check as it ends, on the checking thread, such as to
          * annotate the tool call's trace span. Observers are called in the order added.
          *
@@ -392,6 +500,8 @@ public interface ToolGate extends AutoCloseable {
                     approvalQueue != null ? approvalQueue : new InMemoryApprovalQueue(),
                     auditChannel(),
                     decisionObservers,
+                    superAdminAlertWindow == null ? SuperAdminWatch.OFF
+                            : new SuperAdminWatch(superAdminAlertDecisions, superAdminAlertWindow),
                     argumentHashKey != null ? ArgumentSummary.keyed(argumentHashKey) : ArgumentSummary.typesOnly(),
                     clock,
                     toolCatalog != null ? toolCatalog : BuiltInEvaluators.NO_TOOLS);

@@ -41,14 +41,26 @@ public interface ApprovalQueue {
     Optional<PendingCall> get(String approvalId);
 
     /**
-     * Changes a call's status if it is still {@code from}.
+     * Replaces a stored call with its next version, if it is still at the version the caller read: a
+     * compare-and-set, so of any number of concurrent decisions, claims or outcomes on any instance,
+     * exactly one wins. The new version's decisions must begin with the stored ones, since decisions
+     * are only ever added.
      *
-     * @param approvalId the call's approval ID
-     * @param from       the status the caller saw
-     * @param to         the new status
-     * @return {@code true} if changed, {@code false} if the status had changed meanwhile, or the call is unknown
+     * @param expected the call as the caller read it
+     * @param next     the call to store; its version must be one more than {@code expected}'s
+     * @return {@code true} if replaced, {@code false} if the call changed meanwhile or is unknown
+     * @throws IllegalArgumentException if {@code next} is not the next version of {@code expected}
      */
-    boolean transition(String approvalId, ApprovalStatus from, ApprovalStatus to);
+    boolean replace(PendingCall expected, PendingCall next);
+
+    /**
+     * Calls in a status, oldest first, such as {@link ApprovalStatus#RELEASED} ones waiting for an
+     * executor, or {@link ApprovalStatus#EXECUTING} ones whose lease may have run out.
+     *
+     * @param status the status
+     * @return the calls
+     */
+    List<PendingCall> withStatus(ApprovalStatus status);
 
     /**
      * Calls still waiting for a decision, oldest first, including any past their expiry that have
@@ -56,5 +68,27 @@ public interface ApprovalQueue {
      *
      * @return the pending calls
      */
-    List<PendingCall> pending();
+    default List<PendingCall> pending() {
+        return withStatus(ApprovalStatus.PENDING);
+    }
+
+    /**
+     * Checks that {@code next} may replace {@code expected}, for implementations of {@link #replace}.
+     *
+     * @param expected the call as the caller read it
+     * @param next     the call to store
+     * @throws IllegalArgumentException if {@code next} is not the next version of {@code expected}
+     */
+    static void requireNextVersion(PendingCall expected, PendingCall next) {
+        if (!next.approvalId().equals(expected.approvalId())) {
+            throw new IllegalArgumentException("cannot replace " + expected.approvalId() + " with " + next.approvalId());
+        }
+        if (next.version() != expected.version() + 1) {
+            throw new IllegalArgumentException("version " + next.version() + " does not follow " + expected.version());
+        }
+        if (next.decisions().size() < expected.decisions().size()
+                || !next.decisions().subList(0, expected.decisions().size()).equals(expected.decisions())) {
+            throw new IllegalArgumentException("decisions are only ever added, never changed or removed");
+        }
+    }
 }

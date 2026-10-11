@@ -48,12 +48,14 @@ public final class PolicyHash {
      * @param agents       agents by ID
      * @param superAdmins  super admin roles; absent from the text when empty, as pins are
      * @param auditors     auditor roles; absent from the text when empty
+     * @param superAdminConfirmation whether a super admin's approval needs a second person; absent when not
      * @return {@code sha256:} and 64 hex digits
      */
     public static String of(Mode mode, Map<String, Mode> ruleModes, int denialBudget,
                             Collection<String> mcpServers, Map<ToolId, ToolPolicy> tools,
                             Map<ToolId, String> pins, Map<String, AgentPolicy> agents,
-                            Collection<String> superAdmins, Collection<String> auditors) {
+                            Collection<String> superAdmins, Collection<String> auditors,
+                            boolean superAdminConfirmation) {
         var text = new StringBuilder(FORMAT_VERSION).append('\n');
         line(text, "mode", mode.toString());
         ruleModes.entrySet().stream()
@@ -74,6 +76,9 @@ public final class PolicyHash {
         }
         if (!auditors.isEmpty()) {
             line(text, "auditors", auditors.stream().sorted().toArray(String[]::new));
+        }
+        if (superAdminConfirmation) {
+            line(text, "superAdminConfirmation", "true");
         }
         return PREFIX + HexFormat.of().formatHex(sha256(text.toString()));
     }

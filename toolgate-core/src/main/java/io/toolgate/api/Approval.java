@@ -6,7 +6,8 @@ import java.util.Objects;
 
 /** The outcome of approving a deferred call. */
 public sealed interface Approval
-        permits Approval.Released, Approval.Refused, Approval.NotPermitted, Approval.AlreadyDecided, Approval.Expired {
+        permits Approval.Released, Approval.AwaitingConfirmation, Approval.Refused, Approval.NotPermitted,
+        Approval.AlreadyDecided, Approval.Expired {
 
     /**
      * The call passed its re-check and is released, once. The application runs the tool now, passing
@@ -21,6 +22,19 @@ public sealed interface Approval
         public Released {
             Objects.requireNonNull(call, "call");
             requireNonBlank(idempotencyKey, "idempotencyKey");
+        }
+    }
+
+    /**
+     * The approval is recorded, and the call needs another before it is released: the policy asks a
+     * second person to confirm a super admin's approval. The call stays pending.
+     *
+     * @param reason who must still approve
+     */
+    record AwaitingConfirmation(String reason) implements Approval {
+        /** Requires the reason. */
+        public AwaitingConfirmation {
+            requireNonBlank(reason, "reason");
         }
     }
 

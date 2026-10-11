@@ -83,8 +83,17 @@ the signed-in user of an interactive agent. Nobody may approve their own call an
 call is re-checked against the policy running at that moment, and runs once.
 
 Policy-wide, `superAdmins("toolgate-admin")` names who may see and decide every agent's calls in every
-tenant (never their own, and audited as a super admin), and `auditors("compliance")` who may see them
-all and decide none. Neither exists unless you name it.
+tenant, and `auditors("compliance")` who may see them all and decide none. Neither exists unless you
+name it. A super admin can never approve their own call, must justify every decision with a comment,
+and is audited as a super admin; `superAdminConfirmation()` adds break-glass, where a super admin's
+approval waits for a second person. More than 5 super admin decisions in an hour raise the audit event
+`toolgate.superadmin.burst` (`superAdminAlert(...)` on the gate's builder changes the threshold).
+
+Every decision is kept with the call (who, under which access, when, and their comment). An approved
+call is `RELEASED`; an executor `claim`s it under a lease, runs it, and reports with `finished`, so the
+queue knows whether it ran. If the lease runs out with no outcome, `sweep()` marks it `UNKNOWN`, and
+nothing runs it again. The requester or a super admin can `cancel` a call nobody decided yet. Run
+`sweep()` on a schedule, such as every minute.
 
 A review screen lists `pending(viewer)`: only the calls that viewer may see, each saying whether they
 may decide it. `pending()` returns every tenant's calls, for operators and jobs only.

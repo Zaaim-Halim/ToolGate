@@ -67,6 +67,24 @@ public final class AuditJson {
                 }
                 yield writer.field("reason", decided.reason()).close();
             }
+            case AuditEvent.ApprovalRecorded recorded -> new Writer()
+                    .field("event", "toolgate.approval.recorded")
+                    .field("time", recorded.time().toString())
+                    .field("approvalId", recorded.approvalId())
+                    .field("session", recorded.sessionId())
+                    .field("agent", recorded.agentId())
+                    .field("tool", recorded.tool().toString())
+                    .field("decidedBy", recorded.decidedBy())
+                    .field("access", recorded.access().name().toLowerCase(Locale.ROOT))
+                    .field("comment", recorded.comment())
+                    .close();
+            case AuditEvent.SuperAdminBurst burst -> new Writer()
+                    .field("event", "toolgate.superadmin.burst")
+                    .field("time", burst.time().toString())
+                    .number("decisions", burst.decisions())
+                    .field("window", burst.window().toString())
+                    .field("lastBy", burst.lastBy())
+                    .close();
             case AuditEvent.Declassified declassified -> new Writer()
                     .field("event", "toolgate.declassify")
                     .field("time", declassified.time().toString())

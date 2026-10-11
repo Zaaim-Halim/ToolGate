@@ -1,6 +1,7 @@
 -- ToolGate approval queue, H2. Times are epoch microseconds (UTC), so no time zone or
 -- timestamp type differs between databases. payload holds the call's real arguments and the deferral
--- reason, as JSON, sealed by the ValueCodec the queue was given, unencrypted unless one was.
+-- reason, as JSON, sealed by the ValueCodec the queue was given, unencrypted unless one was, and so is outcome,
+-- the executor's summary of how an approved call's run ended.
 CREATE TABLE toolgate_pending_call (
     approval_id      VARCHAR(512)  NOT NULL PRIMARY KEY,
     status           VARCHAR(16)   NOT NULL,
@@ -16,9 +17,27 @@ CREATE TABLE toolgate_pending_call (
     defer_rule       VARCHAR(512)  NOT NULL,
     payload          CLOB          NOT NULL,
     deferred_at      BIGINT        NOT NULL,
-    expires_at       BIGINT        NOT NULL
+    expires_at       BIGINT        NOT NULL,
+    version          BIGINT        DEFAULT 0 NOT NULL,
+    executor         VARCHAR(512),
+    claimed_at       BIGINT,
+    lease_until      BIGINT,
+    finished_at      BIGINT,
+    outcome          CLOB
 );
 CREATE INDEX toolgate_pending_call_status ON toolgate_pending_call (status, deferred_at);
+-- One row per decision on a queued call: who approved, rejected or cancelled it, under which access, and
+-- why. comment is sealed by the queue's ValueCodec, like payload, since a reviewer may quote the call.
+CREATE TABLE toolgate_pending_call_decision (
+    approval_id VARCHAR(512)  NOT NULL,
+    seq         INT           NOT NULL,
+    kind        VARCHAR(16)   NOT NULL,
+    decided_by  VARCHAR(512)  NOT NULL,
+    access      VARCHAR(16)   NOT NULL,
+    decided_at  BIGINT        NOT NULL,
+    comment     CLOB,
+    PRIMARY KEY (approval_id, seq)
+);
 
 -- ToolGate session store. One row per session: the state every check reads. The event log keeps
 -- every session event, including the calls' REAL ARGUMENT VALUES, sealed by the store's ValueCodec

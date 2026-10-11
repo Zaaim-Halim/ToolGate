@@ -14,6 +14,7 @@ import io.toolgate.audit.AuditJson;
 import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.session.InMemorySessionStore;
 import io.toolgate.spi.AuditEvent;
+import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionStore;
 import java.time.Clock;
 import java.time.Duration;
@@ -22,6 +23,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -33,6 +35,7 @@ class ApprovalTest {
     private static final Principal JOB = Principal.service("refund-agent", Tenant.of("acme"));
     private static final Principal LENA = Principal.user("lena", Tenant.of("acme"), "finance");
     private static final Principal MARIA = Principal.user("maria", Tenant.of("acme"), "support");
+    private static final Principal ROOT = Principal.user("root", Tenant.of("operator"), "toolgate-admin");
 
     private final MutableClock clock = new MutableClock(Instant.parse("2026-10-08T10:02:00Z"));
     private final InMemoryApprovalQueue queue = new InMemoryApprovalQueue();
@@ -168,7 +171,7 @@ class ApprovalTest {
         assertThat(gate.approve(approvalId, LENA, JOB)).isInstanceOfSatisfying(Approval.NotPermitted.class,
                 notPermitted -> assertThat(notPermitted.reason()).contains("names no reviewers"));
         clock.advance(Duration.ofDays(2));
-        assertThat(gate.expirePending()).isEqualTo(1);
+        assertThat(gate.sweep().expired()).isEqualTo(1);
     }
 
     @Test
@@ -199,14 +202,14 @@ class ApprovalTest {
     }
 
     @Test
-    void expirePendingSweepsOnlyCallsPastTheirExpiry() {
+    void sweepExpiresOnlyCallsPastTheirExpiry() {
         ToolGate gate = gate(refundPolicy(a -> { }));
         deferRefund(gate, JOB);
         clock.advance(Duration.ofHours(23));
         String fresh = deferRefund(gate, JOB, "c9");
         clock.advance(Duration.ofHours(2));
 
-        assertThat(gate.expirePending()).isEqualTo(1);
+        assertThat(gate.sweep().expired()).isEqualTo(1);
         assertThat(gate.pending()).extracting(pending -> pending.approvalId()).containsExactly(fresh);
     }
 
@@ -255,7 +258,7 @@ class ApprovalTest {
             assertThat(item.access()).isEqualTo(ApprovalAccess.SUPER_ADMIN);
             assertThat(item.mayDecide()).isTrue();
         });
-        assertThat(gate.approve(approvalId, admin, JOB)).isInstanceOf(Approval.Released.class);
+        assertThat(gate.approve(approvalId, admin, JOB, "the customer escalated; finance is away")).isInstanceOf(Approval.Released.class);
         gate.close();
 
         assertThat(events).filteredOn(AuditEvent.ApprovalDecided.class::isInstance).singleElement().satisfies(event -> {
@@ -329,13 +332,173 @@ class ApprovalTest {
     }
 
     @Test
+    void aSuperAdminMustJustifyTheirApproval() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")));
+        String approvalId = deferRefund(gate, JOB);
+
+        assertThat(gate.approve(approvalId, ROOT, JOB)).isInstanceOfSatisfying(Approval.NotPermitted.class,
+                notPermitted -> assertThat(notPermitted.reason()).contains("justify"));
+        assertThat(gate.pending()).hasSize(1);
+        assertThatIllegalArgumentException().isThrownBy(() -> gate.approve(approvalId, ROOT, JOB, " "));
+    }
+
+    /** Break-glass: one stolen super admin account releases nothing by itself. */
+    @Test
+    void underBreakGlassASuperAdminsApprovalWaitsForASecondPerson() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin").superAdminConfirmation()));
+        String approvalId = deferRefund(gate, JOB);
+        Principal secondAdmin = Principal.user("sam", Tenant.of("operator"), "toolgate-admin");
+
+        assertThat(gate.approve(approvalId, ROOT, JOB, "finance is away")).isInstanceOf(Approval.AwaitingConfirmation.class);
+        assertThat(gate.approve(approvalId, ROOT, JOB, "again")).isInstanceOfSatisfying(Approval.NotPermitted.class,
+                notPermitted -> assertThat(notPermitted.reason()).contains("another person"));
+        assertThat(queue.get(approvalId).orElseThrow().status()).isEqualTo(ApprovalStatus.PENDING);
+
+        assertThat(gate.approve(approvalId, secondAdmin, JOB, "confirmed with root by phone")).isInstanceOf(Approval.Released.class);
+        assertThat(queue.get(approvalId).orElseThrow().decisions()).extracting(ApprovalDecision::by).containsExactly("root", "sam");
+        gate.close();
+        assertThat(events).hasAtLeastOneElementOfType(AuditEvent.ApprovalRecorded.class);
+    }
+
+    @Test
+    void underBreakGlassAReviewerOfTheTenantMayConfirmAndASuperAdminMayRejectAlone() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin").superAdminConfirmation()));
+        String confirmed = deferRefund(gate, JOB, "c2");
+        String rejected = deferRefund(gate, JOB, "c3");
+
+        gate.approve(confirmed, ROOT, JOB, "urgent");
+        assertThat(gate.approve(confirmed, LENA, JOB, "checked the order")).isInstanceOf(Approval.Released.class);
+        assertThat(gate.reject(rejected, ROOT, "duplicate of c2")).isTrue();
+    }
+
+    @Test
+    void breakGlassNeedsSuperAdminsAndChangesTheHash() {
+        assertThatThrownBy(() -> refundPolicy(a -> { }, ToolGatePolicy.Builder::superAdminConfirmation))
+                .isInstanceOf(InvalidPolicyException.class).hasMessageContaining("needs superAdmins");
+        assertThat(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin").superAdminConfirmation()).hash())
+                .isNotEqualTo(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")).hash());
+    }
+
+    @Test
+    void eachDecisionIsKeptWithTheCall() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+
+        gate.approve(approvalId, LENA, JOB, "order checked");
+
+        assertThat(queue.get(approvalId).orElseThrow().decisions()).singleElement().isEqualTo(new ApprovalDecision(
+                ApprovalDecision.Kind.APPROVE, "lena", ApprovalAccess.REVIEWER, clock.instant(), "order checked"));
+    }
+
+    @Test
+    void theRequesterOrASuperAdminMayCancelAPendingCallAndNobodyElse() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")));
+        String mine = deferRefund(gate, MARIA, "c2");
+        String jobs = deferRefund(gate, JOB, "c3");
+
+        assertThat(gate.cancel(mine, LENA, "not hers to withdraw")).isFalse();
+        assertThat(gate.cancel(mine, MARIA, "the customer called back")).isTrue();
+        assertThat(gate.cancel(mine, MARIA, "twice")).isFalse();
+        assertThat(gate.cancel(jobs, ROOT, "the order was refunded by hand")).isTrue();
+        assertThat(queue.get(mine).orElseThrow().status()).isEqualTo(ApprovalStatus.CANCELLED);
+        assertThat(gate.approve(mine, LENA, MARIA)).isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.CANCELLED));
+    }
+
+    @Test
+    void aReleasedCallIsClaimedOnceAndItsOutcomeRecorded() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+        gate.approve(approvalId, LENA, JOB);
+
+        Optional<Approval.Released> claimed = gate.claim(approvalId, "node-1", Duration.ofMinutes(1));
+        assertThat(claimed).hasValueSatisfying(released -> assertThat(released.idempotencyKey()).isEqualTo(approvalId));
+        assertThat(gate.claim(approvalId, "node-2", Duration.ofMinutes(1))).isEmpty();
+        assertThat(gate.finished(approvalId, "node-2", new ToolResult.Succeeded(ArgValue.text("ok")))).isFalse();
+
+        assertThat(gate.finished(approvalId, "node-1", new ToolResult.Succeeded(ArgValue.text("refund R-1")))).isTrue();
+        PendingCall done = queue.get(approvalId).orElseThrow();
+        assertThat(done.status()).isEqualTo(ApprovalStatus.EXECUTED);
+        assertThat(done.run()).hasValueSatisfying(run -> {
+            assertThat(run.executor()).isEqualTo("node-1");
+            assertThat(run.summary()).isEqualTo("returned \"refund R-1\"");
+        });
+        assertThat(gate.finished(approvalId, "node-1", new ToolResult.Failed("again"))).isFalse();
+    }
+
+    @Test
+    void aFailedRunIsRecordedAsFailed() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+        gate.approve(approvalId, LENA, JOB);
+        gate.claim(approvalId, "node-1", Duration.ofMinutes(1));
+
+        gate.finished(approvalId, "node-1", new ToolResult.Failed("payment provider timed out"));
+
+        assertThat(queue.get(approvalId).orElseThrow().status()).isEqualTo(ApprovalStatus.FAILED);
+    }
+
+    /** Nobody knows whether the refund went out, so nothing may send it again. */
+    @Test
+    void aLostLeaseBecomesUnknownAndIsNeverRunAgain() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+        gate.approve(approvalId, LENA, JOB);
+        gate.claim(approvalId, "node-1", Duration.ofMinutes(1));
+
+        clock.advance(Duration.ofMinutes(2));
+        assertThat(gate.sweep()).isEqualTo(new ToolGate.Sweep(0, 1));
+        assertThat(queue.get(approvalId).orElseThrow().status()).isEqualTo(ApprovalStatus.UNKNOWN);
+        assertThat(gate.claim(approvalId, "node-2", Duration.ofMinutes(1))).isEmpty();
+
+        assertThat(gate.finished(approvalId, "node-1", new ToolResult.Succeeded(ArgValue.text("late")))).isTrue();
+        assertThat(queue.get(approvalId).orElseThrow().status()).isEqualTo(ApprovalStatus.EXECUTED);
+    }
+
+    @Test
+    void aBurstOfSuperAdminDecisionsRaisesOneAlertPerWindow() {
+        ToolGatePolicy policy = refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin"));
+        try (ToolGate gate = ToolGate.builder(policy).approvalQueue(queue).sessionStore(sessions).clock(clock)
+                .noDefaultLog().auditSink(events::add).superAdminAlert(2, Duration.ofHours(1)).build()) {
+            for (int call = 2; call <= 5; call++) {
+                gate.reject(deferRefund(gate, JOB, "c" + call), ROOT, "cleanup " + call);
+                clock.advance(Duration.ofMinutes(1));
+            }
+        }
+
+        assertThat(events).filteredOn(AuditEvent.SuperAdminBurst.class::isInstance).singleElement().satisfies(event -> {
+            assertThat(((AuditEvent.SuperAdminBurst) event).decisions()).isEqualTo(3);
+            assertThat(AuditJson.format(event)).contains("\"event\":\"toolgate.superadmin.burst\"").contains("\"lastBy\":\"root\"");
+        });
+    }
+
+    @Test
+    void theSuperAdminAlertIsOnByDefaultAndCanBeTurnedOff() {
+        ToolGatePolicy policy = refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin"));
+        try (ToolGate gate = ToolGate.builder(policy).approvalQueue(queue).sessionStore(sessions).clock(clock)
+                .noDefaultLog().auditSink(events::add).noSuperAdminAlert().build()) {
+            for (int call = 2; call <= 9; call++) {
+                gate.reject(deferRefund(gate, JOB, "c" + call), ROOT, "cleanup " + call);
+            }
+        }
+        assertThat(events).noneMatch(AuditEvent.SuperAdminBurst.class::isInstance);
+
+        events.clear();
+        try (ToolGate gate = gate(policy)) {
+            for (int call = 10; call <= 15; call++) {
+                gate.reject(deferRefund(gate, JOB, "c" + call), ROOT, "cleanup " + call);
+            }
+        }
+        assertThat(events).filteredOn(AuditEvent.SuperAdminBurst.class::isInstance).hasSize(1);
+    }
+
+    @Test
     void everyOutcomeIsAudited() {
         try (ToolGate gate = gate(refundPolicy(a -> { }))) {
             gate.approve(deferRefund(gate, JOB, "c2"), LENA, JOB);
             gate.reject(deferRefund(gate, JOB, "c3"), LENA, "duplicate");
             deferRefund(gate, JOB, "c4");
             clock.advance(Duration.ofDays(2));
-            gate.expirePending();
+            gate.sweep();
         }
 
         assertThat(events).filteredOn(AuditEvent.ApprovalDecided.class::isInstance)

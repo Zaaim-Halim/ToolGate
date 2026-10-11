@@ -9,6 +9,7 @@ import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ToolId;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -24,7 +25,7 @@ import java.util.Objects;
  */
 public sealed interface AuditEvent
         permits AuditEvent.Decided, AuditEvent.PolicyLoaded, AuditEvent.Declassified, AuditEvent.ResultWithheld,
-                AuditEvent.ApprovalDecided {
+                AuditEvent.ApprovalDecided, AuditEvent.ApprovalRecorded, AuditEvent.SuperAdminBurst {
 
     /**
      * When it happened.
@@ -142,6 +143,54 @@ public sealed interface AuditEvent
             }
             requireNonBlank(decidedBy, "decidedBy");
             requireNonBlank(reason, "reason");
+        }
+    }
+
+    /**
+     * An approval was recorded, and the call still waits for another: a super admin's approval under
+     * {@code superAdminConfirmation}.
+     *
+     * @param time       when
+     * @param approvalId the call's approval ID
+     * @param sessionId  its session
+     * @param agentId    the agent that made it
+     * @param tool       the tool it calls
+     * @param decidedBy  the approver's ID
+     * @param access     the access they approved under
+     * @param comment    their justification
+     */
+    record ApprovalRecorded(Instant time, String approvalId, String sessionId, String agentId, ToolId tool,
+                            String decidedBy, ApprovalAccess access, String comment) implements AuditEvent {
+
+        /** Requires every component. */
+        public ApprovalRecorded {
+            Objects.requireNonNull(time, "time");
+            requireNonBlank(approvalId, "approvalId");
+            requireNonBlank(sessionId, "sessionId");
+            requireNonBlank(agentId, "agentId");
+            Objects.requireNonNull(tool, "tool");
+            requireNonBlank(decidedBy, "decidedBy");
+            Objects.requireNonNull(access, "access");
+            requireNonBlank(comment, "comment");
+        }
+    }
+
+    /**
+     * Super admins made more decisions in a short time than is normal: worth paging someone, since a
+     * stolen super admin account tends to act fast.
+     *
+     * @param time        when the burst was noticed
+     * @param decisions   how many super admin decisions the window held
+     * @param window      the window
+     * @param lastBy      who made the decision that crossed the threshold
+     */
+    record SuperAdminBurst(Instant time, int decisions, Duration window, String lastBy) implements AuditEvent {
+
+        /** Requires every component. */
+        public SuperAdminBurst {
+            Objects.requireNonNull(time, "time");
+            Objects.requireNonNull(window, "window");
+            requireNonBlank(lastBy, "lastBy");
         }
     }
 

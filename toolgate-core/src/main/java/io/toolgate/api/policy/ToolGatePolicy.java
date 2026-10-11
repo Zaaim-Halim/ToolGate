@@ -63,6 +63,7 @@ public final class ToolGatePolicy {
     private final Map<ToolId, String> pins;
     private final Set<String> superAdmins;
     private final Set<String> auditors;
+    private final boolean superAdminConfirmation;
     private final String hash;
 
     private ToolGatePolicy(Builder builder) {
@@ -75,7 +76,12 @@ public final class ToolGatePolicy {
         this.pins = Map.copyOf(builder.pins);
         this.superAdmins = Set.copyOf(builder.superAdmins);
         this.auditors = Set.copyOf(builder.auditors);
-        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, tools, pins, agents, superAdmins, auditors);
+        this.superAdminConfirmation = builder.superAdminConfirmation;
+        if (superAdminConfirmation && superAdmins.isEmpty()) {
+            throw new InvalidPolicyException("superAdminConfirmation needs superAdmins");
+        }
+        this.hash = PolicyHash.of(mode, ruleModes, denialBudget, mcpServers, tools, pins, agents, superAdmins, auditors,
+                superAdminConfirmation);
     }
 
     /**
@@ -219,6 +225,15 @@ public final class ToolGatePolicy {
         return auditors;
     }
 
+    /**
+     * Whether a super admin's approval needs a second person before the call is released.
+     *
+     * @return {@code true} if it does
+     */
+    public boolean superAdminConfirmation() {
+        return superAdminConfirmation;
+    }
+
     /** Collects a policy and validates all of it in {@link #build}. */
     public static final class Builder {
 
@@ -231,8 +246,22 @@ public final class ToolGatePolicy {
         private final Map<ToolId, String> pins = new LinkedHashMap<>();
         private Set<String> superAdmins = Set.of();
         private Set<String> auditors = Set.of();
+        private boolean superAdminConfirmation;
 
         private Builder() {}
+
+        /**
+         * Break-glass: a super admin's approval alone releases nothing; the call waits for a second
+         * person, another super admin or a reviewer of the call's tenant. One stolen super admin
+         * account then cannot release anything by itself. A single super admin may still reject or
+         * cancel, since stopping an action is safe.
+         *
+         * @return this builder
+         */
+        public Builder superAdminConfirmation() {
+            this.superAdminConfirmation = true;
+            return this;
+        }
 
         /**
          * Names the roles of super admins, who may see and decide every deferred call, of every agent
