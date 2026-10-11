@@ -70,7 +70,11 @@ users up, so a role revoked since then counts.
 - **Identity of the tool run.** An approved tool runs without the reviewer's Spring Security identity:
   the reviewer's authorities never leak into it. The call's own principal is in its tool context.
 - **Text only.** The console renders every value as text: arguments come from the model, and the model
-  may be steered by an attacker. Values that could look like something else carry a warning.
+  may be steered by an attacker. Characters that could make a value look like something else, such as a
+  Cyrillic letter in an email address or an invisible character, are marked where they stand.
+- **Readable on purpose.** Values are set in Atkinson Hyperlegible Mono, a face designed so that `1`, `l`
+  and `I`, or `0` and `O`, cannot be confused. The fonts ship in the jar (SIL Open Font License, license
+  files alongside them); nothing is loaded from elsewhere.
 - **Digest.** An approval carries the digest of what the reviewer saw, so a changed view is refused
   rather than approved.
 - **Blocking work off event loops.** On WebFlux, every call runs on Reactor's bounded elastic

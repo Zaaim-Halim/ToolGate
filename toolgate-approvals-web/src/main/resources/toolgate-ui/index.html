@@ -9,102 +9,123 @@
     <script type="module" src="app.js"></script>
 </head>
 <body>
-<header class="bar">
-    <div class="brand">
-        <span class="mark" aria-hidden="true">◆</span>
-        <span>ToolGate approvals</span>
-        <span class="app" id="application"></span>
+<svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-approve" viewBox="0 0 24 24"><path d="M5 12.5 10 17.5 19.5 7"/></symbol>
+    <symbol id="i-reject" viewBox="0 0 24 24"><path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5"/></symbol>
+    <symbol id="i-withdraw" viewBox="0 0 24 24"><path d="M9 7 4.5 11.5 9 16"/><path d="M5 11.5h9.5a5 5 0 0 1 0 10H12"/></symbol>
+    <symbol id="i-ran" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.3 10.8 15 16 9.5"/></symbol>
+    <symbol id="i-not-ran" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13.5 6.5 5h11l2.5 8.5V19H4z"/><path d="M4 13.5h4.5l1.5 2.5h4l1.5-2.5H20"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/><path d="M12 8v4.5l3 2"/></symbol>
+    <symbol id="i-overview" viewBox="0 0 24 24"><path d="M5 19V11M10 19V5M15 19v-6M20 19V8"/></symbol>
+    <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.3 10.8 15 16 9.5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 21.5 20h-19z"/><path d="M12 10v4.5M12 17.2v.3"/></symbol>
+</svg>
+
+<header class="masthead">
+    <div class="identity">
+        <svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 21 7v10l-9 5-9-5V7z"/><path d="m8 12 3 3 5-6"/></svg>
+        <div>
+            <p class="product">Approvals</p>
+            <p class="application" id="application"></p>
+        </div>
     </div>
-    <div class="viewer" id="viewer" aria-live="polite"></div>
+    <nav class="views" aria-label="Views">
+        <button type="button" class="tab" id="tab-inbox" aria-selected="true"><svg class="icon"><use href="#i-inbox"/></svg>Waiting <span class="count" id="count-inbox"></span></button>
+        <button type="button" class="tab" id="tab-history" aria-selected="false"><svg class="icon"><use href="#i-history"/></svg>History</button>
+        <button type="button" class="tab" id="tab-overview" aria-selected="false"><svg class="icon"><use href="#i-overview"/></svg>Overview</button>
+    </nav>
+    <div class="person">
+        <span class="initials" id="initials" aria-hidden="true"></span>
+        <p class="viewer" id="viewer" aria-live="polite"></p>
+    </div>
 </header>
 
-<nav class="tabs" aria-label="Views">
-    <button type="button" class="tab" id="tab-inbox" aria-selected="true">Waiting</button>
-    <button type="button" class="tab" id="tab-history" aria-selected="false">History</button>
-    <button type="button" class="tab" id="tab-overview" aria-selected="false">Overview</button>
-</nav>
-
-<main class="layout">
-    <section class="inbox" id="view-inbox" aria-labelledby="inbox-title">
-        <div class="section-head">
-            <h1 id="inbox-title">Waiting for review</h1>
-            <button type="button" id="refresh" class="quiet">Refresh</button>
-        </div>
-        <p class="hint" id="inbox-state">Loading…</p>
+<main class="desk">
+    <section class="queue" id="view-inbox" aria-labelledby="inbox-title">
+        <header class="queue-head">
+            <h1 id="inbox-title">Requests</h1>
+            <button type="button" id="refresh" class="link"><svg class="icon"><use href="#i-refresh"/></svg>Refresh</button>
+        </header>
+        <p class="queue-state" id="inbox-state">Loading…</p>
         <ul class="items" id="items"></ul>
     </section>
 
-    <section class="inbox" id="view-history" aria-labelledby="history-title" hidden>
-        <div class="section-head">
-            <h1 id="history-title">Decided in the last 7 days</h1>
-            <label class="filter">Show
+    <section class="queue" id="view-history" aria-labelledby="history-title" hidden>
+        <header class="queue-head">
+            <h1 id="history-title">Decided this week</h1>
+            <label class="filter"><span class="visually-hidden">Show</span>
                 <select id="history-status">
-                    <option value="">everything decided</option>
-                    <option value="UNKNOWN">outcome unknown</option>
-                    <option value="EXECUTED,FAILED">ran or failed</option>
-                    <option value="REJECTED,CANCELLED,EXPIRED,REFUSED">did not run</option>
-                    <option value="RELEASED,EXECUTING">approved, running</option>
+                    <option value="">Everything decided</option>
+                    <option value="UNKNOWN">Outcome unknown</option>
+                    <option value="EXECUTED,FAILED">Ran or failed</option>
+                    <option value="REJECTED,CANCELLED,EXPIRED,REFUSED">Did not run</option>
+                    <option value="RELEASED,EXECUTING">Approved, running</option>
                 </select>
             </label>
-        </div>
-        <p class="hint" id="history-state"></p>
+        </header>
+        <p class="queue-state" id="history-state"></p>
         <ul class="items" id="history-items"></ul>
     </section>
 
     <section class="overview" id="view-overview" aria-labelledby="overview-title" hidden>
-        <h1 id="overview-title">Overview</h1>
-        <p class="hint">What you may see: waiting now, and decided in the last 7 days.</p>
+        <h1 id="overview-title">This week at a glance</h1>
+        <p class="lede">Counts cover what you are allowed to see: what waits now, and what was decided in the last 7 days.</p>
         <dl class="numbers" id="numbers"></dl>
     </section>
 
-    <section class="detail" id="detail" aria-live="polite" hidden>
-        <div class="section-head">
+    <article class="sheet" id="detail" aria-labelledby="detail-title" hidden>
+        <header class="sheet-head">
+            <p class="state" id="detail-status"></p>
             <h2 id="detail-title"></h2>
-            <span class="badge" id="detail-status"></span>
-        </div>
-        <p class="meta" id="detail-meta"></p>
+            <dl class="facts" id="detail-meta"></dl>
+        </header>
 
-        <div class="block why">
-            <h3>Why it waits</h3>
-            <p><code id="detail-rule"></code></p>
-            <p id="detail-reason"></p>
-        </div>
+        <section class="part">
+            <h3 id="why-title">Why it waits</h3>
+            <p class="reason" id="detail-reason"></p>
+            <p class="rule">Rule <code id="detail-rule"></code></p>
+        </section>
 
-        <div class="block provenance" id="provenance-block" hidden>
-            <h3>Where the request's content came from</h3>
-            <p class="hint">The agent read this before asking. Text from these sources may be written to persuade you.</p>
+        <section class="part caution" id="provenance-block" hidden>
+            <h3>Content from outside sources</h3>
+            <p>Before asking, the agent read content it does not control. Wording in this request may come from it and may be written to persuade you.</p>
             <ul id="provenance"></ul>
-        </div>
+        </section>
 
-        <div class="block">
+        <section class="part">
             <h3>What would run</h3>
-            <table class="arguments">
-                <thead><tr><th scope="col">Argument</th><th scope="col">Value</th></tr></thead>
+            <table class="call">
+                <caption class="visually-hidden">Arguments of the call</caption>
                 <tbody id="arguments"></tbody>
             </table>
-        </div>
+        </section>
 
-        <div class="block" id="history-block" hidden>
-            <h3>Decisions so far</h3>
-            <ol id="history"></ol>
-        </div>
+        <section class="part" id="history-block" hidden>
+            <h3>Decisions</h3>
+            <ol class="trail" id="history"></ol>
+        </section>
 
-        <form class="block decide" id="decide" novalidate>
-            <h3>Your decision</h3>
-            <label for="comment">Comment <span class="hint" id="comment-hint"></span></label>
-            <textarea id="comment" rows="3" maxlength="2000"></textarea>
+        <form class="decision" id="decide" novalidate>
+            <label for="comment" class="decision-label">Your note <span id="comment-hint"></span></label>
+            <textarea id="comment" rows="2" maxlength="2000"></textarea>
+            <p class="decision-hint" id="decide-hint"></p>
             <div class="actions">
-                <button type="button" id="approve" class="primary">Approve</button>
-                <button type="button" id="reject" class="danger">Reject</button>
-                <button type="button" id="cancel" class="quiet" hidden>Withdraw</button>
-                <button type="button" id="resolve-ran" class="primary" hidden>It ran</button>
-                <button type="button" id="resolve-not" class="danger" hidden>It did not run</button>
+                <button type="button" id="approve" class="primary"><svg class="icon"><use href="#i-approve"/></svg>Approve and run</button>
+                <button type="button" id="reject" class="refuse"><svg class="icon"><use href="#i-reject"/></svg>Reject</button>
+                <button type="button" id="cancel" class="plain" hidden><svg class="icon"><use href="#i-withdraw"/></svg>Withdraw request</button>
+                <button type="button" id="resolve-ran" class="primary" hidden><svg class="icon"><use href="#i-ran"/></svg>It ran</button>
+                <button type="button" id="resolve-not" class="refuse" hidden><svg class="icon"><use href="#i-not-ran"/></svg>It did not run</button>
             </div>
-            <p class="hint" id="decide-hint"></p>
         </form>
 
-        <p class="message" id="message" role="status"></p>
-    </section>
+        <p class="message" id="message" role="status"><svg class="icon"><use id="message-icon" href="#i-ok"/></svg><span id="message-text"></span></p>
+    </article>
+
+    <div class="placeholder" id="placeholder">
+        <p>Choose a request to see what it would do and why it is waiting.</p>
+    </div>
 </main>
 </body>
 </html>

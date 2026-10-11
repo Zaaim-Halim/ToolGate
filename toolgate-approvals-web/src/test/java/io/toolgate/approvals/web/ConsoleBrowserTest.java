@@ -38,7 +38,8 @@ import org.springframework.boot.test.web.server.LocalServerPort;
                 "spring.ai.openai.api-key=test"})
 class ConsoleBrowserTest {
 
-    private static final String SCRIPT_PAYLOAD = "<img src=x onerror=\"window.__pwned=1\"><script>window.__pwned=2</script>";
+    private static final String SCRIPT_PAYLOAD = "<img src=x onerror=\"window.__pwned=1\"><script>window.__pwned=2</script>"
+            + " pay bi11ing@p\u0430ypal.com";
 
     @LocalServerPort
     private int port;
@@ -93,6 +94,19 @@ class ConsoleBrowserTest {
         // Kept for people reviewing a change to the console.
         page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console.png")).setFullPage(true));
         assertThat(page.locator("#arguments img")).hasCount(0);
+        assertThat(page.locator("#arguments mark.suspect")).hasCount(1);
+        assertThat(page.locator("#arguments mark.suspect")).hasText("\u0430");
+        assertThat(page.locator("#arguments .notes")).containsText("Cyrillic letter");
+
+        BrowserContext dark = browser.newContext(new Browser.NewContextOptions().setHttpCredentials("lena", "lena-pass")
+                .setBaseURL("http://localhost:" + port).setColorScheme(com.microsoft.playwright.options.ColorScheme.DARK));
+        Page darkPage = dark.newPage();
+        darkPage.navigate("/toolgate/approvals");
+        darkPage.locator("button.item").filter(new com.microsoft.playwright.Locator.FilterOptions().setHasText("Refund an order"))
+                .first().click();
+        darkPage.locator("#arguments mark.suspect").waitFor();
+        darkPage.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console-dark.png")).setFullPage(true));
+        dark.close();
         assertThat(approvalId).isNotBlank();
     }
 
@@ -109,7 +123,7 @@ class ConsoleBrowserTest {
         page.locator("#tab-history").click();
         page.locator("#history-status").selectOption("UNKNOWN");
         page.locator("#history-items button.item").first().click();
-        assertThat(page.locator("#detail-status")).hasText("outcome unknown");
+        assertThat(page.locator("#detail-status")).containsText("outcome unknown");
         page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console-history.png")).setFullPage(true));
         page.locator("#comment").fill("the provider shows the refund");
         page.locator("#resolve-ran").click();
@@ -135,5 +149,15 @@ class ConsoleBrowserTest {
         assertThat(page.locator("#message")).containsText("Approved");
         assertThat(Fixtures.REFUNDS).containsExactly("7731:480");
         assertThat(violations).as("the page breaks none of its own Content Security Policy").isEmpty();
+
+        BrowserContext phone = browser.newContext(new Browser.NewContextOptions().setHttpCredentials("lena", "lena-pass")
+                .setBaseURL("http://localhost:" + port).setViewportSize(390, 844));
+        Page phonePage = phone.newPage();
+        phonePage.navigate("/toolgate/approvals");
+        phonePage.locator("#items").waitFor();
+        phonePage.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console-phone.png")).setFullPage(true));
+        org.assertj.core.api.Assertions.assertThat(phonePage.evaluate("() => document.documentElement.scrollWidth <= 390"))
+                .as("no sideways scrolling on a phone").isEqualTo(true);
+        phone.close();
     }
 }
