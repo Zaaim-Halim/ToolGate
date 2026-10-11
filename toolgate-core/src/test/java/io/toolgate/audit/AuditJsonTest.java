@@ -2,6 +2,8 @@ package io.toolgate.audit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.toolgate.api.ApprovalAccess;
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
@@ -42,6 +44,15 @@ class AuditJsonTest {
                 "decision":"downgrade","rule":"sendEmail.whenTainted","downgradedTo":"local/draftEmail",\
                 "computed":"downgrade","computedRule":"sendEmail.whenTainted","mode":"enforce",\
                 "budget":{"toolCalls":4,"limit":200},"policyHash":"sha256:4c2e"}""");
+    }
+
+    /** Sinks outside core, such as the JDBC audit table, get the same line as the log. */
+    @Test
+    void anEventGivesItsOwnLogLine() {
+        var event = new AuditEvent.ApprovalDecided(TIME, "a-1", "s1", "refund-agent", ToolId.local("issueRefund"),
+                ApprovalStatus.REJECTED, "lena", ApprovalAccess.REVIEWER, "not this order");
+
+        assertThat(event.toJson()).isEqualTo(AuditJson.format(event)).startsWith("{\"event\":\"toolgate.rejected\"");
     }
 
     @Test

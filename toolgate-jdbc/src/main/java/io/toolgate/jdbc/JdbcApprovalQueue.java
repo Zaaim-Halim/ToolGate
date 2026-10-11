@@ -308,6 +308,42 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
         }
     }
 
+    /**
+     * Deletes calls that are over, deferred before {@code cutoff}, with their decisions: executed, failed,
+     * refused, rejected, expired or cancelled. Calls still waiting, approved, running or with an unknown
+     * outcome are kept, whatever their age, since someone still has to act on them. Run it on a schedule;
+     * Spring applications can set {@code toolgate.jdbc.retention} instead.
+     *
+     * @param cutoff calls deferred before this instant are deleted, once they are over
+     * @return how many calls were deleted
+     */
+    public int purgeBefore(Instant cutoff) {
+        Objects.requireNonNull(cutoff, "cutoff");
+        requireSchema();
+        String over = "status IN ('EXECUTED', 'FAILED', 'REFUSED', 'REJECTED', 'EXPIRED', 'CANCELLED') AND deferred_at < ?";
+        try (Connection connection = dataSource.getConnection()) {
+            boolean autoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try (PreparedStatement decisions = connection.prepareStatement("DELETE FROM " + decisionTable
+                         + " WHERE approval_id IN (SELECT approval_id FROM " + table + " WHERE " + over + ")");
+                 PreparedStatement calls = connection.prepareStatement("DELETE FROM " + table + " WHERE " + over)) {
+                decisions.setLong(1, micros(cutoff));
+                decisions.executeUpdate();
+                calls.setLong(1, micros(cutoff));
+                int purged = calls.executeUpdate();
+                connection.commit();
+                return purged;
+            } catch (SQLException | RuntimeException failure) {
+                connection.rollback();
+                throw failure;
+            } finally {
+                connection.setAutoCommit(autoCommit);
+            }
+        } catch (SQLException failure) {
+            throw new JdbcStoreException("could not purge finished calls", failure);
+        }
+    }
+
     private boolean update(Connection connection, String sql, PendingCall expected, PendingCall next) throws SQLException {
         try (PreparedStatement update = connection.prepareStatement(sql)) {
             update.setString(1, next.status().name());

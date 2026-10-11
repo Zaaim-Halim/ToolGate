@@ -22,6 +22,7 @@ import io.toolgate.spi.ApprovalListener;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.DecisionObserver;
+import io.toolgate.telemetry.MicrometerApprovalMetrics;
 import io.toolgate.telemetry.MicrometerAuditSink;
 import io.toolgate.telemetry.MicrometerCheckTimer;
 import io.toolgate.telemetry.OpenTelemetryDecisions;
@@ -91,6 +92,7 @@ class AuditWiringTest {
             assertThat(beans.checks).hasSize(1);
             assertThat(context).doesNotHaveBean(MicrometerAuditSink.class)
                     .doesNotHaveBean(MicrometerCheckTimer.class)
+                    .doesNotHaveBean(MicrometerApprovalMetrics.class)
                     .doesNotHaveBean(OpenTelemetryDecisions.class);
         });
     }
@@ -148,6 +150,10 @@ class AuditWiringTest {
                             .counter().count()).isEqualTo(1);
                     assertThat(registry.get(MicrometerCheckTimer.CHECK_DURATION).timer().count()).isEqualTo(1);
                     assertThat(registry.get("toolgate.audit.dropped").functionCounter().count()).isZero();
+                    // The approval gauges read the same queue as the gate.
+                    context.getBean(MicrometerApprovalMetrics.class).refresh();
+                    assertThat(registry.get(MicrometerApprovalMetrics.OLDEST).gauge().value()).isZero();
+                    assertThat(registry.get(MicrometerApprovalMetrics.UNKNOWN).gauge().value()).isZero();
                 });
     }
 

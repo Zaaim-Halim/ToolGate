@@ -18,12 +18,13 @@ Start with the [guide](guide/README.md): ToolGate in monitor mode on Spring AI o
 - **Applies the decision**: allow, deny, downgrade to a safe tool (a draft instead of a send), defer for a
   person to approve, or end the run. Monitor mode records what it would do without blocking anything.
 - **Records every decision** as a JSON line on the `toolgate.audit` logger, and optionally to your own
-  sinks, Micrometer and OpenTelemetry ([guide](guide/audit.md)).
+  sinks, a database table with read views, Micrometer (including approval gauges) and OpenTelemetry
+  ([guide](guide/audit.md)).
 - **Approvals people can use**: a deferred call is approved, rejected or withdrawn by reviewers in its own
   tenant, super admins (justified, audited, optionally needing a second person) or the user who asked;
   re-checked when approved; run once under a lease on any instance; and its outcome reaches the agent. A
-  review console and REST API for Spring applications ship as an opt-in module
-  ([policies](guide/policies.md#approvals), [console](guide/approvals-console.md)).
+  review console and REST API for Spring applications ship as an opt-in module, with a graph of how each
+  request came about in its session ([policies](guide/policies.md#approvals), [console](guide/approvals-console.md)).
 
 ## Building
 
@@ -57,7 +58,7 @@ java -jar toolgate-benchmarks/target/benchmarks.jar
 | Module          | Contents                                                                 |
 | --------------- | ------------------------------------------------------------------------ |
 | `toolgate-core` | Policy model, decision engine, validators, session state, approvals, audit events. No runtime dependencies; Micrometer and the OpenTelemetry API are optional, for its telemetry package. |
-| `toolgate-jdbc` | Approval queue and session store in the application's database, through plain JDBC, for applications with more than one instance. Ships DDL for H2, PostgreSQL and MySQL. |
+| `toolgate-jdbc` | Approval queue, session store and audit table in the application's database, through plain JDBC, for applications with more than one instance; stable read views and `ToolGateQueries` for the application's own dashboards; retention. Ships DDL for H2, PostgreSQL and MySQL. |
 | `toolgate-email` | The `emailDomains` rule: recipients parsed with Jakarta Mail, every one checked, and every address form that mail libraries read differently denied. |
 | `toolgate-sql` | The `readOnlySql` rule: a pre-check on JSqlParser that denies anything but one query. It only denies; the database enforces read-only. |
 | `toolgate-safe-jdbc` | `SafeJdbc`, for tool authors: runs a model's query in a read-only transaction on PostgreSQL, MySQL and MariaDB (or as a read-only role elsewhere), with a timeout and limits on what comes back. |

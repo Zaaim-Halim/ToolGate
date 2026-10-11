@@ -9,6 +9,7 @@ import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ToolId;
+import io.toolgate.audit.AuditJson;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
@@ -34,6 +35,17 @@ public sealed interface AuditEvent
      * @return the time, from the gate's clock
      */
     Instant time();
+
+    /**
+     * This event as one line of JSON, exactly as the {@code toolgate.audit} log writes it, for sinks that
+     * store or forward events, such as a database table, a SIEM or a message queue. Arguments are
+     * summarized as in the log; reasons and comments are kept as written, and may quote argument values.
+     *
+     * @return a single line of JSON, without a line break
+     */
+    default String toJson() {
+        return AuditJson.format(this);
+    }
 
     /**
      * A call was checked.

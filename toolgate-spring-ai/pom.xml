@@ -48,6 +48,13 @@
             <artifactId>toolgate-core</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- Optional: only the retention job uses it, and only when the application has it. -->
+        <dependency>
+            <groupId>io.github.zaaim-halim.toolgate</groupId>
+            <artifactId>toolgate-jdbc</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-client-chat</artifactId>
@@ -98,6 +105,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

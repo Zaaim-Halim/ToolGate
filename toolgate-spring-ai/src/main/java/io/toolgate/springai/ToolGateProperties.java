@@ -13,17 +13,40 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *              agent; {@link ToolGateContext} overrides it per request
  * @param audit     where decisions are recorded, under {@code toolgate.audit.*}
  * @param approvals how approved calls are run, under {@code toolgate.approvals.*}
+ * @param jdbc      how long ToolGate's JDBC tables keep rows, under {@code toolgate.jdbc.*}
  */
 @ConfigurationProperties("toolgate")
-public record ToolGateProperties(String agent, @DefaultValue Audit audit, @DefaultValue Approvals approvals) {
+public record ToolGateProperties(String agent, @DefaultValue Audit audit, @DefaultValue Approvals approvals,
+                                 @DefaultValue Jdbc jdbc) {
+
+    /**
+     * Retention for ToolGate's JDBC tables, under {@code toolgate.jdbc.*}. Nothing is deleted unless
+     * {@code retention} is set.
+     *
+     * @param retention        {@code toolgate.jdbc.retention}: how long audit rows and finished approvals are
+     *                         kept, such as {@code 400d}; unset by default, which keeps everything
+     * @param sessionRetention {@code toolgate.jdbc.session-retention}: how long an idle session and its events,
+     *                         which hold real argument values, are kept; defaults to {@code retention}
+     * @param purgeInterval    {@code toolgate.jdbc.purge-interval}: how often to purge; daily by default
+     */
+    public record Jdbc(Duration retention, Duration sessionRetention, @DefaultValue("1d") Duration purgeInterval) {}
 
     /**
      * Settings under {@code toolgate.approvals.*}.
      *
      * @param executor the executor that runs approved calls
      * @param outcome  how the agent learns what became of the calls it asked for
+     * @param metrics  the approval gauges, under {@code toolgate.approvals.metrics.*}
      */
-    public record Approvals(@DefaultValue Executor executor, @DefaultValue Outcome outcome) {}
+    public record Approvals(@DefaultValue Executor executor, @DefaultValue Outcome outcome, @DefaultValue Metrics metrics) {}
+
+    /**
+     * The approval gauges, on with {@code toolgate.audit.micrometer.enabled}.
+     *
+     * @param refresh {@code toolgate.approvals.metrics.refresh}: how often the gauges read the approval queue;
+     *                30 seconds by default
+     */
+    public record Metrics(@DefaultValue("30s") Duration refresh) {}
 
     /**
      * Settings under {@code toolgate.approvals.outcome.*}.

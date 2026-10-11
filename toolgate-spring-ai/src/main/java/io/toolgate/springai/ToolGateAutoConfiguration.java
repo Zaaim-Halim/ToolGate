@@ -13,6 +13,7 @@ import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.spi.SessionStore;
 import io.toolgate.spi.ToolCatalog;
+import io.toolgate.telemetry.MicrometerApprovalMetrics;
 import io.toolgate.telemetry.MicrometerAuditSink;
 import io.toolgate.telemetry.MicrometerCheckTimer;
 import io.toolgate.telemetry.OpenTelemetryDecisions;
@@ -40,7 +41,8 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>Decisions go to the {@code toolgate.audit} log unless {@code toolgate.audit.log.enabled=false}. Micrometer
  * metrics ({@code toolgate.audit.micrometer.enabled=true}) and OpenTelemetry span attributes
- * ({@code toolgate.audit.opentelemetry.enabled=true}) are off until the application turns them on.
+ * ({@code toolgate.audit.opentelemetry.enabled=true}) are off until the application turns them on, and so
+ * is purging old rows from ToolGate's JDBC tables ({@code toolgate.jdbc.retention}).
  *
  * <p>Spring Boot's own {@link ToolCallingManager} and {@link ToolCallbackResolver} are wrapped rather
  * than replaced, so their configuration stays as the application set it, and Spring Boot's
@@ -64,6 +66,18 @@ public class ToolGateAutoConfiguration {
     @ConditionalOnMissingBean
     public ToolCatalog.Mutable toolGateToolCatalog() {
         return ToolCatalog.inMemory();
+    }
+
+    /**
+     * The approval queue, in memory unless the application supplies one, such as a
+     * {@code JdbcApprovalQueue}. A bean, so the approval metrics read the same queue as the gate.
+     *
+     * @return an in-memory queue
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public ApprovalQueue toolGateApprovalQueue() {
+        return ApprovalQueue.inMemory();
     }
 
     /**
@@ -131,7 +145,8 @@ public class ToolGateAutoConfiguration {
 
     /**
      * Micrometer metrics, when the application turns them on: counter {@code toolgate.decisions}, timer
-     * {@code toolgate.check.duration}, and function counter {@code toolgate.audit.dropped} for audit gaps.
+     * {@code toolgate.check.duration}, function counter {@code toolgate.audit.dropped} for audit gaps, and
+     * the {@code toolgate.approvals.*} gauges, counter and timer.
      */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
@@ -153,6 +168,13 @@ public class ToolGateAutoConfiguration {
             return new MicrometerCheckTimer(requireRegistry(registry));
         }
 
+        @Bean(destroyMethod = "close")
+        @ConditionalOnMissingBean
+        MicrometerApprovalMetrics toolGateMicrometerApprovalMetrics(ObjectProvider<MeterRegistry> registry,
+                                                                     ApprovalQueue queue, ToolGateProperties properties) {
+            return new MicrometerApprovalMetrics(requireRegistry(registry), queue, properties.approvals().metrics().refresh());
+        }
+
         // The gate is looked up when the counter is read, never while the registry is being set up: the
         // gate's own sinks need the registry, so binding it eagerly would be a cycle.
         @Bean
@@ -169,6 +191,27 @@ public class ToolGateAutoConfiguration {
                         + " such as Spring Boot's with spring-boot-starter-actuator");
             }
             return available;
+        }
+    }
+
+    /**
+     * Purges ToolGate's JDBC tables on a schedule, when the application has {@code toolgate-jdbc} and sets
+     * {@code toolgate.jdbc.retention}.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "io.toolgate.jdbc.JdbcAuditSink")
+    @ConditionalOnProperty(prefix = "toolgate.jdbc", name = "retention")
+    static class JdbcRetention {
+
+        // Stores are looked up at each purge, by their runtime type: a JdbcApprovalQueue bean is often
+        // declared as an ApprovalQueue, which a lookup by the JDBC type would miss.
+        @Bean
+        @ConditionalOnMissingBean
+        ToolGateJdbcRetention toolGateJdbcRetention(ObjectProvider<AuditSink> sinks, ObjectProvider<ApprovalQueue> queues,
+                                                    ObjectProvider<SessionStore> sessions, ObjectProvider<Clock> clock,
+                                                    ToolGateProperties properties) {
+            return new ToolGateJdbcRetention(() -> sinks.orderedStream().toList(), () -> queues.orderedStream().toList(),
+                    () -> sessions.orderedStream().toList(), properties.jdbc(), clock.getIfAvailable(Clock::systemUTC));
         }
     }
 
