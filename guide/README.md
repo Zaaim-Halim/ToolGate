@@ -23,3 +23,7 @@ Then:
 - [Releasing](releasing.md): publishing to Maven Central.
 
 Requires Java 21. Artifacts are under the group `io.github.zaaim-halim.toolgate`.
+
+**Before the first release**, nothing is on Maven Central. Clone the repository and run
+`./mvnw install -DskipTests`, which puts version `0.1.0-SNAPSHOT` in your local Maven repository, and use
+that version wherever a guide says `0.1.0`.

@@ -1,12 +1,14 @@
 # ToolGate
 
 ToolGate is a Java library that decides, outside the model, whether each tool call an AI agent
-makes is allowed, and records every decision with its reason. It targets Spring AI, LangChain4j
-and Quarkus applications on Java 21 or later.
+makes is allowed, and records every decision with its reason. It targets Spring AI and LangChain4j
+applications on Java 21 or later.
 
 The model proposes; ToolGate decides.
 
-> **Status:** early development. Nothing is published yet and every API may change.
+> **Status:** early development. Nothing is published to Maven Central yet and every API may change.
+> To try it now, install it into your local Maven repository with `./mvnw install -DskipTests` and use
+> version `0.1.0-SNAPSHOT` wherever the guides say `0.1.0`.
 
 Start with the [guide](guide/README.md): ToolGate in monitor mode on Spring AI or LangChain4j in a few minutes.
 

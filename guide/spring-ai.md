@@ -56,7 +56,9 @@ memory is a session of its own, since the model sees nothing from earlier reques
 
 Inject `ChatClient.Builder`; its clients are gated. A client built by hand with
 `ChatClient.create(model)` is not: use `ToolGateChatClients.builder(model)` instead. Tool beans are
-guarded either way: a hand-built client that runs one is refused (or logged, in monitor mode).
+guarded either way: a hand-built client that runs one is refused (or logged, in monitor mode). To guard
+them, ToolGate wraps tool beans in a proxy, like `@Transactional` does: call their methods, never read
+their fields from outside.
 
 ## 5. Run and read the log
 
