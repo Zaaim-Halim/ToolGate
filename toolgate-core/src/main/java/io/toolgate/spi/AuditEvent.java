@@ -25,7 +25,8 @@ import java.util.Objects;
  */
 public sealed interface AuditEvent
         permits AuditEvent.Decided, AuditEvent.PolicyLoaded, AuditEvent.Declassified, AuditEvent.ResultWithheld,
-                AuditEvent.ApprovalDecided, AuditEvent.ApprovalRecorded, AuditEvent.SuperAdminBurst {
+                AuditEvent.ApprovalDecided, AuditEvent.ApprovalRecorded, AuditEvent.SuperAdminBurst,
+                AuditEvent.ApprovalViewed, AuditEvent.ApprovalsListed {
 
     /**
      * When it happened.
@@ -172,6 +173,55 @@ public sealed interface AuditEvent
             requireNonBlank(decidedBy, "decidedBy");
             Objects.requireNonNull(access, "access");
             requireNonBlank(comment, "comment");
+        }
+    }
+
+    /**
+     * A super admin or an auditor opened a deferred call, which may be another tenant's: reading its
+     * arguments is worth a trace even when nothing is decided.
+     *
+     * @param time       when
+     * @param approvalId the call's approval ID
+     * @param sessionId  its session
+     * @param agentId    the agent that made it
+     * @param tool       the tool it calls
+     * @param viewer     who opened it
+     * @param access     the access they viewed it under
+     */
+    record ApprovalViewed(Instant time, String approvalId, String sessionId, String agentId, ToolId tool,
+                          String viewer, ApprovalAccess access) implements AuditEvent {
+
+        /** Requires every component. */
+        public ApprovalViewed {
+            Objects.requireNonNull(time, "time");
+            requireNonBlank(approvalId, "approvalId");
+            requireNonBlank(sessionId, "sessionId");
+            requireNonBlank(agentId, "agentId");
+            Objects.requireNonNull(tool, "tool");
+            requireNonBlank(viewer, "viewer");
+            Objects.requireNonNull(access, "access");
+        }
+    }
+
+    /**
+     * A super admin or an auditor listed the deferred calls they may see, which span tenants. One event per
+     * listing, not per call, so a screen that polls does not flood the log.
+     *
+     * @param time   when
+     * @param viewer who listed them
+     * @param access the access they listed under
+     * @param calls  how many calls the list held
+     */
+    record ApprovalsListed(Instant time, String viewer, ApprovalAccess access, int calls) implements AuditEvent {
+
+        /** Requires every component. */
+        public ApprovalsListed {
+            Objects.requireNonNull(time, "time");
+            requireNonBlank(viewer, "viewer");
+            Objects.requireNonNull(access, "access");
+            if (calls < 0) {
+                throw new IllegalArgumentException("calls must not be negative");
+            }
         }
     }
 

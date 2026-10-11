@@ -6,9 +6,13 @@ import static io.toolgate.api.Label.UNTRUSTED_CONTENT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
+import io.toolgate.api.policy.ArgumentRules;
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.InvalidPolicyException;
+import io.toolgate.api.policy.Mask;
+import io.toolgate.api.policy.OnViolation;
 import io.toolgate.api.policy.TaintAction;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.AuditJson;
@@ -248,7 +252,8 @@ class ApprovalTest {
                 notPermitted -> assertThat(notPermitted.reason()).contains("not in the call's tenant"));
         assertThat(gate.reject(approvalId, globexFinance, "not yours")).isFalse();
         assertThat(gate.pending(LENA)).singleElement()
-                .isEqualTo(new ApprovalItem(gate.pending().getFirst(), ApprovalAccess.REVIEWER, true));
+                .extracting(ReviewItem::approvalId, ReviewItem::access, ReviewItem::mayDecide)
+                .containsExactly(gate.pending().getFirst().approvalId(), ApprovalAccess.REVIEWER, true);
     }
 
     @Test
@@ -290,7 +295,8 @@ class ApprovalTest {
         Principal auditor = Principal.user("ada", Tenant.of("operator"), "compliance");
 
         assertThat(gate.pending(auditor)).singleElement()
-                .isEqualTo(new ApprovalItem(gate.pending().getFirst(), ApprovalAccess.AUDITOR, false));
+                .extracting(ReviewItem::approvalId, ReviewItem::access, ReviewItem::mayDecide)
+                .containsExactly(gate.pending().getFirst().approvalId(), ApprovalAccess.AUDITOR, false);
         assertThat(gate.approve(approvalId, auditor, JOB)).isInstanceOfSatisfying(Approval.NotPermitted.class,
                 notPermitted -> assertThat(notPermitted.reason()).contains("not decide"));
         assertThat(gate.reject(approvalId, auditor, "no")).isFalse();
@@ -301,7 +307,8 @@ class ApprovalTest {
         ToolGate headless = gate(refundPolicy(a -> { }));
         deferRefund(headless, MARIA);
         assertThat(headless.pending(MARIA)).singleElement()
-                .isEqualTo(new ApprovalItem(headless.pending().getFirst(), ApprovalAccess.REQUESTER, false));
+                .extracting(ReviewItem::approvalId, ReviewItem::access, ReviewItem::mayDecide)
+                .containsExactly(headless.pending().getFirst().approvalId(), ApprovalAccess.REQUESTER, false);
 
         InMemoryApprovalQueue otherQueue = new InMemoryApprovalQueue();
         ToolGate interactive = ToolGate.builder(refundPolicy(a -> a.interactive(true))).approvalQueue(otherQueue)
@@ -566,6 +573,184 @@ class ApprovalTest {
 
         assertThat(heard).containsExactly("deferred c2", "recorded root", "decided RELEASED", "finished EXECUTED",
                 "deferred c3", "burst", "decided REJECTED");
+    }
+
+    /** Without a review view, what the policy checks is shown, since it is why the call waits; the rest is masked. */
+    @Test
+    void byDefaultArgumentsWithRulesAreShownAndOthersMasked() {
+        ToolGatePolicy policy = refundPolicy(a -> a.rule("issueRefund.amount", ArgumentRules.atMost("10000")));
+        ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy, "order")).approvalQueue(queue)
+                .sessionStore(sessions).clock(clock).noDefaultLog().build();
+        String approvalId = deferRefund(gate, JOB);
+
+        ReviewItem item = gate.reviewItem(approvalId, LENA).orElseThrow();
+
+        assertThat(item.arguments()).extracting(ReviewArgument::name, ReviewArgument::display, ReviewArgument::visibility)
+                .containsExactlyInAnyOrder(tuple("amount", "480", ReviewArgument.Visibility.SHOWN),
+                        tuple("order", "••••", ReviewArgument.Visibility.MASKED));
+        assertThat(item.title()).isEqualTo("issueRefund");
+    }
+
+    @Test
+    void aReviewViewShowsMasksAndHidesAsThePolicySays() {
+        ToolGate gate = gate(refundPolicy(a -> a.review("issueRefund", r -> r.title("Refund an order")
+                .show("order").mask("amount", Mask.last(2)))));
+        String approvalId = deferRefund(gate, JOB);
+
+        ReviewItem item = gate.reviewItem(approvalId, LENA).orElseThrow();
+
+        assertThat(item.title()).isEqualTo("Refund an order");
+        assertThat(item.arguments()).extracting(ReviewArgument::name, ReviewArgument::display)
+                .containsExactlyInAnyOrder(tuple("order", "7731"), tuple("amount", "•••• 80"));
+        assertThat(item.deferralRule()).isEqualTo(BuiltInRules.TAINT_IRREVERSIBLE);
+        assertThat(item.access()).isEqualTo(ApprovalAccess.REVIEWER);
+        assertThat(item.mayDecide()).isTrue();
+    }
+
+    @Test
+    void aHiddenArgumentShowsNothing() {
+        ToolGate gate = gate(refundPolicy(a -> a.review("issueRefund", r -> r.hide("amount").show("order"))));
+        String approvalId = deferRefund(gate, JOB);
+
+        assertThat(gate.reviewItem(approvalId, LENA).orElseThrow().arguments())
+                .filteredOn(argument -> argument.name().equals("amount")).singleElement()
+                .satisfies(amount -> {
+                    assertThat(amount.display()).isEmpty();
+                    assertThat(amount.visibility()).isEqualTo(ReviewArgument.Visibility.HIDDEN);
+                });
+    }
+
+    /** The defence against approval phishing: the reviewer sees what fed the request. */
+    @Test
+    void theReviewerSeesWhereTheSessionsTaintCameFrom() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+
+        assertThat(gate.reviewItem(approvalId, LENA).orElseThrow().provenance()).singleElement()
+                .isEqualTo(new Provenance(Label.UNTRUSTED_CONTENT, ToolId.local("readReturnRequest"), "c2-read"));
+    }
+
+    @Test
+    void anApprovalIsBoundToWhatTheReviewerSaw() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(gate, JOB);
+        String digest = gate.reviewItem(approvalId, LENA).orElseThrow().digest();
+
+        assertThat(gate.approve(approvalId, LENA, JOB, null, "sha256:" + "0".repeat(64)))
+                .isInstanceOfSatisfying(Approval.NotPermitted.class,
+                        notPermitted -> assertThat(notPermitted.reason()).contains("reload"));
+        assertThat(gate.approve(approvalId, LENA, JOB, null, digest)).isInstanceOf(Approval.Released.class);
+    }
+
+    /** A redeployed policy that shows the call differently invalidates what a reviewer saw before. */
+    @Test
+    void aChangedReviewViewChangesTheDigest() {
+        ToolGate before = gate(refundPolicy(a -> { }));
+        String approvalId = deferRefund(before, JOB);
+        String seen = before.reviewItem(approvalId, LENA).orElseThrow().digest();
+
+        ToolGate after = gate(refundPolicy(a -> a.review("issueRefund", r -> r.show("order", "amount"))));
+
+        assertThat(after.reviewItem(approvalId, LENA).orElseThrow().digest()).isNotEqualTo(seen);
+        assertThat(after.approve(approvalId, LENA, JOB, null, seen)).isInstanceOf(Approval.NotPermitted.class);
+    }
+
+    @Test
+    void aSuperAdminsOrAuditorsViewIsAuditedAndAReviewersIsNot() {
+        ToolGatePolicy policy = refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin").auditors("compliance"));
+        try (ToolGate gate = gate(policy)) {
+            String approvalId = deferRefund(gate, JOB);
+            gate.reviewItem(approvalId, LENA);
+            gate.reviewItem(approvalId, ROOT);
+            gate.reviewItem(approvalId, Principal.user("ada", Tenant.of("operator"), "compliance"));
+            assertThat(gate.reviewItem(approvalId, Principal.user("omar", Tenant.of("acme"), "support"))).isEmpty();
+        }
+
+        assertThat(events).filteredOn(AuditEvent.ApprovalViewed.class::isInstance)
+                .extracting(event -> ((AuditEvent.ApprovalViewed) event).viewer()).containsExactly("root", "ada");
+    }
+
+    /** The inbox is what a screen shows first; it must not show what the detail view masks. */
+    @Test
+    void theInboxIsMaskedLikeTheDetailView() {
+        ToolGate gate = gate(refundPolicy(a -> a.review("issueRefund", r -> r.show("order").mask("amount", Mask.full()))));
+        String approvalId = deferRefund(gate, JOB);
+
+        assertThat(gate.pending(LENA)).singleElement()
+                .isEqualTo(gate.reviewItem(approvalId, LENA).orElseThrow())
+                .satisfies(item -> assertThat(item.arguments()).extracting(ReviewArgument::name, ReviewArgument::display)
+                        .containsExactlyInAnyOrder(tuple("order", "7731"), tuple("amount", "••••")));
+    }
+
+    @Test
+    void aSuperAdminsListingIsAuditedOnceAndAReviewersIsNot() {
+        try (ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")))) {
+            deferRefund(gate, JOB, "c2");
+            deferRefund(gate, JOB, "c3");
+            gate.pending(LENA);
+            assertThat(gate.pending(ROOT)).hasSize(2);
+        }
+
+        assertThat(events).filteredOn(AuditEvent.ApprovalsListed.class::isInstance).singleElement().satisfies(event -> {
+            assertThat((AuditEvent.ApprovalsListed) event).isEqualTo(new AuditEvent.ApprovalsListed(clock.instant(), "root",
+                    ApprovalAccess.SUPER_ADMIN, 2));
+            assertThat(AuditJson.format(event)).contains("\"event\":\"toolgate.approvals.listed\"");
+        });
+    }
+
+    /** A redeploy that drops the agent leaves its waiting calls viewable, fully masked, and unreleasable. */
+    @Test
+    void aCallWhoseAgentWasRemovedIsMaskedAndRefusedRatherThanBroken() {
+        ToolGate before = gate(refundPolicy(a -> a.review("issueRefund", r -> r.show("order", "amount")),
+                p -> p.superAdmins("toolgate-admin")));
+        String approvalId = deferRefund(before, JOB);
+        ToolGate after = gate(ToolGatePolicy.builder().superAdmins("toolgate-admin")
+                .agent("other-agent", a -> a.allow("ping")).build());
+
+        ReviewItem item = after.reviewItem(approvalId, ROOT).orElseThrow();
+
+        assertThat(item.arguments()).extracting(ReviewArgument::visibility).containsOnly(ReviewArgument.Visibility.MASKED);
+        assertThat(item.title()).isEqualTo("issueRefund");
+        assertThat(after.approve(approvalId, ROOT, JOB, "clearing the queue", item.digest()))
+                .isInstanceOfSatisfying(Approval.Refused.class,
+                        refused -> assertThat(refused.reason()).contains(BuiltInRules.AGENT_KNOWN));
+    }
+
+    /** "480 is above 200" would give away an amount the view masks. */
+    @Test
+    void aDeferralReasonThatQuotesAMaskedArgumentIsWithheld() {
+        ToolGatePolicy masked = numericRefundPolicy(r -> r.show("order").mask("amount", Mask.full()));
+        ToolGatePolicy shown = numericRefundPolicy(r -> r.show("order", "amount"));
+
+        assertThat(numericReview(masked).deferralReason()).contains("withheld").doesNotContain("480");
+        assertThat(numericReview(shown).deferralReason()).contains("480");
+    }
+
+    private ToolGatePolicy numericRefundPolicy(Consumer<ToolGatePolicy.ReviewBuilder> view) {
+        return ToolGatePolicy.builder()
+                .agent("refund-agent", a -> a.allow("issueRefund").reviewers("finance")
+                        .rule("issueRefund.amount", ArgumentRules.atMost("200").otherwise(OnViolation.DEFER))
+                        .review("issueRefund", view))
+                .build();
+    }
+
+    private ReviewItem numericReview(ToolGatePolicy policy) {
+        ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy, "order"))
+                .approvalQueue(new InMemoryApprovalQueue()).sessionStore(new InMemorySessionStore()).clock(clock)
+                .noDefaultLog().build();
+        Decision decision = gate.check(call("c1", "issueRefund", JOB,
+                Map.of("order", ArgValue.number(7731), "amount", ArgValue.number(480))));
+        return gate.reviewItem(((Decision.Defer) decision).approvalId(), LENA).orElseThrow();
+    }
+
+    @Test
+    void aReviewViewMustNameAnAllowedToolAndEachArgumentOnce() {
+        assertThatThrownBy(() -> refundPolicy(a -> a.review("wireMoney", r -> r.show("iban"))))
+                .isInstanceOf(InvalidPolicyException.class);
+        assertThatThrownBy(() -> refundPolicy(a -> a.review("issueRefund", r -> r.show("amount").hide("amount"))))
+                .isInstanceOf(InvalidPolicyException.class).hasMessageContaining("more than once");
+        assertThat(refundPolicy(a -> a.review("issueRefund", r -> r.show("order"))).hash())
+                .as("display only").isEqualTo(refundPolicy(a -> { }).hash());
     }
 
     @Test

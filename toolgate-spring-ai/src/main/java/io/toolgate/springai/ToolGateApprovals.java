@@ -1,11 +1,11 @@
 package io.toolgate.springai;
 
 import io.toolgate.api.Approval;
-import io.toolgate.api.ApprovalItem;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Principal;
+import io.toolgate.api.ReviewItem;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolResult;
 import io.toolgate.spi.PendingCall;
@@ -58,12 +58,12 @@ public final class ToolGateApprovals {
 
     /**
      * The calls waiting for review that a viewer may see, oldest first, each saying whether the viewer
-     * may decide it.
+     * may decide it, masked by the policy's review view.
      *
      * @param viewer who is looking, such as the signed-in reviewer
-     * @return the calls, with their arguments; see {@link io.toolgate.api.ToolGate#pending(Principal)}
+     * @return the calls as review items; see {@link io.toolgate.api.ToolGate#pending(Principal)}
      */
-    public List<ApprovalItem> pending(Principal viewer) {
+    public List<ReviewItem> pending(Principal viewer) {
         return gating.get().gate().pending(viewer);
     }
 
@@ -92,13 +92,29 @@ public final class ToolGateApprovals {
      * @throws IllegalArgumentException if no call has that ID, or the principal is not the call's
      */
     public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment) {
+        return approve(approvalId, reviewer, currentPrincipal, comment, null);
+    }
+
+    /**
+     * Approves a deferred call, as {@link #approve(String, Principal, Principal, String)} does, only if
+     * the review screen showed exactly what would be approved; a review screen always passes the digest.
+     *
+     * @param approvalId       the pending call
+     * @param reviewer         who approves
+     * @param currentPrincipal the call's principal as resolved now, so revoked roles count
+     * @param comment          the reviewer's justification; required of a super admin
+     * @param digest           {@link ReviewItem#digest()} of what the reviewer saw; null to skip the check
+     * @return ToolGate's outcome
+     */
+    public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment,
+                            String digest) {
         Gating shared = gating.get();
         Optional<PendingCall> waiting = shared.gate().pending().stream()
                 .filter(pending -> pending.approvalId().equals(approvalId)).findFirst();
         if (waiting.isEmpty()) {
             // Decided, expired or unknown: ToolGate says which, and nothing will run.
             shared.forget(approvalId);
-            return shared.gate().approve(approvalId, reviewer, currentPrincipal, comment);
+            return shared.gate().approve(approvalId, reviewer, currentPrincipal, comment, digest);
         }
         Optional<Gating.Kept> tool = runnable(shared, waiting.get());
         if (tool.isEmpty()) {
@@ -106,11 +122,22 @@ public final class ToolGateApprovals {
                     + " with a request on another instance, or that instance restarted; register the tool as a bean so"
                     + " any instance can run it");
         }
-        Approval approval = shared.gate().approve(approvalId, reviewer, currentPrincipal, comment);
+        Approval approval = shared.gate().approve(approvalId, reviewer, currentPrincipal, comment, digest);
         if (approval instanceof Approval.Released) {
             execute(shared, approvalId, tool.get());
         }
         return approval;
+    }
+
+    /**
+     * One deferred call as a viewer may see it on a review screen; see {@link io.toolgate.api.ToolGate#reviewItem}.
+     *
+     * @param approvalId the call
+     * @param viewer     who is looking
+     * @return the item, or empty if the viewer may not see it
+     */
+    public Optional<ReviewItem> reviewItem(String approvalId, Principal viewer) {
+        return gating.get().gate().reviewItem(approvalId, viewer);
     }
 
     /**

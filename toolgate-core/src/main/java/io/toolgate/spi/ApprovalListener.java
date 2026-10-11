@@ -47,6 +47,20 @@ public interface ApprovalListener {
     default void finished(AuditEvent.ApprovalDecided event) {}
 
     /**
+     * A super admin or an auditor opened a deferred call, which may be another tenant's.
+     *
+     * @param event the view
+     */
+    default void viewed(AuditEvent.ApprovalViewed event) {}
+
+    /**
+     * A super admin or an auditor listed the deferred calls they may see, across tenants.
+     *
+     * @param event the listing
+     */
+    default void listed(AuditEvent.ApprovalsListed event) {}
+
+    /**
      * Super admins made more decisions in a short time than is normal.
      *
      * @param event the burst
@@ -66,6 +80,8 @@ public interface ApprovalListener {
                 case AuditEvent.ApprovalDecided decided -> decided(decided);
                 case AuditEvent.ApprovalRecorded recorded -> recorded(recorded);
                 case AuditEvent.SuperAdminBurst burst -> superAdminBurst(burst);
+                case AuditEvent.ApprovalViewed viewedCall -> viewed(viewedCall);
+                case AuditEvent.ApprovalsListed listing -> listed(listing);
                 default -> {
                     // Not about approvals.
                 }

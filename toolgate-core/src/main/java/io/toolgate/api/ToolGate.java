@@ -138,7 +138,7 @@ public interface ToolGate extends AutoCloseable {
      * this approval. Any denial, a new reason to defer, or a downgrade refuses the release.
      *
      * <p>A call is released at most once: a second approval returns {@link Approval.AlreadyDecided}.
-     * Who may approve, as {@link ApprovalItem#mayDecide()} reports it: a principal with one of the
+     * Who may approve, as {@link ReviewItem#mayDecide()} reports it: a principal with one of the
      * agent's reviewer roles in the call's tenant, or with one of the policy's super admin roles in
      * any tenant, and in either case never their own call; in an interactive agent, the signed-in
      * user confirms their own calls. Anyone else gets {@link Approval.NotPermitted}, and the call
@@ -169,7 +169,25 @@ public interface ToolGate extends AutoCloseable {
      * @throws IllegalArgumentException if no call has that ID, the principal is not the call's, or the
      *                                  comment is blank
      */
-    Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment);
+    default Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment) {
+        return approve(approvalId, reviewer, currentPrincipal, comment, null);
+    }
+
+    /**
+     * Approves a deferred call as {@link #approve(String, Principal, Principal, String)} does, only if
+     * the review screen showed exactly what would now be approved: the digest of the
+     * {@link ReviewItem} the reviewer saw must match. A review screen always passes it.
+     *
+     * @param approvalId       from {@link Decision.Defer#approvalId()}
+     * @param reviewer         who approves
+     * @param currentPrincipal the call's principal as resolved now, so that revoked roles count
+     * @param comment          the reviewer's justification; null for none, which a super admin may not give
+     * @param digest           {@link ReviewItem#digest()} of what the reviewer saw; null to skip the check
+     * @return the outcome; {@link Approval.NotPermitted} if the digest does not match
+     * @throws IllegalArgumentException if no call has that ID, the principal is not the call's, or the
+     *                                  comment is blank
+     */
+    Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment, String digest);
 
     /**
      * Rejects a deferred call. Rejecting needs the same permission as approving, so nobody can
@@ -194,6 +212,18 @@ public interface ToolGate extends AutoCloseable {
     List<PendingCall> pending();
 
     /**
+     * One deferred call as a viewer may see it on a review screen: the action, why it waits, where the
+     * session's taint came from, and its arguments shown, masked or hidden by the policy's review view.
+     * A super admin's or auditor's view is audited.
+     *
+     * @param approvalId the call
+     * @param viewer     who is looking
+     * @return the item, or empty if the viewer may not see the call
+     * @throws IllegalArgumentException if no call has that ID
+     */
+    Optional<ReviewItem> reviewItem(String approvalId, Principal viewer);
+
+    /**
      * Every queued call in a status, of every agent and tenant, oldest first, such as
      * {@link ApprovalStatus#RELEASED} calls waiting for an executor. For executors, operators and the
      * application's own jobs only, like {@link #pending()}.
@@ -204,14 +234,16 @@ public interface ToolGate extends AutoCloseable {
     List<PendingCall> withStatus(ApprovalStatus status);
 
     /**
-     * The calls waiting for review that a viewer may see, oldest first: as a super admin or auditor,
-     * every call; as a reviewer, the calls of agents naming one of their roles, in their tenant; and
-     * their own calls, as the requester. Each says whether the viewer may decide it.
+     * The calls waiting for review that a viewer may see, oldest first, for a review screen's inbox: as a
+     * super admin or auditor, every call; as a reviewer, the calls of agents naming one of their roles, in
+     * their tenant; and their own calls, as the requester. Each is masked by its agent's review view, as
+     * {@link #reviewItem} shows it, and says whether the viewer may decide it. A super admin's or
+     * auditor's listing is audited, once per call of this method.
      *
      * @param viewer who is looking
-     * @return the calls, with their real arguments; empty if the viewer may see none
+     * @return the calls as review items; empty if the viewer may see none
      */
-    List<ApprovalItem> pending(Principal viewer);
+    List<ReviewItem> pending(Principal viewer);
 
     /**
      * Withdraws a deferred call nobody decided yet, such as when the customer changed their mind.

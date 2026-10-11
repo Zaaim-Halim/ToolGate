@@ -526,6 +526,7 @@ public final class ToolGatePolicy {
         private TaintAction onTrifecta;
         private Duration approvalExpiry;
         private Set<String> reviewers = Set.of();
+        private final Map<ToolId, ReviewView> reviews = new LinkedHashMap<>();
         private PendingTaintRule pending;
         private Principal service;
 
@@ -610,6 +611,29 @@ public final class ToolGatePolicy {
                 throw new InvalidPolicyException("agent '" + id + "': approvalExpiry must be positive, was " + expiry);
             }
             this.approvalExpiry = expiry;
+            return this;
+        }
+
+        /**
+         * Says what a reviewer sees of this tool's deferred calls: its title, and which arguments are
+         * shown, masked or hidden. Arguments it does not name get the default: shown if the policy has a
+         * rule on them, masked otherwise. Display only, so not part of the policy hash.
+         *
+         * @param toolReference the tool, which this agent must allow
+         * @param configurer    sets the view
+         * @return this agent builder
+         * @throws InvalidPolicyException if the tool is not allowed, an argument is named twice, or this
+         *                                is called twice for the tool
+         */
+        public AgentBuilder review(String toolReference, Consumer<ReviewBuilder> configurer) {
+            ToolId tool = parse(toolReference);
+            requireAllowed(tool, "reviewed tool");
+            if (reviews.containsKey(tool)) {
+                throw new InvalidPolicyException("agent '" + id + "': review of " + tool + " is set twice");
+            }
+            var review = new ReviewBuilder(tool.name());
+            configurer.accept(review);
+            reviews.put(tool, review.build());
             return this;
         }
 
@@ -825,7 +849,72 @@ public final class ToolGatePolicy {
                     ? approvalExpiry
                     : (interactive ? INTERACTIVE_APPROVAL_EXPIRY : HEADLESS_APPROVAL_EXPIRY);
             return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules,
-                    requiredRoles, resultRules, expiry, reviewers, service);
+                    requiredRoles, resultRules, expiry, reviewers, service, reviews);
+        }
+    }
+
+    /** Collects one tool's review view; see {@link AgentBuilder#review}. */
+    public static final class ReviewBuilder {
+
+        private String title;
+        private final Set<String> show = new LinkedHashSet<>();
+        private final Map<String, Mask> masks = new LinkedHashMap<>();
+        private final Set<String> hidden = new LinkedHashSet<>();
+
+        private ReviewBuilder(String defaultTitle) {
+            this.title = defaultTitle;
+        }
+
+        /**
+         * What the review screen calls the action; the tool's name by default.
+         *
+         * @param newTitle the title, such as "Refund an order"
+         * @return this builder
+         */
+        public ReviewBuilder title(String newTitle) {
+            if (newTitle == null || newTitle.isBlank()) {
+                throw new InvalidPolicyException("a review title must not be blank");
+            }
+            this.title = newTitle;
+            return this;
+        }
+
+        /**
+         * Shows these arguments in full.
+         *
+         * @param arguments the argument names
+         * @return this builder
+         */
+        public ReviewBuilder show(String... arguments) {
+            show.addAll(List.of(arguments));
+            return this;
+        }
+
+        /**
+         * Shows an argument masked, such as the last 4 characters of an IBAN.
+         *
+         * @param argument the argument name
+         * @param mask     the mask
+         * @return this builder
+         */
+        public ReviewBuilder mask(String argument, Mask mask) {
+            masks.put(argument, Objects.requireNonNull(mask, "mask"));
+            return this;
+        }
+
+        /**
+         * Shows nothing of these arguments, not even that they had a value worth masking.
+         *
+         * @param arguments the argument names
+         * @return this builder
+         */
+        public ReviewBuilder hide(String... arguments) {
+            hidden.addAll(List.of(arguments));
+            return this;
+        }
+
+        private ReviewView build() {
+            return new ReviewView(title, show, masks, hidden);
         }
     }
 

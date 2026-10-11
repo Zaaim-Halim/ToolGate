@@ -105,6 +105,26 @@ yourself. Tune it with `toolgate.approvals.executor.id`, `.lease` and `.interval
 In a cluster, register tools that need approval as beans (or with `agent(...).tools(...)`), so any
 instance can run them.
 
+A review screen shows `reviewItem(approvalId, viewer)`: the action's title, why it waits, where the
+session's taint came from (the defence against a request worded to talk the reviewer into it), and the
+arguments, shown, masked or hidden by the agent's review view:
+
+```java
+.agent("refund-agent", a -> a
+        .allow("issueRefund")
+        .reviewers("finance")
+        .review("issueRefund", r -> r.title("Refund an order").show("order", "amount").mask("iban", Mask.last(4))))
+```
+
+Without a review view, arguments the policy has rules on are shown and all others are masked. A
+deferral reason that would quote a masked or hidden argument ("480 is above 200") is withheld. The
+inbox, `pending(viewer)`, returns the same masked review items. Values that could look like something
+else carry warnings: a text-direction or invisible character, or a non-ASCII letter, which also flags
+legitimate names such as Müller, so reviewers should read it as "check this", not "this is an attack".
+Render everything as plain text: the arguments came from the model. Approve with the item's `digest()`,
+so the approval names exactly what the reviewer saw. A super admin's or auditor's view and listing are
+audited (`toolgate.approval.viewed`, `toolgate.approvals.listed`), and an `ApprovalListener` hears both.
+
 A chat screen can read the calls its own request deferred from the response, to show "Confirm?":
 `ToolGateDeferrals.of(chatClient.prompt()...call().chatClientResponse())`. The requester or a super admin can `cancel` a call nobody decided yet. Run
 `sweep()` on a schedule, such as every minute.

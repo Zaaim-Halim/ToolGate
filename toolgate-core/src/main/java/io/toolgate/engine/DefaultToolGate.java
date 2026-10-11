@@ -5,7 +5,6 @@ import static io.toolgate.support.Checks.requireNonBlank;
 import io.toolgate.api.Approval;
 import io.toolgate.api.ApprovalAccess;
 import io.toolgate.api.ApprovalDecision;
-import io.toolgate.api.ApprovalItem;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
@@ -14,7 +13,10 @@ import io.toolgate.api.Execution;
 import io.toolgate.api.Label;
 import io.toolgate.api.Mode;
 import io.toolgate.api.Principal;
+import io.toolgate.api.Provenance;
 import io.toolgate.api.ResultDecision;
+import io.toolgate.api.ReviewArgument;
+import io.toolgate.api.ReviewItem;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolResult;
@@ -225,7 +227,8 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     @Override
-    public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment) {
+    public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment,
+                            String digest) {
         Objects.requireNonNull(reviewer, "reviewer");
         Objects.requireNonNull(currentPrincipal, "currentPrincipal");
         if (comment != null) {
@@ -248,6 +251,9 @@ public final class DefaultToolGate implements ToolGate {
             Optional<String> notPermitted = permissionProblem(call, reviewer);
             if (notPermitted.isPresent()) {
                 return new Approval.NotPermitted(notPermitted.get());
+            }
+            if (digest != null && !digest.equals(digestOf(pending))) {
+                return new Approval.NotPermitted("what was shown is not what would be approved; reload the call");
             }
             ApprovalAccess access = decidingAccess(call, reviewer);
             if (access == ApprovalAccess.SUPER_ADMIN && comment == null) {
@@ -392,17 +398,74 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     @Override
+    public Optional<ReviewItem> reviewItem(String approvalId, Principal viewer) {
+        Objects.requireNonNull(viewer, "viewer");
+        PendingCall pending = pendingCall(approvalId);
+        ToolCall call = pending.call();
+        Optional<ApprovalAccess> access = access(call, viewer);
+        if (access.isEmpty()) {
+            return Optional.empty();
+        }
+        if (isPrivileged(access.get())) {
+            Instant at = clock.instant();
+            audit.submit(() -> new AuditEvent.ApprovalViewed(at, approvalId, call.sessionId(), call.agentId(), call.tool(),
+                    viewer.id(), access.get()));
+        }
+        return Optional.of(item(pending, viewer, access.get()));
+    }
+
+    /** One call as a viewer sees it, masked by its agent's review view, which may be gone after a redeploy. */
+    private ReviewItem item(PendingCall pending, Principal viewer, ApprovalAccess access) {
+        ToolCall call = pending.call();
+        ReviewViews.Shown shown = ReviewViews.show(pending.approvalId(), policy.agent(call.agentId()), call,
+                pending.deferral());
+        List<Provenance> provenance = sessions.state(call.sessionId()).taint().entrySet().stream()
+                .map(source -> new Provenance(source.getKey(), source.getValue().tool(), source.getValue().callId()))
+                .toList();
+        return new ReviewItem(pending.approvalId(), call.agentId(), call.tool(), shown.title(), call.principal(),
+                pending.status(), pending.expiresAt(), pending.deferral().ruleId(), shown.reason(), shown.arguments(),
+                provenance, pending.decisions(), access,
+                pending.status() == ApprovalStatus.PENDING && permissionProblem(call, viewer).isEmpty(), shown.digest());
+    }
+
+    /** The digest of a call's review view: the same for every viewer, since the view is the policy's. */
+    private String digestOf(PendingCall pending) {
+        return ReviewViews.show(pending.approvalId(), policy.agent(pending.call().agentId()), pending.call(),
+                pending.deferral()).digest();
+    }
+
+    /** Super admins and auditors may read every tenant's calls, so their reading leaves a trace. */
+    private static boolean isPrivileged(ApprovalAccess access) {
+        return access == ApprovalAccess.SUPER_ADMIN || access == ApprovalAccess.AUDITOR;
+    }
+
+    @Override
     public List<PendingCall> withStatus(ApprovalStatus status) {
         return approvals.withStatus(Objects.requireNonNull(status, "status"));
     }
 
     @Override
-    public List<ApprovalItem> pending(Principal viewer) {
+    public List<ReviewItem> pending(Principal viewer) {
         Objects.requireNonNull(viewer, "viewer");
-        return pending().stream()
-                .flatMap(waiting -> access(waiting.call(), viewer).stream().map(access ->
-                        new ApprovalItem(waiting, access, permissionProblem(waiting.call(), viewer).isEmpty())))
-                .toList();
+        var items = new ArrayList<ReviewItem>();
+        ApprovalAccess strongest = null;
+        for (PendingCall waiting : pending()) {
+            Optional<ApprovalAccess> access = access(waiting.call(), viewer);
+            if (access.isPresent()) {
+                items.add(item(waiting, viewer, access.get()));
+                if (isPrivileged(access.get()) && (strongest == null || access.get().compareTo(strongest) < 0)) {
+                    strongest = access.get();
+                }
+            }
+        }
+        if (strongest != null) {
+            // One trace per listing, not per call, so a screen that polls does not flood the audit log.
+            Instant at = clock.instant();
+            ApprovalAccess listedAs = strongest;
+            int count = items.size();
+            audit.submit(() -> new AuditEvent.ApprovalsListed(at, viewer.id(), listedAs, count));
+        }
+        return List.copyOf(items);
     }
 
     @Override

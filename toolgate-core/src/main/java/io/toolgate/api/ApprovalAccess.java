@@ -2,7 +2,7 @@ package io.toolgate.api;
 
 /**
  * Why a principal may see a deferred call, strongest first: each viewer gets the first that applies.
- * What each may decide is in {@link ApprovalItem#mayDecide()}.
+ * What each may decide is in {@link ReviewItem#mayDecide()}.
  */
 public enum ApprovalAccess {
 

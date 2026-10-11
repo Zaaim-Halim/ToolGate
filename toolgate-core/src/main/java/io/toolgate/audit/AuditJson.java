@@ -78,6 +78,23 @@ public final class AuditJson {
                     .field("access", recorded.access().name().toLowerCase(Locale.ROOT))
                     .field("comment", recorded.comment())
                     .close();
+            case AuditEvent.ApprovalViewed viewed -> new Writer()
+                    .field("event", "toolgate.approval.viewed")
+                    .field("time", viewed.time().toString())
+                    .field("approvalId", viewed.approvalId())
+                    .field("session", viewed.sessionId())
+                    .field("agent", viewed.agentId())
+                    .field("tool", viewed.tool().toString())
+                    .field("viewer", viewed.viewer())
+                    .field("access", viewed.access().name().toLowerCase(Locale.ROOT))
+                    .close();
+            case AuditEvent.ApprovalsListed listed -> new Writer()
+                    .field("event", "toolgate.approvals.listed")
+                    .field("time", listed.time().toString())
+                    .field("viewer", listed.viewer())
+                    .field("access", listed.access().name().toLowerCase(Locale.ROOT))
+                    .number("calls", listed.calls())
+                    .close();
             case AuditEvent.SuperAdminBurst burst -> new Writer()
                     .field("event", "toolgate.superadmin.burst")
                     .field("time", burst.time().toString())

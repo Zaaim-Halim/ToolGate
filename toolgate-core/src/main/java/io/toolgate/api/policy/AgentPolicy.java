@@ -32,13 +32,15 @@ import java.util.stream.Collectors;
  *                      nobody, except the signed-in user confirming their own call in an interactive agent
  * @param service       the service identity this agent acts as, or null if its principal comes from
  *                      the request; see {@link #servicePrincipal()}
+ * @param reviews       what a reviewer sees of each tool's deferred calls, by tool; a tool without one gets
+ *                      the default: arguments with rules shown, all others masked
  */
 public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
                           Map<ToolArgument, List<ArgumentRule>> argumentRules,
                           boolean interactive, Map<ToolId, ToolId> downgrades, TaintAction onTrifecta,
                           List<TaintRule> taintRules, Map<ToolId, Set<String>> requiredRoles,
                           List<ResultRule> resultRules, Duration approvalExpiry, Set<String> reviewers,
-                          Principal service) {
+                          Principal service, Map<ToolId, ReviewView> reviews) {
 
     /** Validates and copies every component. */
     public AgentPolicy {
@@ -58,6 +60,7 @@ public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
             throw new IllegalArgumentException("approvalExpiry must be positive");
         }
         reviewers = Set.copyOf(reviewers);
+        reviews = Map.copyOf(reviews);
         if (service != null && service.kind() != Principal.Kind.SERVICE) {
             throw new IllegalArgumentException("agent '" + id + "' can only act as a service identity, not " + service);
         }
