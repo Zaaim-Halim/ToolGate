@@ -1,3 +1,5 @@
+import {renderGraph} from "./graph.js";
+
 // ToolGate approvals console. Everything shown comes from the server and, through the model, possibly
 // from an attacker: it is built with DOM nodes and textContent only, never parsed as HTML.
 
@@ -87,6 +89,33 @@ function party(p) {
     return p.tenant ? `${p.id} in ${p.tenant}` : p.id;
 }
 
+const UUID = /\b([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
+/** Long generated IDs, such as session IDs inside a reason, cut to their first 8 characters for reading. */
+function readable(text) {
+    return text ? text.replace(UUID, "$1…") : text;
+}
+
+/** Sets a reason or detail: shortened for reading, the full text on hover. */
+function setReadable(node, text) {
+    node.textContent = readable(text);
+    node.title = text && readable(text) !== text ? text : "";
+}
+
+/**
+ * A line that tells requests apart: the short values the review view shows, such as "order 7744, amount 1250".
+ * Short values first, since identifiers and amounts say more at a glance than free text.
+ */
+function summary(item) {
+    return item.arguments.filter((argument) => argument.visibility === "SHOWN" && argument.display.length <= 24)
+        .sort((a, b) => a.display.length - b.display.length)
+        .slice(0, 3)
+        .map((argument) => `${argument.name} ${argument.display}`)
+        .join(", ");
+}
+
+const VISIBILITY_ORDER = {SHOWN: 0, MASKED: 1, HIDDEN: 2};
+
 // Loading
 
 async function loadViewer() {
@@ -170,6 +199,9 @@ function switchTo(next) {
 }
 
 function refreshView() {
+    if (!$("graph-view").hidden) {
+        return undefined;
+    }
     if (view === "history") {
         return loadHistory();
     }
@@ -189,9 +221,14 @@ function row(item) {
     button.setAttribute("aria-current", item.approvalId === current ? "true" : "false");
 
     const expiry = untilExpiry(item.expiresAt);
-    const when = item.status === "PENDING" ? element("span", `expires ${expiry.text}`, expiry.soon ? "when soon" : "when")
+    const when = item.status === "PENDING" ? element("span", expiry.text, expiry.soon ? "when soon" : "when")
         : element("span", STATUS[item.status]?.[0] || item.status, "when");
-    button.append(element("span", item.title, "title"), when, element("span", `For ${party(item.requester)}`, "who"));
+    button.append(element("span", item.title, "title"), when);
+    const line = summary(item);
+    if (line) {
+        button.append(element("span", line, "summary"));
+    }
+    button.append(element("span", `For ${party(item.requester)}`, "who"));
 
     const marks = element("span", null, "marks");
     if (item.provenance.length) {
@@ -200,8 +237,10 @@ function row(item) {
     if (item.arguments.some((argument) => argument.warnings.length)) {
         marks.append(element("span", "Suspicious characters", "mark caution"));
     }
-    if (item.mayDecide) {
-        marks.append(element("span", item.status === "UNKNOWN" ? "You can resolve" : "You can decide", "mark yours"));
+    if (item.status === "UNKNOWN" && item.mayDecide) {
+        marks.append(element("span", "Needs resolving", "mark yours"));
+    } else if (item.status === "PENDING" && !item.mayDecide) {
+        marks.append(element("span", item.access === "REQUESTER" ? "Your request" : "View only", "mark"));
     }
     button.append(marks);
     button.addEventListener("click", () => open(item.approvalId));
@@ -262,20 +301,23 @@ function show(item) {
     $("detail-meta").replaceChildren(...facts);
     $("why-title").textContent = item.status === "PENDING" ? "Why it waits" : "Why it waited";
 
-    $("detail-reason").textContent = item.deferralReason;
+    setReadable($("detail-reason"), item.deferralReason);
     $("detail-rule").textContent = item.deferralRule;
 
     $("provenance").replaceChildren(...item.provenance.map((source) =>
         element("li", `${source.label === "UNTRUSTED_CONTENT" ? "Untrusted content" : "Private data"} from ${source.tool}`)));
     $("provenance-block").hidden = item.provenance.length === 0;
 
-    $("arguments").replaceChildren(...item.arguments.map(argumentRow));
+    const ordered = [...item.arguments].sort((a, b) => VISIBILITY_ORDER[a.visibility] - VISIBILITY_ORDER[b.visibility]);
+    $("arguments").replaceChildren(...ordered.map(argumentRow));
 
     $("history").replaceChildren(...item.decisions.map((decision) => {
         const entry = element("li", `${DECIDED[decision.kind] || decision.kind} by ${decision.by}, `
             + `${ACCESS[decision.access] || decision.access}, ${absolute(decision.at)}`);
         if (decision.comment) {
-            entry.append(element("span", decision.comment, "note"));
+            const note = element("span", null, "note");
+            setReadable(note, decision.comment);
+            entry.append(note);
         }
         return entry;
     }));
@@ -372,6 +414,57 @@ function argumentRow(argument) {
     return tableRow;
 }
 
+// The graph of a request's session
+
+let graph = null;
+const SIDE_VIEWS = ["view-inbox", "view-history", "view-overview", "detail", "placeholder"];
+let hiddenBeforeGraph = [];
+
+async function openGraph() {
+    const approvalId = $("detail").dataset.approvalId;
+    try {
+        const journey = await request(`/journey?id=${encodeURIComponent(approvalId)}`);
+        hiddenBeforeGraph = SIDE_VIEWS.filter((id) => $(id).hidden);
+        for (const id of SIDE_VIEWS) {
+            $(id).hidden = true;
+        }
+        $("graph-view").hidden = false;
+        $("mermaid-box").hidden = true;
+        $("graph-title").textContent = `How “${$("detail-title").textContent}” came about`;
+        $("graph-note").textContent = journey.complete ? ""
+            : "The session's earlier steps are not available, so the graph starts at this request.";
+        graph = renderGraph($("graph-canvas"), $("graph-inspector"), journey);
+        $("graph-canvas").focus();
+    } catch (failure) {
+        say(failure.message, "warn");
+    }
+}
+
+function closeGraph() {
+    $("graph-view").hidden = true;
+    for (const id of SIDE_VIEWS) {
+        $(id).hidden = hiddenBeforeGraph.includes(id);
+    }
+    graph = null;
+    $("open-graph").focus();
+}
+
+async function copyMermaid() {
+    if (!graph) {
+        return;
+    }
+    const text = graph.mermaid();
+    $("mermaid-text").value = text;
+    $("mermaid-box").hidden = false;
+    try {
+        await navigator.clipboard.writeText(text);
+        $("graph-note").textContent = "Copied as Mermaid. Paste it into a report or a ticket.";
+    } catch {
+        $("graph-note").textContent = "Select the Mermaid text below and copy it.";
+        $("mermaid-text").select();
+    }
+}
+
 // Deciding
 
 async function decide(kind, ran) {
@@ -427,6 +520,17 @@ function setBusy(busy) {
 }
 
 $("refresh").addEventListener("click", loadInbox);
+$("open-graph").addEventListener("click", openGraph);
+$("graph-back").addEventListener("click", closeGraph);
+$("graph-fit").addEventListener("click", () => graph?.fit());
+$("graph-zoom-in").addEventListener("click", () => graph?.zoomIn());
+$("graph-zoom-out").addEventListener("click", () => graph?.zoomOut());
+$("graph-copy").addEventListener("click", copyMermaid);
+document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("graph-view").hidden) {
+        closeGraph();
+    }
+});
 $("tab-inbox").addEventListener("click", () => switchTo("inbox"));
 $("tab-history").addEventListener("click", () => switchTo("history"));
 $("tab-overview").addEventListener("click", () => switchTo("overview"));

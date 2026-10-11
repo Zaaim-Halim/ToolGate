@@ -41,6 +41,11 @@ final class ApprovalsMvcController {
         return api.item(user, id);
     }
 
+    @GetMapping("/journey")
+    ApiModel.JourneyView journey(Principal user, @RequestParam(required = false) String id) {
+        return api.journey(user, id);
+    }
+
     @GetMapping("/me")
     ApiModel.Me me(Principal user) {
         return api.me(user);

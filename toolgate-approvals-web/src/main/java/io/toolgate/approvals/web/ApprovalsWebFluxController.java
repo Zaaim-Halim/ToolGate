@@ -48,6 +48,11 @@ final class ApprovalsWebFluxController {
         return blocking(() -> api.item(user, id));
     }
 
+    @GetMapping("/journey")
+    Mono<ApiModel.JourneyView> journey(Principal user, @RequestParam(required = false) String id) {
+        return blocking(() -> api.journey(user, id));
+    }
+
     @GetMapping("/me")
     Mono<ApiModel.Me> me(Principal user) {
         return blocking(() -> api.me(user));

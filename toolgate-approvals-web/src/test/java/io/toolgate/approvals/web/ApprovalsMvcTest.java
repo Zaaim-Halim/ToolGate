@@ -172,6 +172,21 @@ class ApprovalsMvcTest {
     }
 
     @Test
+    void theJourneyShowsTheStoryWithoutArgumentValues() throws Exception {
+        mvc.perform(get("/toolgate/api/approvals/journey").param("id", approvalId).with(lena()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.complete").value(true))
+                .andExpect(jsonPath("$.steps[0].title").value("local/readReturnRequest"))
+                .andExpect(jsonPath("$.steps[0].labelsAdded[0]").value("UNTRUSTED_CONTENT"))
+                .andExpect(jsonPath("$.steps[1].subject").value(true))
+                .andExpect(jsonPath("$.flows[0].label").value("UNTRUSTED_CONTENT"))
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .doesNotContain("DE89370400440532013000").doesNotContain("onerror"));
+        mvc.perform(get("/toolgate/api/approvals/journey").param("id", approvalId).with(gus())).andExpect(status().isNotFound());
+        mvc.perform(get("/toolgate/api/approvals/journey").param("id", approvalId)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void everyResponseCarriesTheConsoleHeaders() throws Exception {
         for (String path : new String[] {"/toolgate/api/approvals", "/toolgate/approvals/index.html", "/toolgate/approvals/app.js"}) {
             mvc.perform(get(path).with(lena()))

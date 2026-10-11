@@ -137,6 +137,36 @@ class ConsoleBrowserTest {
         page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console-overview.png")).setFullPage(true));
     }
 
+    /** The graph shows the request inside its whole session, with the content that fed it. */
+    @Test
+    void theGraphFocusesTheRequestInItsSession() {
+        String approvalId = Fixtures.deferRefund(gate, "s-" + UUID.randomUUID(), "graph refund");
+        page.navigate("/toolgate/approvals");
+        page.locator("button.item").filter(new com.microsoft.playwright.Locator.FilterOptions().setHasText("Refund an order"))
+                .last().click();
+        page.locator("#open-graph").click();
+
+        assertThat(page.locator("#graph-view")).isVisible();
+        assertThat(page.locator("svg.graph .node")).hasCount(4);
+        assertThat(page.locator("svg.graph .node.subject.focused")).hasCount(1);
+        assertThat(page.locator("svg.graph .subject-tag")).hasText("This request");
+        assertThat(page.locator("svg.graph .edge.flow")).hasCount(1);
+        assertThat(page.locator("#graph-inspector")).containsText("This request");
+        assertThat(page.locator("#graph-inspector")).containsText("Untrusted content from readReturnRequest");
+        page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console-graph.png")).setFullPage(true));
+
+        page.locator("svg.graph .node.lane-0").first().click();
+        assertThat(page.locator("#graph-inspector")).containsText("untrusted content");
+        page.locator("#graph-copy").click();
+        assertThat(page.locator("#mermaid-text")).hasValue(java.util.regex.Pattern.compile("^flowchart LR"));
+
+        page.locator("#graph-back").click();
+        assertThat(page.locator("#graph-view")).isHidden();
+        assertThat(page.locator("#detail")).isVisible();
+        org.assertj.core.api.Assertions.assertThat(approvalId).isNotBlank();
+        org.assertj.core.api.Assertions.assertThat(violations).isEmpty();
+    }
+
     @Test
     void aReviewerApprovesAndTheRefundRunsOnce() {
         Fixtures.deferRefund(gate, "s-" + UUID.randomUUID(), "regular refund");

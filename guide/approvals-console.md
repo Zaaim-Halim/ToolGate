@@ -26,6 +26,21 @@ Adding the module exposes nothing until `enabled=true`. With it on, the applicat
 without Spring Security (`spring-boot-starter-security`): a console that decides refunds must never be
 open.
 
+## The graph of a request
+
+**Open graph** on a request shows how it came about: every tool call the agent made in that session, in
+an Agent lane, with ToolGate's decision on each in a ToolGate lane, then what people decided and how the
+call ran. The request is ringed and in focus, the steps that led to it stay bright, and dashed amber arcs
+show where untrusted content or private data came from and which calls it reached. Click a step to see
+its decision, rule and labels; drag to pan, scroll to zoom, or move with the arrow keys. **Copy as
+Mermaid** puts the graph into an incident report.
+
+The graph carries no argument values, and of the other calls only their decision and rule, since a
+reason can quote an argument. It needs a session store that keeps its event log: the in-memory and JDBC
+stores do, through `SessionStore.events(sessionId)`; with another store the graph starts at the request.
+The REST API serves it at `GET /toolgate/api/approvals/journey?id=…`, the Java API as
+`journey(approvalId, viewer)`.
+
 ## 2. Sign-in and roles
 
 Reviewers sign in however your application already signs users in: form login, OIDC, SAML. The console

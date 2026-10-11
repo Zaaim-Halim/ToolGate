@@ -400,3 +400,229 @@ button.plain:hover:not(:disabled) { background: var(--paper); }
 @media (prefers-reduced-motion: reduce) {
     .actions button { transition: none; }
 }
+
+/* The graph of a request's session: the request in focus, the session around it. */
+.sheet-head { position: relative; }
+.open-graph { position: absolute; top: 0; right: 0; }
+
+.graph-view { grid-column: 1 / -1; background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; padding: var(--space-4) var(--space-5) var(--space-5); }
+.graph-view[hidden] { display: none; }
+.graph-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); }
+.graph-bar h1 { font-size: var(--step-1); flex: 1; min-width: 240px; overflow-wrap: anywhere; }
+.tools { display: flex; gap: var(--space-2); }
+.tool {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+    background: var(--sheet);
+}
+.tool:hover { background: var(--paper); }
+.graph-note { margin-top: var(--space-2); color: var(--ink-soft); font-size: var(--step--1); }
+.graph-note:empty { display: none; }
+
+.graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: var(--space-4); margin-top: var(--space-4); }
+.canvas {
+    position: relative;
+    height: min(64vh, 560px);
+    overflow: hidden;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background:
+        radial-gradient(circle, var(--rule) 1px, transparent 1.2px) 0 0 / 22px 22px,
+        var(--paper);
+}
+.canvas:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+svg.graph { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; user-select: none; }
+svg.graph.dragging { cursor: grabbing; }
+
+.lane.even { fill: transparent; }
+.lane.odd { fill: color-mix(in srgb, var(--ink) 3%, transparent); }
+.lane-name { fill: var(--ink-soft); font: 700 12px var(--sans); }
+
+.edge { fill: none; stroke: var(--rule-strong); stroke-width: 1.6; transition: opacity 160ms ease; }
+.edge.decide { stroke-dasharray: none; }
+.edge.flow { stroke: var(--signal); stroke-dasharray: 6 5; stroke-width: 1.8; }
+.edge.lit { stroke-width: 2.4; }
+.edge.flow.lit { stroke-width: 3; }
+.edge.dim { opacity: 0.18; }
+.arrow { fill: var(--rule-strong); }
+.arrow.flow { fill: var(--signal); }
+
+.node { cursor: pointer; transition: opacity 160ms ease; }
+.node .box { fill: var(--sheet); stroke: var(--rule-strong); stroke-width: 1.4; }
+.node .label { fill: var(--ink); font: 700 13px var(--sans); }
+.node .sub { fill: var(--ink-soft); font: 11.5px var(--mono); }
+.node.allow .box { stroke: var(--approve); fill: color-mix(in srgb, var(--approve) 9%, var(--sheet)); }
+.node.deny .box { stroke: var(--refuse); fill: color-mix(in srgb, var(--refuse) 9%, var(--sheet)); }
+.node.downgrade .box { stroke: var(--ledger); fill: var(--ledger-wash); }
+.node.defer .box { stroke: var(--signal); fill: var(--signal-wash); }
+.node.lane-0 .box { fill: var(--sheet); stroke: var(--rule-strong); }
+.node .taint-dot { fill: var(--signal); }
+.node.dim { opacity: 0.28; }
+.node.focused .box { stroke-width: 3; }
+.node:focus-visible { outline: none; }
+.node:focus-visible .box { stroke: var(--focus); stroke-width: 3; }
+
+/* The request itself: bigger, ringed and named, whatever is in focus. */
+.node.subject .box { stroke-width: 3; }
+.node.subject .halo { fill: none; stroke: var(--signal); stroke-width: 2; stroke-dasharray: 3 4; }
+.subject-tag { fill: var(--signal); font: 700 12px var(--sans); text-anchor: middle; }
+
+.inspector { border-left: 1px solid var(--rule); padding-left: var(--space-4); min-width: 0; }
+.inspector h2 { font-size: var(--step-1); margin-bottom: var(--space-3); overflow-wrap: anywhere; }
+.inspector dl { margin: 0; display: grid; gap: var(--space-3); }
+.inspector dt { font-size: var(--step--1); color: var(--ink-soft); }
+.inspector dd { margin: 0; overflow-wrap: anywhere; }
+.inspector-empty { color: var(--ink-soft); }
+
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); list-style: none; margin: var(--space-4) 0 0; padding: 0; font-size: var(--step--1); color: var(--ink-soft); }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 18px; height: 10px; border-radius: 3px; border: 1.5px solid; }
+.swatch.allow { border-color: var(--approve); background: color-mix(in srgb, var(--approve) 12%, var(--sheet)); }
+.swatch.deny { border-color: var(--refuse); background: color-mix(in srgb, var(--refuse) 12%, var(--sheet)); }
+.swatch.downgrade { border-color: var(--ledger); background: var(--ledger-wash); }
+.swatch.defer { border-color: var(--signal); background: var(--signal-wash); }
+.swatch.flow { border: 0; height: 0; border-top: 2px dashed var(--signal); border-radius: 0; }
+
+.mermaid { display: block; margin-top: var(--space-4); font-size: var(--step--1); color: var(--ink-soft); }
+.mermaid[hidden] { display: none; }
+.mermaid textarea { font-family: var(--mono); margin-top: var(--space-1); }
+
+@media (max-width: 860px) {
+    .graph-body { grid-template-columns: 1fr; }
+    .inspector { border-left: 0; border-top: 1px solid var(--rule); padding: var(--space-4) 0 0; }
+    .open-graph { position: static; margin-bottom: var(--space-2); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .edge, .node { transition: none; }
+}
+
+/* ---------------------------------------------------------------------------------------------------
+   Refinement: typography, rhythm and motion. Later in the file, so it settles what came before.
+   --------------------------------------------------------------------------------------------------- */
+
+:root {
+    --step--2: 0.75rem;
+    --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+    --shadow-1: 0 1px 2px color-mix(in srgb, var(--ink) 6%, transparent);
+    --shadow-2: 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent), 0 8px 24px color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+body { font-size: 15px; line-height: 1.55; text-rendering: optimizeLegibility; font-feature-settings: "kern"; }
+h1, h2, h3 { letter-spacing: -0.01em; }
+code, .value, .when, .facts dd, .stat dd { font-variant-numeric: tabular-nums; }
+
+/* Masthead stays put while the desk scrolls. */
+.masthead { position: sticky; top: 0; z-index: 10; padding: 10px var(--space-6); backdrop-filter: saturate(140%) blur(6px); background: color-mix(in srgb, var(--sheet) 92%, transparent); }
+.product { font-size: 1.05rem; letter-spacing: -0.01em; }
+.application { font-size: var(--step--2); }
+.views { padding: 3px; gap: 2px; }
+.tab { padding: 6px 14px; font-size: 0.92rem; transition: background-color 160ms var(--ease), color 160ms var(--ease), box-shadow 160ms var(--ease); }
+.tab:hover:not([aria-selected="true"]) { color: var(--ink); }
+.viewer { font-size: var(--step--2); }
+
+/* The queue: easy to scan, one request per row, the selected one plainly marked. */
+.desk { gap: var(--space-6); padding-top: var(--space-6); }
+.queue-head { margin-bottom: var(--space-2); }
+.queue-head h1, .overview h1 { font-size: 1.1rem; }
+.items { border-top: 0; display: grid; gap: 6px; }
+button.item {
+    gap: 3px var(--space-3);
+    padding: 12px 14px 12px 16px;
+    border: 1px solid transparent;
+    border-left: 3px solid transparent;
+    border-radius: 8px;
+    transition: background-color 140ms var(--ease), border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+button.item:hover { background: var(--sheet); border-color: var(--rule); }
+button.item[aria-current="true"] { background: var(--sheet); border-color: var(--rule); border-left-color: var(--ledger); box-shadow: var(--shadow-1); }
+.item .title { font-size: 0.98rem; }
+.item .when { font-size: var(--step--2); padding-top: 2px; }
+.item .summary { grid-column: 1 / -1; font-family: var(--mono); font-size: 0.82rem; color: var(--ink); overflow-wrap: anywhere; }
+.item .who { font-size: var(--step--2); }
+.item .marks { gap: 6px; margin-top: 4px; }
+.mark { font-size: 0.72rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; letter-spacing: 0.01em; }
+
+/* The sheet. */
+.sheet, .overview, .graph-view { box-shadow: var(--shadow-2); border-color: color-mix(in srgb, var(--rule) 80%, transparent); border-radius: 12px; }
+.sheet { padding: 28px 32px 0; }
+.state { font-size: var(--step--2); letter-spacing: 0.02em; }
+.sheet-head h2 { font-size: 1.85rem; letter-spacing: -0.02em; line-height: 1.12; margin-top: 6px; }
+.facts { gap: var(--space-3) 40px; margin-top: 18px; }
+.facts dt { font-size: var(--step--2); margin-bottom: 2px; }
+.facts dd { font-size: 0.95rem; }
+.part { padding: 22px 0; }
+.part h3 { font-size: 0.95rem; margin-bottom: 6px; }
+.reason { color: var(--ink); line-height: 1.6; }
+.rule { font-size: var(--step--2); }
+.part.caution { margin-top: 22px; border-radius: 0 10px 10px 0; }
+
+.call th { width: 22%; font-size: 0.9rem; }
+.call td, .call th { padding: 11px 0; }
+.call .value { font-size: 0.95rem; line-height: 1.6; }
+
+.trail li { color: var(--ink); }
+.trail .note { margin-top: 2px; font-size: 0.92rem; }
+
+/* The decision: a calm panel with one clear primary action. */
+.decision { padding: 20px 32px 24px; border-top-color: var(--rule); }
+textarea { padding: 10px 12px; line-height: 1.5; transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease); }
+textarea::placeholder { color: color-mix(in srgb, var(--ink-soft) 75%, transparent); }
+textarea:focus { outline: none; border-color: var(--ledger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ledger) 18%, transparent); }
+.actions { gap: 10px; margin-top: 14px; }
+.actions button { height: 40px; padding: 0 18px; border-radius: 8px; font-size: 0.95rem; }
+button.primary { box-shadow: 0 1px 2px color-mix(in srgb, var(--approve) 35%, transparent); }
+
+.message { border-radius: 10px; font-size: 0.95rem; }
+
+/* An empty desk: quiet, not a blank box. */
+.placeholder {
+    min-height: 240px;
+    gap: var(--space-3);
+    align-content: center;
+    background: transparent;
+    border: 1.5px dashed var(--rule-strong);
+    box-shadow: none;
+}
+.placeholder p { max-width: 32ch; }
+.placeholder-icon { width: 32px; height: 32px; fill: none; stroke: var(--rule-strong); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Overview. */
+.overview { padding: 28px 32px 32px; }
+.stat dd { font-size: 1.6rem; letter-spacing: -0.02em; }
+
+/* Graph: larger type, quieter chrome. */
+.graph-view { padding: 18px 24px 22px; }
+.graph-bar h1 { font-size: 1.1rem; }
+.tool { height: 36px; border-radius: 8px; font-size: 0.9rem; transition: background-color 140ms var(--ease); }
+.node .label { font-size: 14px; }
+.node .sub { font-size: 12px; }
+.node:hover .box { stroke-width: 2.4; }
+.node.dim:hover { opacity: 0.6; }
+.edge.flow.lit { filter: drop-shadow(0 0 2px color-mix(in srgb, var(--signal) 40%, transparent)); }
+.inspector h2 { font-size: 1.05rem; }
+.inspector dd { font-size: 0.95rem; line-height: 1.5; }
+.legend { margin-top: var(--space-3); }
+
+@media (max-width: 860px) {
+    .masthead { padding: 10px var(--space-4); }
+    .sheet { padding: 22px 18px 0; }
+    .decision { padding: 18px; }
+    .facts { gap: var(--space-3) var(--space-5); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tab, button.item, textarea, .tool { transition: none; }
+}
+
+.item .summary { font-family: var(--sans); font-size: 0.86rem; color: var(--ink); }
+.part { max-width: none; }
+.part > p, .part > ul { max-width: 72ch; }
+
+.lane-label { pointer-events: none; }
+.lane-pill { fill: color-mix(in srgb, var(--sheet) 88%, transparent); stroke: var(--rule); }
+.lane-name { font: 700 11.5px var(--sans); text-anchor: middle; fill: var(--ink-soft); letter-spacing: 0.01em; }

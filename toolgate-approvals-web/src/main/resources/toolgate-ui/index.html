@@ -19,6 +19,12 @@
     <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13.5 6.5 5h11l2.5 8.5V19H4z"/><path d="M4 13.5h4.5l1.5 2.5h4l1.5-2.5H20"/></symbol>
     <symbol id="i-history" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/><path d="M12 8v4.5l3 2"/></symbol>
     <symbol id="i-overview" viewBox="0 0 24 24"><path d="M5 19V11M10 19V5M15 19v-6M20 19V8"/></symbol>
+    <symbol id="i-graph" viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 6h9M6.3 8.2 10.8 15.8M17.7 8.2 13.2 15.8"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
     <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.3 10.8 15 16 9.5"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 21.5 20h-19z"/><path d="M12 10v4.5M12 17.2v.3"/></symbol>
 </svg>
@@ -77,6 +83,7 @@
 
     <article class="sheet" id="detail" aria-labelledby="detail-title" hidden>
         <header class="sheet-head">
+            <button type="button" class="link open-graph" id="open-graph"><svg class="icon"><use href="#i-graph"/></svg>Open graph</button>
             <p class="state" id="detail-status"></p>
             <h2 id="detail-title"></h2>
             <dl class="facts" id="detail-meta"></dl>
@@ -109,7 +116,7 @@
 
         <form class="decision" id="decide" novalidate>
             <label for="comment" class="decision-label">Your note <span id="comment-hint"></span></label>
-            <textarea id="comment" rows="2" maxlength="2000"></textarea>
+            <textarea id="comment" rows="2" maxlength="2000" placeholder="Kept with the decision in the audit trail"></textarea>
             <p class="decision-hint" id="decide-hint"></p>
             <div class="actions">
                 <button type="button" id="approve" class="primary"><svg class="icon"><use href="#i-approve"/></svg>Approve and run</button>
@@ -123,7 +130,36 @@
         <p class="message" id="message" role="status"><svg class="icon"><use id="message-icon" href="#i-ok"/></svg><span id="message-text"></span></p>
     </article>
 
+    <section class="graph-view" id="graph-view" aria-labelledby="graph-title" hidden>
+        <header class="graph-bar">
+            <button type="button" class="tool" id="graph-back"><svg class="icon"><use href="#i-back"/></svg>Back to the request</button>
+            <h1 id="graph-title"></h1>
+            <div class="tools" role="toolbar" aria-label="Graph">
+                <button type="button" class="tool" id="graph-zoom-out" aria-label="Zoom out"><svg class="icon"><use href="#i-minus"/></svg></button>
+                <button type="button" class="tool" id="graph-zoom-in" aria-label="Zoom in"><svg class="icon"><use href="#i-plus"/></svg></button>
+                <button type="button" class="tool" id="graph-fit"><svg class="icon"><use href="#i-fit"/></svg>Fit</button>
+                <button type="button" class="tool" id="graph-copy"><svg class="icon"><use href="#i-copy"/></svg>Copy as Mermaid</button>
+            </div>
+        </header>
+        <p class="graph-note" id="graph-note"></p>
+        <div class="graph-body">
+            <div class="canvas" id="graph-canvas" tabindex="0" aria-label="Graph of the request's session. Use the arrow keys to move between steps."></div>
+            <aside class="inspector" id="graph-inspector" aria-live="polite">
+                <p class="inspector-empty">Choose a step to see what happened.</p>
+            </aside>
+        </div>
+        <ul class="legend" aria-label="Legend">
+            <li><span class="swatch allow"></span>Allowed</li>
+            <li><span class="swatch deny"></span>Denied or ended the run</li>
+            <li><span class="swatch downgrade"></span>Ran a safer tool instead</li>
+            <li><span class="swatch defer"></span>Held for a person</li>
+            <li><span class="swatch flow"></span>Outside content or private data flowing in</li>
+        </ul>
+        <label class="mermaid" id="mermaid-box" hidden>Mermaid text <textarea id="mermaid-text" rows="6" readonly></textarea></label>
+    </section>
+
     <div class="placeholder" id="placeholder">
+        <svg class="placeholder-icon" aria-hidden="true"><use href="#i-inbox"/></svg>
         <p>Choose a request to see what it would do and why it is waiting.</p>
     </div>
 </main>

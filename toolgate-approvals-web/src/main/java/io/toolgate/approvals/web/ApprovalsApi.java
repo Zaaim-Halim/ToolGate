@@ -82,6 +82,19 @@ final class ApprovalsApi {
         return ApiModel.Item.of(visible(viewer(user), approvalId));
     }
 
+    /** The story of one call as a graph, or 404 if it does not exist or the viewer may not see it. */
+    ApiModel.JourneyView journey(java.security.Principal user, String approvalId) {
+        Principal viewer = viewer(user);
+        if (approvalId == null || approvalId.isBlank()) {
+            throw ApiException.badRequest("id is required");
+        }
+        try {
+            return approvals.journey(approvalId, viewer).map(ApiModel.JourneyView::of).orElseThrow(ApiException::notFound);
+        } catch (IllegalArgumentException unknown) {
+            throw ApiException.notFound();
+        }
+    }
+
     /** Who is signed in. */
     ApiModel.Me me(java.security.Principal user) {
         return new ApiModel.Me(ApiModel.Party.of(viewer(user)), application);

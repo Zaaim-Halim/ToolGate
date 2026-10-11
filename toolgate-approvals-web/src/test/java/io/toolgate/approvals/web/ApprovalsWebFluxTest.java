@@ -83,6 +83,12 @@ class ApprovalsWebFluxTest {
     }
 
     @Test
+    void theJourneyIsServedToo() {
+        lena().get().uri(builder -> builder.path("/toolgate/api/approvals/journey").queryParam("id", approvalId).build())
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.steps[1].subject").isEqualTo(true);
+    }
+
+    @Test
     void everyResponseCarriesTheConsoleHeaders() {
         for (String path : new String[] {"/toolgate/api/approvals", "/toolgate/approvals/index.html"}) {
             lena().get().uri(path).exchange().expectStatus().isOk().expectHeader()

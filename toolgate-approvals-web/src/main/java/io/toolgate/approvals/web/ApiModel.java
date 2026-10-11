@@ -1,6 +1,7 @@
 package io.toolgate.approvals.web;
 
 import io.toolgate.api.ApprovalDecision;
+import io.toolgate.api.Journey;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Provenance;
 import io.toolgate.api.ReviewArgument;
@@ -67,6 +68,29 @@ final class ApiModel {
                     decision.comment());
         }
     }
+
+    /** The story of one deferred call, as a graph. No argument values. */
+    record JourneyView(String approvalId, String agent, boolean complete, List<StepView> steps, List<FlowView> flows) {
+
+        static JourneyView of(Journey journey) {
+            return new JourneyView(journey.approvalId(), journey.agentId(), journey.complete(),
+                    journey.steps().stream().map(StepView::of).toList(),
+                    journey.flows().stream().map(flow -> new FlowView(flow.from(), flow.to(), flow.label().name())).toList());
+        }
+    }
+
+    /** One step: a tool call with ToolGate's decision, a person's decision, or how the call ran. */
+    record StepView(String id, String kind, String at, String title, String outcome, String rule, String detail,
+                    List<String> labelsAdded, boolean subject) {
+
+        static StepView of(Journey.Step step) {
+            return new StepView(step.id(), step.kind().name(), step.at().toString(), step.title(), step.outcome(),
+                    step.ruleId(), step.detail(), step.labelsAdded().stream().map(Enum::name).sorted().toList(), step.subject());
+        }
+    }
+
+    /** Taint going from the call that brought it in to a call it shaped. */
+    record FlowView(String from, String to, String label) {}
 
     /** Who is signed in, for the console's header. */
     record Me(Party viewer, String application) {}
