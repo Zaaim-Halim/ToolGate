@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ToolContext;
@@ -111,9 +112,11 @@ final class Gating {
     /**
      * Fills what a request's tool context leaves out, on the request's own thread: the agent from
      * {@code toolgate.agent}, then its principal (see {@link #principalFor}), and the session from the
-     * conversation ID. Whatever the request passed wins.
+     * conversation ID, or, for a headless agent's request that carries no earlier turns and has no chat
+     * memory, a session of its own. Whatever the request passed wins.
      */
-    Map<String, Object> completeContext(Map<String, Object> toolContext, Map<String, Object> requestContext) {
+    Map<String, Object> completeContext(Map<String, Object> toolContext, Map<String, Object> requestContext,
+                                        boolean standalone) {
         var complete = new HashMap<String, Object>(toolContext == null ? Map.of() : toolContext);
         if (!complete.containsKey(ToolGateContext.AGENT) && defaultAgent != null && !defaultAgent.isBlank()) {
             complete.put(ToolGateContext.AGENT, defaultAgent);
@@ -121,9 +124,16 @@ final class Gating {
         if (!complete.containsKey(ToolGateContext.PRINCIPAL) && complete.get(ToolGateContext.AGENT) instanceof String agent) {
             principalFor(agent).ifPresent(principal -> complete.put(ToolGateContext.PRINCIPAL, principal));
         }
-        if (!complete.containsKey(ToolGateContext.SESSION)
-                && requestContext.get(ChatMemory.CONVERSATION_ID) instanceof String conversation && !conversation.isBlank()) {
-            complete.put(ToolGateContext.SESSION, conversation);
+        if (!complete.containsKey(ToolGateContext.SESSION)) {
+            if (requestContext.get(ChatMemory.CONVERSATION_ID) instanceof String conversation && !conversation.isBlank()) {
+                complete.put(ToolGateContext.SESSION, conversation);
+            } else if (standalone && complete.get(ToolGateContext.AGENT) instanceof String agent
+                    && policy.agent(agent).filter(found -> !found.interactive()).isPresent()) {
+                // A headless agent's request that brings no earlier turns, and no memory to add them: the model sees
+                // only this request, so taint from another cannot carry into it, and it is a session of its own. A
+                // chat (interactive) still needs a conversation ID, so its denial budget spans the conversation.
+                complete.put(ToolGateContext.SESSION, "request-" + UUID.randomUUID());
+            }
         }
         return complete;
     }

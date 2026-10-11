@@ -4,6 +4,9 @@ import java.util.function.Supplier;
 import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.ToolCallingAdvisor;
+import org.springframework.ai.chat.client.advisor.api.BaseChatMemoryAdvisor;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.StreamAdvisor;
@@ -45,20 +48,27 @@ final class ToolGateAdvisor implements CallAdvisor, StreamAdvisor {
 
     @Override
     public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
-        return chain.nextCall(gated(request));
+        return chain.nextCall(gated(request, chain.getCallAdvisors().stream().anyMatch(BaseChatMemoryAdvisor.class::isInstance)));
     }
 
     @Override
     public Flux<ChatClientResponse> adviseStream(ChatClientRequest request, StreamAdvisorChain chain) {
-        return chain.nextStream(gated(request));
+        return chain.nextStream(gated(request, chain.getStreamAdvisors().stream().anyMatch(BaseChatMemoryAdvisor.class::isInstance)));
     }
 
-    private ChatClientRequest gated(ChatClientRequest request) {
+    /**
+     * @param chatMemory whether a chat memory advisor takes part in the request
+     */
+    private ChatClientRequest gated(ChatClientRequest request, boolean chatMemory) {
+        // The model sees only this request when no memory advisor adds history and the request itself carries no
+        // earlier turns; only then may a request without a conversation ID be a session of its own.
+        boolean standalone = !chatMemory && request.prompt().getInstructions().stream()
+                .noneMatch(message -> message instanceof AssistantMessage || message instanceof ToolResponseMessage);
         Gating shared = gating.get();
         Prompt prompt = request.prompt();
         if (prompt.getOptions() instanceof ToolCallingChatOptions options) {
             prompt = new Prompt(prompt.getInstructions(),
-                    options.mutate().toolContext(shared.completeContext(options.getToolContext(), request.context())).build());
+                    options.mutate().toolContext(shared.completeContext(options.getToolContext(), request.context(), standalone)).build());
         }
         return request.mutate().prompt(GatedToolCallingManager.gated(prompt, shared)).build();
     }
