@@ -198,6 +198,9 @@ class ApprovalsMvcTest {
         }
         mvc.perform(get("/toolgate/approvals").with(lena()))
                 .andExpect(status().isFound()).andExpect(header().string("Location", ConsoleRedirect.PAGE));
+        // A notification's link keeps the request it points to.
+        mvc.perform(get("/toolgate/approvals/").param("id", "refunds:c2").with(lena()))
+                .andExpect(status().isFound()).andExpect(header().string("Location", ConsoleRedirect.PAGE + "?id=refunds%3Ac2"));
     }
 
     private String digestFor(org.springframework.test.web.servlet.request.RequestPostProcessor viewer) throws Exception {

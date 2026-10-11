@@ -167,18 +167,66 @@ quote the denied value; the log has them.
 
 ## Approval events
 
-An `ApprovalListener` hears what happens to deferred calls: `deferred`, `decided` (approved, refused,
-rejected, cancelled, expired), `recorded` (a super admin's approval waiting for a second person),
-`finished` (executed, failed or unknown) and `superAdminBurst`. Use it to tell reviewers a call is
-waiting, or to page someone. It is an audit sink underneath, so it runs off the request path, and its
-events carry no argument values: link to your review screen instead of describing the call.
+An `ApprovalListener` hears what happens to deferred calls: `deferred`, `expiringSoon`, `decided`
+(approved, refused, rejected, cancelled, expired), `recorded` (a super admin's approval waiting for a
+second person), `finished` (executed, failed or unknown) and `superAdminBurst`. It is an audit sink
+underneath, so it runs off the request path, and its events carry no argument values: link to the
+review screen instead of describing the call. On Spring AI, declare it as an `ApprovalListener` bean.
+
+`expiringSoon` comes from `sweep()` (every 30 seconds on Spring AI), once per call across every
+instance, when its expiry is within an hour, or a quarter of its life if that is sooner. Change it with
+`expiryWarning(Duration)` on the gate's builder, or turn it off with `noExpiryWarning()`.
+
+### Webhooks and Slack
+
+`toolgate-webhook` posts these events over HTTPS, with nothing but the JDK:
 
 ```java
-ToolGate.builder(policy).approvalListener(new SlackApprovals(webhook)).build();
+ApprovalWebhook webhook = ApprovalWebhook.signed(URI.create("https://ops.example.com/hooks/toolgate"), secret)
+        .consoleUrl("https://refunds.example.com/toolgate/approvals/")
+        .build();
+ToolGate.builder(policy).approvalListener(webhook).build();
+
+// Or a Slack incoming webhook, for a reviewers' channel:
+ApprovalWebhook.slack(URI.create(slackUrl)).consoleUrl(consoleUrl)
+        .events(ApprovalWebhook.Event.DEFERRED, ApprovalWebhook.Event.EXPIRING).build();
 ```
 
-On Spring AI, declare it as an `ApprovalListener` bean. To tell the agent what became of the calls it
-asked for, set `toolgate.approvals.outcome.chat-memory=true` (with a `ChatMemory` bean): ToolGate adds
+A signed delivery is flat JSON (`type`, `time`, `approvalId`, `agent`, `tool`, `tenant`, `status`, `by`,
+`access`, `expiresAt`, `link`), with no argument values, reasons or comments. The header
+`ToolGate-Signature: t=<seconds>,v1=<HMAC-SHA256 of "t.body">` proves it came from ToolGate; check it
+with `WebhookSignature.verify(secret, header, body, Duration.ofMinutes(5))`, which also turns away a
+captured delivery replayed later. `ToolGate-Delivery` stays the same across retries, so deduplicate on
+it. Use a random secret of at least 32 bytes.
+
+Deliveries wait in a bounded queue and are posted in order by one background thread, retrying
+timeouts, 408, 429 and 5xx with a growing delay (5 attempts from 1 second, `retries(...)`). One that
+still fails is dropped and counted in `webhook.dropped()`. Redirects are not followed, and the URL
+must be HTTPS. Close the webhook when the application stops; on Spring, declare it as a bean and Spring
+closes it.
+
+### Email
+
+With `toolgate-approvals-web` and a `MailSender` (`spring-boot-starter-mail` and `spring.mail.host`):
+
+```properties
+toolgate.approvals.notify.email.enabled=true
+toolgate.approvals.notify.email.from=toolgate@refunds.example.com
+toolgate.approvals.notify.email.to=ops@example.com                       # every agent, bursts, unknown outcomes
+toolgate.approvals.notify.email.agents.refund-agent=finance@example.com  # one agent's reviewers
+toolgate.approvals.notify.console-url=https://refunds.example.com/toolgate/approvals/
+```
+
+Reviewers get a mail when a call waits, expires soon or needs a second person; the `to` list also gets
+unknown outcomes and super admin bursts. Mails carry the agent, the tool and a link, never argument
+values, and are sent on their own thread.
+
+Links open the request in the console (`?id=…`); the console still checks that whoever follows the link
+may see it.
+
+### Telling the agent
+
+To tell the agent what became of the calls it asked for, set `toolgate.approvals.outcome.chat-memory=true` (with a `ChatMemory` bean): ToolGate adds
 a message it writes itself, never the tool's output, to the conversation, so the agent knows on the
 user's next turn. It suits chat agents, whose session is the conversation ID.
 

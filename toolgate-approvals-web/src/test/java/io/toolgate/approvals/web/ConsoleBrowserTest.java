@@ -110,6 +110,18 @@ class ConsoleBrowserTest {
         assertThat(approvalId).isNotBlank();
     }
 
+    /** A notification's link opens the request it names, straight away. */
+    @Test
+    void aNotificationLinkOpensTheRequest() {
+        String approvalId = Fixtures.deferRefund(gate, "s-" + UUID.randomUUID(), "please refund order 7731");
+
+        page.navigate("/toolgate/approvals/?id=" + java.net.URLEncoder.encode(approvalId, java.nio.charset.StandardCharsets.UTF_8));
+
+        assertThat(page.locator("#detail")).isVisible();
+        assertThat(page.locator("#detail-title")).hasText("Refund an order");
+        assertThat(page.locator("button.item[aria-current=true]")).hasCount(1);
+    }
+
     /** A run whose outcome was lost shows up in History, and a reviewer records what really happened. */
     @Test
     void aReviewerResolvesAnUnknownOutcomeFromHistory() throws InterruptedException {

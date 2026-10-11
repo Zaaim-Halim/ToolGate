@@ -130,6 +130,9 @@ async function loadViewer() {
     }
 }
 
+/** The request a notification linked to, as ?id=…; the API still decides whether this viewer may see it. */
+const linked = new URLSearchParams(location.search).get("id");
+
 async function loadInbox() {
     try {
         const items = await request("");
@@ -137,7 +140,8 @@ async function loadInbox() {
         $("inbox-state").textContent = items.length ? ""
             : "Nothing waits for you. Requests appear here when an agent asks to do something that needs a person.";
         $("count-inbox").textContent = items.length ? String(items.length) : "";
-        if (current && !items.some((item) => item.approvalId === current)) {
+        // A request opened from a notification link stays open even once decided, out of the inbox.
+        if (current && current !== linked && !items.some((item) => item.approvalId === current)) {
             closeSheet();
         }
     } catch (failure) {
@@ -542,5 +546,9 @@ $("resolve-ran").addEventListener("click", () => decide("resolve", true));
 $("resolve-not").addEventListener("click", () => decide("resolve", false));
 
 loadViewer();
-loadInbox();
+loadInbox().then(() => {
+    if (linked) {
+        open(linked);
+    }
+});
 setInterval(refreshView, REFRESH_MS);

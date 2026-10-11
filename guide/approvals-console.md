@@ -5,7 +5,9 @@ Security. Reviewers open `/toolgate/approvals/`, see the calls they may decide, 
 review views, and approve, reject or withdraw them. A History tab lists decided calls of the last 7
 days, where a reviewer also resolves a run whose outcome was lost ("it ran" or "it did not run"), and an
 Overview counts what waits and what was decided. **Open graph** shows how a request came about in its
-session (section 2). The same actions are a REST API at
+session (section 2). A link to `/toolgate/approvals/?id=<approvalId>`, as notifications send, opens that
+request; the console still checks that whoever follows it may see it. To tell reviewers a call waits,
+see [notifications](audit.md#approval-events). The same actions are a REST API at
 `/toolgate/api/approvals`, for your own screens.
 
 ## 1. Add the module and turn it on
