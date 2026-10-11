@@ -42,6 +42,7 @@
         <module>toolgate-safe-jdbc</module>
         <module>toolgate-test</module>
         <module>toolgate-spring-ai</module>
+        <module>toolgate-langchain4j</module>
         <module>toolgate-demo</module>
         <module>toolgate-fuzz</module>
         <module>toolgate-benchmarks</module>
@@ -64,6 +65,9 @@
         <h2.version>2.5.250</h2.version>
         <jakarta.mail.version>2.1.5</jakarta.mail.version>
         <jsqlparser.version>5.4</jsqlparser.version>
+        <!-- 1.22.0 is what the M0 spike validated; langchain4j-mcp still ships as a beta of the same line. -->
+        <langchain4j.version>1.22.0</langchain4j.version>
+        <langchain4j-mcp.version>1.22.0-beta32</langchain4j-mcp.version>
     </properties>
 
     <dependencyManagement>
@@ -109,6 +113,21 @@
                 <groupId>com.github.jsqlparser</groupId>
                 <artifactId>jsqlparser</artifactId>
                 <version>${jsqlparser.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-open-ai</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-mcp</artifactId>
+                <version>${langchain4j-mcp.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
