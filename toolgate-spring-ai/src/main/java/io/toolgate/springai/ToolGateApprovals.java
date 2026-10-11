@@ -236,7 +236,8 @@ public final class ToolGateApprovals {
         var context = new HashMap<String, Object>(ToolGateContext.of(call.agentId(), call.principal(), call.sessionId()));
         context.put(ToolGateContext.IDEMPOTENCY_KEY, claimed.get().idempotencyKey());
         try {
-            String output = shared.run(tool.callback(), call, tool.input(), new ToolContext(context));
+            String output = WithoutSignedInUser.call(() -> shared.run(tool.callback(), call, tool.input(),
+                    new ToolContext(context)));
             shared.gate().finished(approvalId, executor, new ToolResult.Succeeded(ArgValue.text(output)));
         } catch (RuntimeException failure) {
             shared.gate().finished(approvalId, executor, new ToolResult.Failed(failure.toString()));

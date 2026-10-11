@@ -15,6 +15,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 final class SpringSecurityPrincipals implements ToolGatePrincipalResolver {
 
     private static final String ROLE_PREFIX = "ROLE_";
+    /** Spring Security 7's authorities for how the user signed in, which are not roles. */
+    private static final String FACTOR_PREFIX = "FACTOR_";
 
     @Override
     public Optional<Principal> resolve() {
@@ -25,7 +27,7 @@ final class SpringSecurityPrincipals implements ToolGatePrincipalResolver {
         }
         String[] roles = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
-                .filter(authority -> authority != null && !authority.isBlank())
+                .filter(authority -> authority != null && !authority.isBlank() && !authority.startsWith(FACTOR_PREFIX))
                 .map(authority -> authority.startsWith(ROLE_PREFIX) ? authority.substring(ROLE_PREFIX.length()) : authority)
                 .toArray(String[]::new);
         return Optional.of(Principal.user(authentication.getName(), Tenant.none(), roles));
