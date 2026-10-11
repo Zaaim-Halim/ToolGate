@@ -44,6 +44,17 @@ public final class ResolvedAddresses {
         return Optional.empty();
     }
 
+    /**
+     * Why an address must not be connected to.
+     *
+     * @param resolved a resolved address
+     * @return the special-purpose range it is in, described, or empty if it is ordinary public unicast
+     */
+    public static Optional<String> problem(InetAddress resolved) {
+        IpAddress address = toIpAddress(Objects.requireNonNull(resolved, "address"));
+        return SpecialAddresses.find(address).map(special -> address + " is " + special.name() + " (" + special.block() + ")");
+    }
+
     private static IpAddress toIpAddress(InetAddress resolved) {
         ByteBuffer bytes = ByteBuffer.wrap(resolved.getAddress());
         return switch (bytes.remaining()) {

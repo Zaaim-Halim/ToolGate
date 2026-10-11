@@ -90,7 +90,7 @@ public final class ArgumentChecks {
      * @return a function from the argument's value to the reason it is denied, or empty if allowed
      * @throws IllegalArgumentException if the rules mix families, or a value is invalid
      */
-    static Function<String, Optional<String>> compile(List<ArgumentRule> rules,
+    public static Function<String, Optional<String>> compile(List<ArgumentRule> rules,
                                                       Function<String, Optional<String>> nameCheck) {
         return switch (family(rules)) {
             case PATH -> {
