@@ -31,6 +31,13 @@ public interface ApprovalListener {
     default void decided(AuditEvent.ApprovalDecided event) {}
 
     /**
+     * A call still waits and expires soon: a reminder for reviewers. Once per call, across every instance.
+     *
+     * @param event the call and its expiry
+     */
+    default void expiringSoon(AuditEvent.ApprovalExpiring event) {}
+
+    /**
      * A super admin's approval was recorded, and the call waits for a second person.
      *
      * @param event the recorded approval
@@ -79,6 +86,7 @@ public interface ApprovalListener {
                 case AuditEvent.ApprovalDecided decided when isOutcome(decided.status()) -> finished(decided);
                 case AuditEvent.ApprovalDecided decided -> decided(decided);
                 case AuditEvent.ApprovalRecorded recorded -> recorded(recorded);
+                case AuditEvent.ApprovalExpiring expiring -> expiringSoon(expiring);
                 case AuditEvent.SuperAdminBurst burst -> superAdminBurst(burst);
                 case AuditEvent.ApprovalViewed viewedCall -> viewed(viewedCall);
                 case AuditEvent.ApprovalsListed listing -> listed(listing);

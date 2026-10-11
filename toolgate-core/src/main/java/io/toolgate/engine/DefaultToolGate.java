@@ -98,11 +98,13 @@ public final class DefaultToolGate implements ToolGate {
     private final ArgumentSummary argumentSummary;
     private final Clock clock;
     private final ToolCatalog catalog;
+    /** How long before expiry listeners hear a call expires soon; zero for never. */
+    private final Duration expiryWarning;
 
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, ResultChecker results,
                            SessionStore sessions, ApprovalQueue approvals, AuditChannel audit,
                            List<DecisionObserver> observers, SuperAdminWatch superAdminWatch,
-                           ArgumentSummary argumentSummary, Clock clock, ToolCatalog catalog) {
+                           ArgumentSummary argumentSummary, Clock clock, ToolCatalog catalog, Duration expiryWarning) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.engine = new DecisionEngine(policy, evaluators);
@@ -117,6 +119,7 @@ public final class DefaultToolGate implements ToolGate {
         this.superAdminWatch = Objects.requireNonNull(superAdminWatch, "superAdminWatch");
         this.argumentSummary = Objects.requireNonNull(argumentSummary, "argumentSummary");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.expiryWarning = Objects.requireNonNull(expiryWarning, "expiryWarning");
         Instant loadedAt = clock.instant();
         audit.submit(() -> new AuditEvent.PolicyLoaded(loadedAt, policy.hash(), policy.mode(), policy.agents().size()));
     }
@@ -125,7 +128,7 @@ public final class DefaultToolGate implements ToolGate {
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions) {
         this(policy, evaluators, new ResultChecker(policy, BuiltInEvaluators.NO_OWNERS), sessions,
                 new InMemoryApprovalQueue(), AuditChannel.NONE, List.of(), SuperAdminWatch.OFF, ArgumentSummary.typesOnly(), Clock.systemUTC(),
-                BuiltInEvaluators.NO_TOOLS);
+                BuiltInEvaluators.NO_TOOLS, Duration.ZERO);
     }
 
     @Override
@@ -536,9 +539,17 @@ public final class DefaultToolGate implements ToolGate {
     public Sweep sweep() {
         Instant now = clock.instant();
         int expired = 0;
+        int warned = 0;
         for (PendingCall call : approvals.pending()) {
-            if (!now.isBefore(call.expiresAt()) && expire(call)) {
-                expired++;
+            if (!now.isBefore(call.expiresAt())) {
+                if (expire(call)) {
+                    expired++;
+                }
+            } else if (expiresSoon(call, now) && approvals.replace(call, call.withExpiryWarned())) {
+                // Compare-and-set: of all the instances sweeping, one wins, so listeners hear it once.
+                warned++;
+                audit.submit(() -> new AuditEvent.ApprovalExpiring(now, call.approvalId(), call.call().sessionId(),
+                        call.call().agentId(), call.call().tool(), call.expiresAt()));
             }
         }
         int unknown = 0;
@@ -550,7 +561,17 @@ public final class DefaultToolGate implements ToolGate {
                         + " ran out at " + run.get().leaseUntil() + " with no outcome; check whether the tool ran");
             }
         }
-        return new Sweep(expired, unknown);
+        return new Sweep(expired, unknown, warned);
+    }
+
+    /** Whether a waiting call is within its warning lead: the configured lead, or a quarter of its life if sooner. */
+    private boolean expiresSoon(PendingCall call, Instant now) {
+        if (call.expiryWarned() || expiryWarning.isZero()) {
+            return false;
+        }
+        Duration life = Duration.between(call.deferredAt(), call.expiresAt());
+        Duration lead = expiryWarning.compareTo(life.dividedBy(4)) < 0 ? expiryWarning : life.dividedBy(4);
+        return !now.isBefore(call.expiresAt().minus(lead));
     }
 
     /**

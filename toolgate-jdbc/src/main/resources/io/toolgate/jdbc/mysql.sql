@@ -23,7 +23,8 @@ CREATE TABLE toolgate_pending_call (
     claimed_at       BIGINT,
     lease_until      BIGINT,
     finished_at      BIGINT,
-    outcome          MEDIUMTEXT
+    outcome          MEDIUMTEXT,
+    expiry_warned    SMALLINT      DEFAULT 0 NOT NULL
 );
 CREATE INDEX toolgate_pending_call_status ON toolgate_pending_call (status, deferred_at);
 -- One row per decision on a queued call: who approved, rejected or cancelled it, under which access, and

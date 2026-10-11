@@ -325,9 +325,10 @@ public interface ToolGate extends AutoCloseable {
     boolean resolve(String approvalId, Principal by, boolean ran, String reason);
 
     /**
-     * Keeps the queue current: expires pending calls past their expiry, and marks calls whose
-     * executor's lease ran out {@link ApprovalStatus#UNKNOWN}. Approving checks expiry too, so this
-     * only keeps the queue and the audit trail current; run it on a schedule, such as every minute.
+     * Keeps the queue current: expires pending calls past their expiry, marks calls whose executor's
+     * lease ran out {@link ApprovalStatus#UNKNOWN}, and tells listeners once when a waiting call expires
+     * soon ({@link Builder#expiryWarning}). Approving checks expiry too, so this only keeps the queue and
+     * the audit trail current; run it on a schedule, such as every minute.
      *
      * @return what changed
      */
@@ -338,8 +339,9 @@ public interface ToolGate extends AutoCloseable {
      *
      * @param expired pending calls that expired
      * @param unknown runs whose lease ran out with no outcome
+     * @param warned  waiting calls whose listeners were told they expire soon
      */
-    record Sweep(int expired, int unknown) {}
+    record Sweep(int expired, int unknown, int warned) {}
 
     /**
      * Gaps in the audit trail: events not delivered to every sink, because their queue was full, a sink
@@ -372,6 +374,8 @@ public interface ToolGate extends AutoCloseable {
     int DEFAULT_SUPER_ADMIN_ALERT_DECISIONS = 5;
     /** The window the super admin alert counts decisions in, by default. */
     Duration DEFAULT_SUPER_ADMIN_ALERT_WINDOW = Duration.ofHours(1);
+    /** How long before its expiry a waiting call is announced as expiring soon, by default. */
+    Duration DEFAULT_EXPIRY_WARNING = Duration.ofHours(1);
 
     /** Builds a {@link ToolGate}; every setting except the policy has a default. */
     final class Builder {
@@ -387,6 +391,7 @@ public interface ToolGate extends AutoCloseable {
         private final List<DecisionObserver> decisionObservers = new ArrayList<>();
         private int superAdminAlertDecisions = DEFAULT_SUPER_ADMIN_ALERT_DECISIONS;
         private Duration superAdminAlertWindow = DEFAULT_SUPER_ADMIN_ALERT_WINDOW;
+        private Duration expiryWarning = DEFAULT_EXPIRY_WARNING;
         private byte[] argumentHashKey;
         private Clock clock = Clock.systemUTC();
 
@@ -497,8 +502,9 @@ public interface ToolGate extends AutoCloseable {
         /**
          * Raises an alert, the audit event {@code toolgate.superadmin.burst}, when super admins make
          * more than {@code decisions} decisions within {@code window}: a stolen super admin account
-         * tends to act fast. At most one alert per window. On by default, more than 5 in an hour. The
-         * count is per gate, so in a cluster each instance counts its own.
+         * tends to act fast. On by default, more than 5 in an hour. The count covers every instance sharing
+         * the approval queue, when the queue can count decisions, as the JDBC queue does; each instance
+         * raises at most one alert per window.
          *
          * @param decisions how many decisions are normal within the window
          * @param window    the window
@@ -521,6 +527,34 @@ public interface ToolGate extends AutoCloseable {
          */
         public Builder noSuperAdminAlert() {
             this.superAdminAlertWindow = null;
+            return this;
+        }
+
+        /**
+         * How long before its expiry a waiting call is announced, once, to approval listeners as expiring
+         * soon ({@link ApprovalListener#expiringSoon}), by {@link ToolGate#sweep}. A call with a short life
+         * is announced when a quarter of it remains, if that is sooner, so it is not announced the moment
+         * it is deferred. One hour by default.
+         *
+         * @param lead how long before the expiry
+         * @return this builder
+         * @throws IllegalArgumentException if {@code lead} is not positive
+         */
+        public Builder expiryWarning(Duration lead) {
+            if (lead.isNegative() || lead.isZero()) {
+                throw new IllegalArgumentException("expiryWarning needs a positive lead, was " + lead);
+            }
+            this.expiryWarning = lead;
+            return this;
+        }
+
+        /**
+         * Turns off the expiring-soon announcement.
+         *
+         * @return this builder
+         */
+        public Builder noExpiryWarning() {
+            this.expiryWarning = Duration.ZERO;
             return this;
         }
 
@@ -597,7 +631,8 @@ public interface ToolGate extends AutoCloseable {
                             : new SuperAdminWatch(superAdminAlertDecisions, superAdminAlertWindow),
                     argumentHashKey != null ? ArgumentSummary.keyed(argumentHashKey) : ArgumentSummary.typesOnly(),
                     clock,
-                    toolCatalog != null ? toolCatalog : BuiltInEvaluators.NO_TOOLS);
+                    toolCatalog != null ? toolCatalog : BuiltInEvaluators.NO_TOOLS,
+                    expiryWarning);
         }
 
         private AuditChannel auditChannel() {

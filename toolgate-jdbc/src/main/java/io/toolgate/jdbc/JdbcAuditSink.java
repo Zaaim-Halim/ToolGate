@@ -146,6 +146,9 @@ public final class JdbcAuditSink implements AuditSink {
                 case AuditEvent.ApprovalRecorded recorded -> new Row(recorded.time(), "APPROVAL_RECORDED", null,
                         recorded.approvalId(), recorded.sessionId(), recorded.agentId(), recorded.decidedBy(), null,
                         recorded.tool().toString(), "recorded", null, lower(recorded.access().name()), null);
+                case AuditEvent.ApprovalExpiring expiring -> new Row(expiring.time(), "APPROVAL_EXPIRING", null,
+                        expiring.approvalId(), expiring.sessionId(), expiring.agentId(), null, null,
+                        expiring.tool().toString(), "expiring", null, null, null);
                 case AuditEvent.ApprovalViewed viewed -> new Row(viewed.time(), "APPROVAL_VIEWED", null,
                         viewed.approvalId(), viewed.sessionId(), viewed.agentId(), viewed.viewer(), null,
                         viewed.tool().toString(), "viewed", null, lower(viewed.access().name()), null);

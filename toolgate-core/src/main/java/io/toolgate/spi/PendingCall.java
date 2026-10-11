@@ -29,10 +29,12 @@ import java.util.Optional;
  *                   at the version the caller read, so concurrent decisions cannot both win
  * @param decisions  what people decided about it, oldest first
  * @param execution  the executor's run once claimed; null before
+ * @param expiryWarned whether listeners were told it expires soon; set once, so they are told once across
+ *                     every instance
  */
 public record PendingCall(String approvalId, ToolCall call, Decision.Defer deferral, Instant deferredAt,
                           Instant expiresAt, ApprovalStatus status, long version, List<ApprovalDecision> decisions,
-                          Execution execution) {
+                          Execution execution, boolean expiryWarned) {
 
     /** Requires every component but the execution, an expiry after the deferral, and copies the decisions. */
     public PendingCall {
@@ -49,6 +51,24 @@ public record PendingCall(String approvalId, ToolCall call, Decision.Defer defer
             throw new IllegalArgumentException("version must not be negative");
         }
         decisions = List.copyOf(decisions);
+    }
+
+    /**
+     * A call whose listeners were not told it expires soon.
+     *
+     * @param approvalId the call's ID in the queue
+     * @param call       the call as the model made it
+     * @param deferral   the decision that deferred it
+     * @param deferredAt when it was deferred
+     * @param expiresAt  when it expires if nobody decides
+     * @param status     where it stands
+     * @param version    how many times it changed since it was queued
+     * @param decisions  what people decided about it, oldest first
+     * @param execution  the executor's run once claimed; null before
+     */
+    public PendingCall(String approvalId, ToolCall call, Decision.Defer deferral, Instant deferredAt, Instant expiresAt,
+                       ApprovalStatus status, long version, List<ApprovalDecision> decisions, Execution execution) {
+        this(approvalId, call, deferral, deferredAt, expiresAt, status, version, decisions, execution, false);
     }
 
     /**
@@ -83,7 +103,17 @@ public record PendingCall(String approvalId, ToolCall call, Decision.Defer defer
      */
     public PendingCall withStatus(ApprovalStatus newStatus) {
         return new PendingCall(approvalId, call, deferral, deferredAt, expiresAt, newStatus, version + 1, decisions,
-                execution);
+                execution, expiryWarned);
+    }
+
+    /**
+     * The next version of this call, marked as having warned that it expires soon.
+     *
+     * @return the updated call, in the same status
+     */
+    public PendingCall withExpiryWarned() {
+        return new PendingCall(approvalId, call, deferral, deferredAt, expiresAt, status, version + 1, decisions,
+                execution, true);
     }
 
     /**
@@ -96,7 +126,8 @@ public record PendingCall(String approvalId, ToolCall call, Decision.Defer defer
     public PendingCall withDecision(ApprovalDecision decision, ApprovalStatus newStatus) {
         var more = new ArrayList<>(decisions);
         more.add(Objects.requireNonNull(decision, "decision"));
-        return new PendingCall(approvalId, call, deferral, deferredAt, expiresAt, newStatus, version + 1, more, execution);
+        return new PendingCall(approvalId, call, deferral, deferredAt, expiresAt, newStatus, version + 1, more, execution,
+                expiryWarned);
     }
 
     /**
@@ -108,6 +139,6 @@ public record PendingCall(String approvalId, ToolCall call, Decision.Defer defer
      */
     public PendingCall withExecution(Execution run, ApprovalStatus newStatus) {
         return new PendingCall(approvalId, call, deferral, deferredAt, expiresAt, newStatus, version + 1, decisions,
-                Objects.requireNonNull(run, "run"));
+                Objects.requireNonNull(run, "run"), expiryWarned);
     }
 }

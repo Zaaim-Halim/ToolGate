@@ -70,7 +70,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             + " principal_id, principal_tenant, principal_roles, tool, call_at, defer_rule, payload, deferred_at,"
             + " expires_at";
     private static final String COLUMNS = INSERT_COLUMNS
-            + ", version, executor, claimed_at, lease_until, finished_at, outcome";
+            + ", version, executor, claimed_at, lease_until, finished_at, outcome, expiry_warned";
     private static final String DECISION_COLUMNS = "approval_id, seq, kind, decided_by, access, decided_at, comment";
 
     /** The databases whose DDL ships with this module. */
@@ -235,7 +235,7 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
         ApprovalQueue.requireNextVersion(expected, next);
         requireSchema();
         String sql = "UPDATE " + table + " SET status = ?, version = ?, executor = ?, claimed_at = ?, lease_until = ?,"
-                + " finished_at = ?, outcome = ? WHERE approval_id = ? AND version = ?";
+                + " finished_at = ?, outcome = ?, expiry_warned = ? WHERE approval_id = ? AND version = ?";
         try (Connection connection = dataSource.getConnection()) {
             boolean autoCommit = connection.getAutoCommit();
             connection.setAutoCommit(false);
@@ -386,8 +386,9 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
                     update.setString(7, codec.seal(run.summary(), outcomeContext(next.approvalId())));
                 }
             }
-            update.setString(8, expected.approvalId());
-            update.setLong(9, expected.version());
+            update.setInt(8, next.expiryWarned() ? 1 : 0);
+            update.setString(9, expected.approvalId());
+            update.setLong(10, expected.version());
             return update.executeUpdate() == 1;
         }
     }
@@ -457,7 +458,8 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
             var deferral = new Decision.Defer(row.getString("defer_rule"), reason, approvalId);
             return new PendingCall(approvalId, call, deferral, instant(row.getLong("deferred_at")),
                     instant(row.getLong("expires_at")), ApprovalStatus.valueOf(row.getString("status")),
-                    row.getLong("version"), decisions(connection, approvalId), execution(row, approvalId));
+                    row.getLong("version"), decisions(connection, approvalId), execution(row, approvalId),
+                    row.getInt("expiry_warned") != 0);
         } catch (IllegalArgumentException | NullPointerException corrupt) {
             throw new JdbcStoreException("unreadable queue row " + approvalId, corrupt);
         }

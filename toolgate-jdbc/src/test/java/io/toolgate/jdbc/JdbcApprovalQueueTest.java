@@ -109,6 +109,18 @@ class JdbcApprovalQueueTest {
     }
 
     @Test
+    void keepsTheExpiryWarning() {
+        PendingCall queued = refund("refunds:c2", T0);
+        queue.add(queued);
+
+        assertThat(queue.replace(queued, queued.withExpiryWarned())).isTrue();
+
+        assertThat(queue.get("refunds:c2").orElseThrow()).extracting(PendingCall::expiryWarned, PendingCall::version)
+                .containsExactly(true, 1L);
+        assertThat(queued.expiryWarned()).isFalse();
+    }
+
+    @Test
     void countsDecisionsByAccessInAWindow() {
         PendingCall first = refund("refunds:c1", T0);
         PendingCall second = refund("refunds:c2", T0);

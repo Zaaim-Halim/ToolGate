@@ -78,6 +78,15 @@ public final class AuditJson {
                     .field("access", recorded.access().name().toLowerCase(Locale.ROOT))
                     .field("comment", recorded.comment())
                     .close();
+            case AuditEvent.ApprovalExpiring expiring -> new Writer()
+                    .field("event", "toolgate.approval.expiring")
+                    .field("time", expiring.time().toString())
+                    .field("approvalId", expiring.approvalId())
+                    .field("session", expiring.sessionId())
+                    .field("agent", expiring.agentId())
+                    .field("tool", expiring.tool().toString())
+                    .field("expiresAt", expiring.expiresAt().toString())
+                    .close();
             case AuditEvent.ApprovalViewed viewed -> new Writer()
                     .field("event", "toolgate.approval.viewed")
                     .field("time", viewed.time().toString())

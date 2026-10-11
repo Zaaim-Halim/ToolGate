@@ -27,7 +27,7 @@ import java.util.Objects;
 public sealed interface AuditEvent
         permits AuditEvent.Decided, AuditEvent.PolicyLoaded, AuditEvent.Declassified, AuditEvent.ResultWithheld,
                 AuditEvent.ApprovalDecided, AuditEvent.ApprovalRecorded, AuditEvent.SuperAdminBurst,
-                AuditEvent.ApprovalViewed, AuditEvent.ApprovalsListed {
+                AuditEvent.ApprovalViewed, AuditEvent.ApprovalsListed, AuditEvent.ApprovalExpiring {
 
     /**
      * When it happened.
@@ -156,6 +156,31 @@ public sealed interface AuditEvent
             }
             requireNonBlank(decidedBy, "decidedBy");
             requireNonBlank(reason, "reason");
+        }
+    }
+
+    /**
+     * A call still waits for a decision and expires soon, so reviewers can be reminded. Raised once per call,
+     * by {@code sweep()} on whichever instance runs it first.
+     *
+     * @param time       when the sweep noticed
+     * @param approvalId the call's approval ID
+     * @param sessionId  its session
+     * @param agentId    the agent that made it
+     * @param tool       the tool it calls
+     * @param expiresAt  when it expires if nobody decides
+     */
+    record ApprovalExpiring(Instant time, String approvalId, String sessionId, String agentId, ToolId tool,
+                            Instant expiresAt) implements AuditEvent {
+
+        /** Requires every component. */
+        public ApprovalExpiring {
+            Objects.requireNonNull(time, "time");
+            requireNonBlank(approvalId, "approvalId");
+            requireNonBlank(sessionId, "sessionId");
+            requireNonBlank(agentId, "agentId");
+            Objects.requireNonNull(tool, "tool");
+            Objects.requireNonNull(expiresAt, "expiresAt");
         }
     }
 

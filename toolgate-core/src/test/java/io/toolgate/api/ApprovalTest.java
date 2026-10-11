@@ -167,6 +167,71 @@ class ApprovalTest {
         assertThat(gate.approve(approvalId, LENA, JOB)).isInstanceOf(Approval.Released.class);
     }
 
+    /** Reviewers get one reminder before a call expires, however many instances sweep. */
+    @Test
+    void aWaitingCallIsAnnouncedOnceBeforeItExpires() {
+        var heard = new CopyOnWriteArrayList<AuditEvent.ApprovalExpiring>();
+        ApprovalListener listener = new ApprovalListener() {
+            @Override
+            public void expiringSoon(AuditEvent.ApprovalExpiring event) {
+                heard.add(event);
+            }
+        };
+        ToolGatePolicy policy = refundPolicy(a -> { });
+        // Closed by hand, to deliver the audit events before reading what the listener heard.
+        ToolGate first = ToolGate.builder(policy).approvalQueue(queue).sessionStore(sessions).clock(clock)
+                .noDefaultLog().approvalListener(listener).build();
+        ToolGate second = ToolGate.builder(policy).approvalQueue(queue).sessionStore(sessions).clock(clock)
+                .noDefaultLog().approvalListener(listener).build();
+        String approvalId = deferRefund(first, JOB);
+        Instant expiresAt = queue.get(approvalId).orElseThrow().expiresAt();
+
+        assertThat(first.sweep().warned()).isZero();
+        clock.advance(Duration.between(clock.instant(), expiresAt.minus(Duration.ofMinutes(59))));
+        assertThat(first.sweep().warned()).isEqualTo(1);
+        assertThat(second.sweep().warned()).isZero();
+        assertThat(first.sweep().warned()).isZero();
+
+        // The flag never changes the call's status, so it can still be approved.
+        assertThat(queue.get(approvalId).orElseThrow()).extracting(PendingCall::status, PendingCall::expiryWarned)
+                .containsExactly(ApprovalStatus.PENDING, true);
+        assertThat(first.approve(approvalId, LENA, JOB)).isInstanceOf(Approval.Released.class);
+        first.close();
+        second.close();
+        assertThat(heard).singleElement().satisfies(event -> {
+            assertThat(event.approvalId()).isEqualTo(approvalId);
+            assertThat(event.expiresAt()).isEqualTo(expiresAt);
+            assertThat(event.toJson()).contains("\"event\":\"toolgate.approval.expiring\"");
+        });
+    }
+
+    @Test
+    void aShortLivedCallIsAnnouncedWhenAQuarterOfItsLifeRemains() {
+        try (ToolGate gate = ToolGate.builder(refundPolicy(a -> { })).approvalQueue(queue).sessionStore(sessions)
+                .clock(clock).noDefaultLog().expiryWarning(Duration.ofDays(30)).build()) {
+            String approvalId = deferRefund(gate, JOB);
+            PendingCall waiting = queue.get(approvalId).orElseThrow();
+            Duration life = Duration.between(waiting.deferredAt(), waiting.expiresAt());
+
+            clock.advance(life.dividedBy(2));
+            assertThat(gate.sweep().warned()).isZero();
+            clock.advance(life.dividedBy(4));
+            assertThat(gate.sweep().warned()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void theExpiryAnnouncementCanBeTurnedOff() {
+        try (ToolGate gate = ToolGate.builder(refundPolicy(a -> { })).approvalQueue(queue).sessionStore(sessions)
+                .clock(clock).noDefaultLog().noExpiryWarning().build()) {
+            String approvalId = deferRefund(gate, JOB);
+            clock.advance(Duration.between(clock.instant(), queue.get(approvalId).orElseThrow().expiresAt().minusSeconds(1)));
+
+            assertThat(gate.sweep().warned()).isZero();
+        }
+        assertThatIllegalArgumentException().isThrownBy(() -> ToolGate.builder(refundPolicy(a -> { })).expiryWarning(Duration.ZERO));
+    }
+
     /** Fail closed: an agent that names no reviewers has calls nobody may approve; they can only expire. */
     @Test
     void agentWithoutReviewersCannotHaveCallsApproved() {
@@ -457,7 +522,7 @@ class ApprovalTest {
         gate.claim(approvalId, "node-1", Duration.ofMinutes(1));
 
         clock.advance(Duration.ofMinutes(2));
-        assertThat(gate.sweep()).isEqualTo(new ToolGate.Sweep(0, 1));
+        assertThat(gate.sweep()).isEqualTo(new ToolGate.Sweep(0, 1, 0));
         assertThat(queue.get(approvalId).orElseThrow().status()).isEqualTo(ApprovalStatus.UNKNOWN);
         assertThat(gate.claim(approvalId, "node-2", Duration.ofMinutes(1))).isEmpty();
 

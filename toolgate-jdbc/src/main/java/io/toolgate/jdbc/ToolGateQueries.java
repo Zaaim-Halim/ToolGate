@@ -244,7 +244,8 @@ public final class ToolGateQueries {
      * @param eventId    the row's ID
      * @param at         when the event happened
      * @param kind       {@code DECIDED}, {@code WITHHELD}, {@code APPROVAL_DECIDED}, {@code APPROVAL_RECORDED},
-     *                   {@code APPROVAL_VIEWED}, {@code APPROVALS_LISTED}, {@code SUPER_ADMIN_BURST},
+     *                   {@code APPROVAL_EXPIRING}, {@code APPROVAL_VIEWED}, {@code APPROVALS_LISTED},
+     *                   {@code SUPER_ADMIN_BURST},
      *                   {@code DECLASSIFIED} or {@code POLICY_LOADED}
      * @param callId     the tool call, for gate decisions and withheld results
      * @param approvalId the deferred call, for deferrals and approval events
