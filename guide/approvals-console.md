@@ -4,7 +4,8 @@ A review screen for deferred calls, for Spring MVC and Spring WebFlux applicatio
 Security. Reviewers open `/toolgate/approvals/`, see the calls they may decide, masked by the policy's
 review views, and approve, reject or withdraw them. A History tab lists decided calls of the last 7
 days, where a reviewer also resolves a run whose outcome was lost ("it ran" or "it did not run"), and an
-Overview counts what waits and what was decided. The same actions are a REST API at
+Overview counts what waits and what was decided. **Open graph** shows how a request came about in its
+session (section 2). The same actions are a REST API at
 `/toolgate/api/approvals`, for your own screens.
 
 ## 1. Add the module and turn it on
@@ -26,7 +27,7 @@ Adding the module exposes nothing until `enabled=true`. With it on, the applicat
 without Spring Security (`spring-boot-starter-security`): a console that decides refunds must never be
 open.
 
-## The graph of a request
+## 2. The graph of a request
 
 **Open graph** on a request shows how it came about: every tool call the agent made in that session, in
 an Agent lane, with ToolGate's decision on each in a ToolGate lane, then what people decided and how the
@@ -41,7 +42,7 @@ stores do, through `SessionStore.events(sessionId)`; with another store the grap
 The REST API serves it at `GET /toolgate/api/approvals/journey?id=…`, the Java API as
 `journey(approvalId, viewer)`.
 
-## 2. Sign-in and roles
+## 3. Sign-in and roles
 
 Reviewers sign in however your application already signs users in: form login, OIDC, SAML. The console
 adds no login of its own, and every endpoint refuses anyone not signed in, even if your security rules
@@ -68,7 +69,7 @@ When a call is approved, ToolGate re-checks it with its principal as it is now. 
 principal as recorded when the call was deferred; declare a `ToolGateRequesterDirectory` that looks your
 users up, so a role revoked since then counts.
 
-## 3. What keeps it safe
+## 4. What keeps it safe
 
 - **Request forgery.** Every decision must be JSON, carry the header `X-ToolGate-Request: 1`, and, when
   the browser names its origin, come from the same host. A form on another site cannot set the header,
@@ -95,13 +96,14 @@ users up, so a role revoked since then counts.
 - **Blocking work off event loops.** On WebFlux, every call runs on Reactor's bounded elastic
   scheduler, since ToolGate's stores, such as JDBC, block.
 
-## 4. The REST API
+## 5. The REST API
 
 | Method and path | Body | Answer |
 |---|---|---|
 | `GET /toolgate/api/approvals` | | The calls you may see, masked |
 | `GET /toolgate/api/approvals/history?status=…&days=7&limit=100` | | Decided calls you may see, newest first; `status` is a comma-separated list (default: every decided status), `days` 1 to 90, `limit` 1 to 500 |
 | `GET /toolgate/api/approvals/item?id=…` | | One call; 404 also when you may not see it |
+| `GET /toolgate/api/approvals/journey?id=…` | | How the call came about in its session: steps, flows and whether the log was complete; 404 also when you may not see it |
 | `GET /toolgate/api/approvals/me` | | Who you are signed in as, and the application's name |
 | `POST /toolgate/api/approvals/decisions` | `{approvalId, kind, comment, digest, ran}` | `{outcome, reason, status}` |
 
@@ -110,7 +112,7 @@ except for a reviewer's approval. Outcomes: `released`, `awaiting-confirmation`,
 `not-permitted`, `already-decided`, `expired`, `done`, `not-done`. HTTP errors are kept for the request
 itself: 400 invalid, 401 not signed in, 403 refused by the forgery checks, 404 not visible.
 
-## 5. Testing it
+## 6. Testing it
 
 `mvn -pl toolgate-approvals-web -Pe2e verify` also runs the browser tests (Playwright for Java), which
 download a browser on first run: an attacker's text stays text, masked values stay masked, and a
