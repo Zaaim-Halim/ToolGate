@@ -38,6 +38,7 @@
         <module>toolgate-core</module>
         <module>toolgate-jdbc</module>
         <module>toolgate-email</module>
+        <module>toolgate-webhook</module>
         <module>toolgate-sql</module>
         <module>toolgate-safe-jdbc</module>
         <module>toolgate-safe-http</module>
