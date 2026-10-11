@@ -21,9 +21,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/** Case A's policy, and the ownership lookup its sameTenant rule needs. */
+/**
+ * The demo's policy, for its three agents: Case A's invoice job, Case E's ticket triage, and an
+ * interactive inbox assistant. Each uses the design's defaults and nothing tuned for the trifecta
+ * measurement.
+ */
 @Configuration(proxyBeanMethods = false)
-class InvoicePolicy {
+class DemoPolicy {
 
     /**
      * @param mode {@code enforce}, or {@code monitor} for the first weeks: decisions are logged, never applied
@@ -36,6 +40,18 @@ class InvoicePolicy {
                 .tool("fetchSupplierPage", t -> t.labels(UNTRUSTED_CONTENT, EXTERNAL_SINK).effect(READ))
                 .tool("sendEmail", t -> t.labels(EXTERNAL_SINK).effect(IRREVERSIBLE))
                 .tool("draftEmail", t -> t.effect(REVERSIBLE))
+                .tool("readTicket", t -> t.labels(UNTRUSTED_CONTENT).effect(READ))
+                .tool("searchKnowledgeBase", t -> t.effect(READ))
+                .tool("lookupCustomer", t -> t.labels(PRIVATE_DATA).effect(READ))
+                .tool("tagTicket", t -> t.effect(REVERSIBLE))
+                .tool("replyToCustomer", t -> t.labels(EXTERNAL_SINK).effect(IRREVERSIBLE))
+                .tool("draftReply", t -> t.effect(REVERSIBLE))
+                .tool("listInbox", t -> t.labels(UNTRUSTED_CONTENT).effect(READ))
+                .tool("readMessage", t -> t.labels(UNTRUSTED_CONTENT).effect(READ))
+                .tool("searchContacts", t -> t.labels(PRIVATE_DATA).effect(READ))
+                .tool("readCalendar", t -> t.labels(PRIVATE_DATA).effect(READ))
+                .tool("createEvent", t -> t.effect(REVERSIBLE))
+                .tool("sendMessage", t -> t.labels(EXTERNAL_SINK).effect(IRREVERSIBLE))
                 .agent("invoice-processor", a -> a
                         // A nightly job: it acts as this service, in tenant Acme, never as a user.
                         .principal(Principal.service("invoice-processor", Tenant.of("acme")))
@@ -45,6 +61,19 @@ class InvoicePolicy {
                         .rule("fetchSupplierPage.url", schemes("https"), hosts("*.suppliers.example"))
                         .rule("sendEmail.to", emailDomains("mycompany.com"))
                         .budget(b -> b.toolCalls(200)))
+                .agent("ticket-triage", a -> a
+                        // Case E: one session per ticket, nobody watching; replies become drafts once tainted.
+                        .principal(Principal.service("ticket-triage", Tenant.of("acme")))
+                        .allow("readTicket", "searchKnowledgeBase", "lookupCustomer", "tagTicket", "replyToCustomer",
+                                "draftReply")
+                        .downgrade("replyToCustomer", "draftReply")
+                        .budget(b -> b.toolCalls(40)))
+                .agent("inbox-assistant", a -> a
+                        // Acts for the signed-in user, who confirms what the policy holds.
+                        .interactive(true)
+                        .allow("listInbox", "readMessage", "searchContacts", "readCalendar", "createEvent",
+                                "sendMessage")
+                        .budget(b -> b.toolCalls(40)))
                 .build();
     }
 

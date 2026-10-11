@@ -4,9 +4,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * A headless invoice agent, as in Case A of the design: a nightly job reads each invoice, may look at
- * the supplier's terms page, and emails the accounts team. ToolGate stands between the model and every
- * tool; the application adds a policy and nothing else.
+ * Three agents behind one policy: Case A's headless invoice job, which reads each invoice, may look at
+ * the supplier's terms page, and emails the accounts team; Case E's ticket triage; and an interactive
+ * inbox assistant. ToolGate stands between the model and every tool; the application adds a policy
+ * and nothing else.
  */
 @SpringBootApplication
 public class DemoApplication {
