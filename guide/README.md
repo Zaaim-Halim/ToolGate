@@ -17,6 +17,7 @@ Then:
 - [Policies](policies.md): agents, allow-lists, argument rules, taint, budgets, approvals, modes.
 - [Helpers for tool authors](helpers.md): email and SQL rules, SafeJdbc, SafeHttp.
 - [Audit, metrics and traces](audit.md): the log, your own sinks, Micrometer, OpenTelemetry.
+- [The approvals console](approvals-console.md): a review screen and REST API for deferred calls.
 - [Replaying a policy change](replay.md): the `toolgate` command.
 - [Releasing](releasing.md): publishing to Maven Central.
 

@@ -44,6 +44,7 @@
         <module>toolgate-test</module>
         <module>toolgate-spring-ai</module>
         <module>toolgate-langchain4j</module>
+        <module>toolgate-approvals-web</module>
         <module>toolgate-cli</module>
         <module>toolgate-demo</module>
         <module>toolgate-fuzz</module>

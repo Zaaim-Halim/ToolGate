@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>ToolGate approvals</title>
+    <link rel="stylesheet" href="app.css">
+    <script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="bar">
+    <div class="brand">
+        <span class="mark" aria-hidden="true">◆</span>
+        <span>ToolGate approvals</span>
+        <span class="app" id="application"></span>
+    </div>
+    <div class="viewer" id="viewer" aria-live="polite"></div>
+</header>
+
+<main class="layout">
+    <section class="inbox" aria-labelledby="inbox-title">
+        <div class="section-head">
+            <h1 id="inbox-title">Waiting for review</h1>
+            <button type="button" id="refresh" class="quiet">Refresh</button>
+        </div>
+        <p class="hint" id="inbox-state">Loading…</p>
+        <ul class="items" id="items"></ul>
+    </section>
+
+    <section class="detail" id="detail" aria-live="polite" hidden>
+        <div class="section-head">
+            <h2 id="detail-title"></h2>
+            <span class="badge" id="detail-status"></span>
+        </div>
+        <p class="meta" id="detail-meta"></p>
+
+        <div class="block why">
+            <h3>Why it waits</h3>
+            <p><code id="detail-rule"></code></p>
+            <p id="detail-reason"></p>
+        </div>
+
+        <div class="block provenance" id="provenance-block" hidden>
+            <h3>Where the request's content came from</h3>
+            <p class="hint">The agent read this before asking. Text from these sources may be written to persuade you.</p>
+            <ul id="provenance"></ul>
+        </div>
+
+        <div class="block">
+            <h3>What would run</h3>
+            <table class="arguments">
+                <thead><tr><th scope="col">Argument</th><th scope="col">Value</th></tr></thead>
+                <tbody id="arguments"></tbody>
+            </table>
+        </div>
+
+        <div class="block" id="history-block" hidden>
+            <h3>Decisions so far</h3>
+            <ol id="history"></ol>
+        </div>
+
+        <form class="block decide" id="decide" novalidate>
+            <h3>Your decision</h3>
+            <label for="comment">Comment <span class="hint" id="comment-hint"></span></label>
+            <textarea id="comment" rows="3" maxlength="2000"></textarea>
+            <div class="actions">
+                <button type="button" id="approve" class="primary">Approve</button>
+                <button type="button" id="reject" class="danger">Reject</button>
+                <button type="button" id="cancel" class="quiet" hidden>Withdraw</button>
+            </div>
+            <p class="hint" id="decide-hint"></p>
+        </form>
+
+        <p class="message" id="message" role="status"></p>
+    </section>
+</main>
+</body>
+</html>
