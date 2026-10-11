@@ -78,5 +78,23 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Case D: the demo serves its own "calendar" and "jira" MCP servers and connects to them. -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Cases F and G: the approval queue and session store in a database two application contexts share. -->
+        <dependency>
+            <groupId>io.toolgate</groupId>
+            <artifactId>toolgate-jdbc</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

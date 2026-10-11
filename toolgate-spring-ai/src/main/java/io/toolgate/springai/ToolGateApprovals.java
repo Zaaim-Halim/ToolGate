@@ -67,6 +67,9 @@ public final class ToolGateApprovals {
             return new Approval.NotPermitted(deferred.tool() + " cannot run on this instance: it was offered with a request"
                     + " on another instance, or that instance restarted; register the tool as a bean so any instance can run it");
         }
+        // An instance started after the deferral has not seen the tool offered yet; the re-check needs its
+        // definition for pins and declared arguments, or it refuses every call with argument rules.
+        shared.definition(deferred.tool(), tool.get().callback());
         Approval approval = shared.gate().approve(approvalId, reviewer, currentPrincipal);
         if (approval instanceof Approval.Released released) {
             shared.forget(approvalId);
