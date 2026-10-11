@@ -373,7 +373,7 @@ class LangChain4jAdapterTest {
         String approvalId = toolGate.pending().getFirst().approvalId();
 
         assertThat(toolGate.approve(approvalId, LENA, JOB)).isInstanceOf(Approval.Released.class);
-        assertThat(toolGate.approve(approvalId, LENA, JOB)).isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.RELEASED));
+        assertThat(toolGate.approve(approvalId, LENA, JOB)).isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.EXECUTED));
         assertThat(TestTools.RAN).containsExactly("issueRefund 480");
     }
 

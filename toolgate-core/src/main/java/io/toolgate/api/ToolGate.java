@@ -193,6 +193,16 @@ public interface ToolGate extends AutoCloseable {
     List<PendingCall> pending();
 
     /**
+     * Every queued call in a status, of every agent and tenant, oldest first, such as
+     * {@link ApprovalStatus#RELEASED} calls waiting for an executor. For executors, operators and the
+     * application's own jobs only, like {@link #pending()}.
+     *
+     * @param status the status
+     * @return the calls, with their real arguments
+     */
+    List<PendingCall> withStatus(ApprovalStatus status);
+
+    /**
      * The calls waiting for review that a viewer may see, oldest first: as a super admin or auditor,
      * every call; as a reviewer, the calls of agents naming one of their roles, in their tenant; and
      * their own calls, as the requester. Each says whether the viewer may decide it.

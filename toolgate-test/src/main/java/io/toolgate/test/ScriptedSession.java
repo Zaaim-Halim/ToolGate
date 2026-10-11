@@ -121,7 +121,8 @@ public final class ScriptedSession implements AutoCloseable {
     }
 
     /**
-     * Approves a deferred call as a reviewer would; a released call is run and its result recorded.
+     * Approves a deferred call as a reviewer would; a released call is claimed, run and its result
+     * recorded, as an adapter would.
      *
      * @param deferred a call that was deferred
      * @param reviewer who approves
@@ -135,7 +136,10 @@ public final class ScriptedSession implements AutoCloseable {
         }
         Approval approval = gate.approve(defer.approvalId(), reviewer, deferred.call().principal());
         if (approval instanceof Approval.Released released) {
-            gate.recordResult(released.call(), new ToolResult.Succeeded(ScriptedCall.defaultOutput()));
+            gate.claim(defer.approvalId(), "scripted-session", Duration.ofMinutes(1));
+            var result = new ToolResult.Succeeded(ScriptedCall.defaultOutput());
+            gate.recordResult(released.call(), result);
+            gate.finished(defer.approvalId(), "scripted-session", result);
         }
         return approval;
     }

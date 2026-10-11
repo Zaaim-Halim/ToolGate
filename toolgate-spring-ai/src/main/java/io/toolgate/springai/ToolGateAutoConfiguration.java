@@ -217,13 +217,31 @@ public class ToolGateAutoConfiguration {
     /**
      * Decides deferred calls and runs the approved ones.
      *
-     * @param gating the shared gating
+     * @param gating     the shared gating
+     * @param properties the {@code toolgate.*} settings, for the executor's name and lease
      * @return the approvals
      */
     @Bean
     @ConditionalOnMissingBean
-    public ToolGateApprovals toolGateApprovals(ObjectProvider<Gating> gating) {
-        return new ToolGateApprovals(gating::getObject);
+    public ToolGateApprovals toolGateApprovals(ObjectProvider<Gating> gating, ToolGateProperties properties) {
+        ToolGateProperties.Executor executor = properties.approvals().executor();
+        return new ToolGateApprovals(gating::getObject, executor.resolvedId(), executor.lease());
+    }
+
+    /**
+     * Sweeps the approval queue and runs calls approved elsewhere, on a schedule.
+     *
+     * @param gate       the gate
+     * @param approvals  the approvals
+     * @param properties the {@code toolgate.*} settings, for the interval
+     * @return the executor, started and stopped with the application
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "toolgate.approvals.executor", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public ToolGateApprovalExecutor toolGateApprovalExecutor(ToolGate gate, ToolGateApprovals approvals,
+                                                             ToolGateProperties properties) {
+        return new ToolGateApprovalExecutor(gate, approvals, properties.approvals().executor().interval());
     }
 
     /**

@@ -54,6 +54,7 @@ public final class ToolGateContext {
      * @return {@code true} for ToolGate's keys
      */
     public static boolean isToolGateKey(String key) {
-        return AGENT.equals(key) || PRINCIPAL.equals(key) || SESSION.equals(key) || IDEMPOTENCY_KEY.equals(key);
+        return AGENT.equals(key) || PRINCIPAL.equals(key) || SESSION.equals(key) || IDEMPOTENCY_KEY.equals(key)
+                || ToolGateDeferrals.KEY.equals(key);
     }
 }

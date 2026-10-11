@@ -486,7 +486,7 @@ class ExampleCasesTest {
             }
             try (var restarted = deploy("10000")) {
                 assertThat(restarted.approve(approvalId, LENA, AGENT)).isInstanceOf(Approval.Released.class);
-                assertThat(restarted.approve(approvalId, LENA, AGENT)).isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.RELEASED));
+                assertThat(restarted.approve(approvalId, LENA, AGENT)).isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.EXECUTED));
             }
             assertThat(RAN).containsExactly("issueRefund 7731:480");
         }

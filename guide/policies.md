@@ -95,7 +95,18 @@ queue knows whether it ran. If the lease runs out with no outcome, `sweep()` mar
 nothing runs it again. Until someone checks the real system and calls `resolve(approvalId, by, ran,
 reason)`, new calls to the same tool in that session are denied (rule `approval.unresolved`), so the
 agent cannot send a second refund nobody knows about. A reviewer of the call's tenant or a super admin
-may resolve; the requester may not. The requester or a super admin can `cancel` a call nobody decided yet. Run
+may resolve; the requester may not.
+
+The adapters do the claiming for you. On Spring AI, `ToolGateApprovals.approve(...)` approves, claims,
+runs and reports the call; a scheduled executor (on by default, every 30 seconds) sweeps the queue and
+runs calls approved elsewhere, such as from a separate console, so you don't schedule `sweep()`
+yourself. Tune it with `toolgate.approvals.executor.id`, `.lease` and `.interval`, or turn it off with
+`toolgate.approvals.executor.enabled=false`. On LangChain4j, call `runApproved()` on your own schedule.
+In a cluster, register tools that need approval as beans (or with `agent(...).tools(...)`), so any
+instance can run them.
+
+A chat screen can read the calls its own request deferred from the response, to show "Confirm?":
+`ToolGateDeferrals.of(chatClient.prompt()...call().chatClientResponse())`. The requester or a super admin can `cancel` a call nobody decided yet. Run
 `sweep()` on a schedule, such as every minute.
 
 A review screen lists `pending(viewer)`: only the calls that viewer may see, each saying whether they

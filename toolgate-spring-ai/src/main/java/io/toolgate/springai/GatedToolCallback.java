@@ -120,6 +120,9 @@ final class GatedToolCallback implements ToolCallback {
             case Decision.Deny deny -> Decision.Deny.MODEL_MESSAGE;
             case Decision.Defer defer -> {
                 gating.keep(defer.approvalId(), target, toolInput);
+                if (toolContext != null && toolContext.getContext().get(ToolGateDeferrals.KEY) instanceof ToolGateDeferrals deferrals) {
+                    deferrals.add(new DeferredAction(defer.approvalId(), call.tool(), gating.expiryOf(call)));
+                }
                 yield Decision.Defer.MODEL_MESSAGE;
             }
             case Decision.Downgrade(String ruleId, ToolId safeTool, ObjectValue safeArgs) -> gating.safeTool(safeTool, siblings)

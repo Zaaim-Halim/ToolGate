@@ -392,6 +392,11 @@ public final class DefaultToolGate implements ToolGate {
     }
 
     @Override
+    public List<PendingCall> withStatus(ApprovalStatus status) {
+        return approvals.withStatus(Objects.requireNonNull(status, "status"));
+    }
+
+    @Override
     public List<ApprovalItem> pending(Principal viewer) {
         Objects.requireNonNull(viewer, "viewer");
         return pending().stream()

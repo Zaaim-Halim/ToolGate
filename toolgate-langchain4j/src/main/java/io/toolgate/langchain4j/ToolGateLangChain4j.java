@@ -6,18 +6,25 @@ import dev.langchain4j.invocation.InvocationParameters;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.tool.AiServiceTool;
 import dev.langchain4j.service.tool.BeforeToolExecution;
+import dev.langchain4j.service.tool.ToolExecutionResult;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolService;
 import io.toolgate.api.Approval;
 import io.toolgate.api.ApprovalItem;
+import io.toolgate.api.ApprovalStatus;
+import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
+import io.toolgate.api.ToolResult;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.ToolCatalog;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,9 +61,13 @@ import java.util.function.Consumer;
 public final class ToolGateLangChain4j implements AutoCloseable {
 
     private final Gating gating;
+    private final String executorId;
+    private final Duration lease;
 
-    private ToolGateLangChain4j(Gating gating) {
+    private ToolGateLangChain4j(Gating gating, String executorId, Duration lease) {
         this.gating = gating;
+        this.executorId = executorId;
+        this.lease = lease;
     }
 
     /**
@@ -109,46 +120,47 @@ public final class ToolGateLangChain4j implements AutoCloseable {
     }
 
     /**
-     * Approves a deferred call and, if ToolGate releases it, runs it. The tool is found before
-     * approving: when this instance cannot run it, nothing is approved and the call stays pending.
+     * Approves a deferred call with no comment; see {@link #approve(String, Principal, Principal, String)}.
      *
      * @param approvalId       the pending call
      * @param reviewer         who approves
      * @param currentPrincipal the call's principal as resolved now, so revoked roles count
-     * @return ToolGate's outcome; on {@link Approval.Released} the tool has run and its result is recorded
-     * @throws IllegalArgumentException if no call has that ID, or the principal is not the call's
+     * @return ToolGate's outcome
      */
     public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal) {
+        return approve(approvalId, reviewer, currentPrincipal, null);
+    }
+
+    /**
+     * Approves a deferred call and, if ToolGate releases it, claims and runs it here, reporting the
+     * outcome to the queue. The tool is found before approving: when this instance cannot run it,
+     * nothing is approved and the call stays pending.
+     *
+     * @param approvalId       the pending call
+     * @param reviewer         who approves
+     * @param currentPrincipal the call's principal as resolved now, so revoked roles count
+     * @param comment          the reviewer's justification; required of a super admin
+     * @return ToolGate's outcome; on {@link Approval.Released} the call ran, here or wherever it was
+     *         claimed first; its status says how it ended
+     * @throws IllegalArgumentException if no call has that ID, or the principal is not the call's
+     */
+    public Approval approve(String approvalId, Principal reviewer, Principal currentPrincipal, String comment) {
         Optional<PendingCall> waiting = gating.gate().pending().stream()
                 .filter(pending -> pending.approvalId().equals(approvalId)).findFirst();
         if (waiting.isEmpty()) {
             // Decided, expired or unknown: ToolGate says which, and nothing will run.
             gating.forget(approvalId);
-            return gating.gate().approve(approvalId, reviewer, currentPrincipal);
+            return gating.gate().approve(approvalId, reviewer, currentPrincipal, comment);
         }
-        ToolCall deferred = waiting.get().call();
-        Optional<Gating.Kept> tool = gating.kept(approvalId).or(() -> gating.registered(deferred.tool())
-                .map(executor -> new Gating.Kept(executor, ArgValueJson.write(deferred.args()))));
+        Optional<Gating.Kept> tool = runnable(waiting.get());
         if (tool.isEmpty()) {
-            return new Approval.NotPermitted(deferred.tool() + " cannot run on this instance: it came from a tool provider"
-                    + " on another instance, or that instance restarted; register the tool with agent(...).tools(...)");
+            return new Approval.NotPermitted(waiting.get().call().tool() + " cannot run on this instance: it came from a"
+                    + " tool provider on another instance, or that instance restarted; register the tool with"
+                    + " agent(...).tools(...)");
         }
-        GatedToolExecutor executor = tool.get().executor();
-        // An instance started after the deferral may not have seen the tool offered yet; the re-check needs it.
-        gating.definition(deferred.tool(), executor.specification());
-        Approval approval = gating.gate().approve(approvalId, reviewer, currentPrincipal);
-        if (approval instanceof Approval.Released released) {
-            gating.forget(approvalId);
-            ToolCall call = released.call();
-            var request = ToolExecutionRequest.builder().id(call.callId()).name(executor.specification().name())
-                    .arguments(tool.get().input()).build();
-            var context = InvocationContext.builder().chatMemoryId(call.sessionId())
-                    .invocationParameters(InvocationParameters.from(Map.of(
-                            ToolGateParameters.PRINCIPAL, call.principal(),
-                            ToolGateParameters.SESSION, call.sessionId(),
-                            ToolGateParameters.IDEMPOTENCY_KEY, released.idempotencyKey())))
-                    .build();
-            executor.run(executor.target(), call, request, context);
+        Approval approval = gating.gate().approve(approvalId, reviewer, currentPrincipal, comment);
+        if (approval instanceof Approval.Released) {
+            execute(approvalId, tool.get());
         }
         return approval;
     }
@@ -167,6 +179,100 @@ public final class ToolGateLangChain4j implements AutoCloseable {
             gating.forget(approvalId);
         }
         return rejected;
+    }
+
+    /**
+     * Withdraws a deferred call nobody decided yet; see {@link io.toolgate.api.ToolGate#cancel}.
+     *
+     * @param approvalId the pending call
+     * @param by         its requester, or a super admin
+     * @param reason     why, for the audit trail
+     * @return {@code true} if the call was pending and is now cancelled
+     */
+    public boolean cancel(String approvalId, Principal by, String reason) {
+        boolean cancelled = gating.gate().cancel(approvalId, by, reason);
+        if (cancelled) {
+            gating.forget(approvalId);
+        }
+        return cancelled;
+    }
+
+    /**
+     * Records how a run with an unknown outcome really ended; see {@link io.toolgate.api.ToolGate#resolve}.
+     *
+     * @param approvalId the call
+     * @param by         a reviewer of its tenant, or a super admin
+     * @param ran        whether the tool did run
+     * @param reason     what they found
+     * @return {@code true} if resolved
+     */
+    public boolean resolve(String approvalId, Principal by, boolean ran, String reason) {
+        return gating.gate().resolve(approvalId, by, ran, reason);
+    }
+
+    /**
+     * Keeps the approval queue moving: sweeps it, then runs the released calls this instance can run that
+     * nobody claimed yet, such as calls approved from another process. Call it on a schedule, such as
+     * every 30 seconds; claiming is compare-and-set, so across instances each call runs once. A tool
+     * that fails is recorded as {@link ApprovalStatus#FAILED} and the others still run.
+     *
+     * @return how many calls this instance ran, whether they succeeded or failed
+     */
+    public int runApproved() {
+        gating.gate().sweep();
+        int ran = 0;
+        for (PendingCall released : gating.gate().withStatus(ApprovalStatus.RELEASED)) {
+            Optional<Gating.Kept> tool = runnable(released);
+            if (tool.isEmpty()) {
+                continue;
+            }
+            try {
+                ran += execute(released.approvalId(), tool.get()) ? 1 : 0;
+            } catch (RuntimeException failed) {
+                // Already recorded as FAILED, with the error, by execute.
+                ran++;
+            }
+        }
+        return ran;
+    }
+
+    /** The tool a call needs, if this instance has it: kept from its request, or registered with an agent. */
+    private Optional<Gating.Kept> runnable(PendingCall call) {
+        ToolCall deferred = call.call();
+        Optional<Gating.Kept> tool = gating.kept(call.approvalId()).or(() -> gating.registered(deferred.tool())
+                .map(executor -> new Gating.Kept(executor, ArgValueJson.write(deferred.args()))));
+        // An instance started after the deferral may not have seen the tool offered yet; the re-check needs it.
+        tool.ifPresent(found -> gating.definition(deferred.tool(), found.executor().specification()));
+        return tool;
+    }
+
+    /** Claims a released call and runs it, reporting the outcome; nothing runs if another executor claimed it. */
+    private boolean execute(String approvalId, Gating.Kept tool) {
+        Optional<Approval.Released> claimed = gating.gate().claim(approvalId, executorId, lease);
+        if (claimed.isEmpty()) {
+            return false;
+        }
+        gating.forget(approvalId);
+        GatedToolExecutor executor = tool.executor();
+        ToolCall call = claimed.get().call();
+        var request = ToolExecutionRequest.builder().id(call.callId()).name(executor.specification().name())
+                .arguments(tool.input()).build();
+        var context = InvocationContext.builder().chatMemoryId(call.sessionId())
+                .invocationParameters(InvocationParameters.from(Map.of(
+                        ToolGateParameters.PRINCIPAL, call.principal(),
+                        ToolGateParameters.SESSION, call.sessionId(),
+                        ToolGateParameters.IDEMPOTENCY_KEY, claimed.get().idempotencyKey())))
+                .build();
+        try {
+            ToolExecutionResult result = executor.run(executor.target(), call, request, context);
+            gating.gate().finished(approvalId, executorId, result.isError()
+                    ? new ToolResult.Failed(String.valueOf(result.resultText()))
+                    : new ToolResult.Succeeded(ArgValue.text(String.valueOf(result.resultText()))));
+        } catch (RuntimeException failure) {
+            gating.gate().finished(approvalId, executorId, new ToolResult.Failed(failure.toString()));
+            throw failure;
+        }
+        return true;
     }
 
     /** Closes the gate, flushing its audit events. */
@@ -257,6 +363,8 @@ public final class ToolGateLangChain4j implements AutoCloseable {
         private final ToolGatePolicy policy;
         private Consumer<ToolGate.Builder> gate = gate -> { };
         private Clock clock = Clock.systemUTC();
+        private String executorId;
+        private Duration lease = Duration.ofMinutes(5);
 
         private Builder(ToolGatePolicy policy) {
             this.policy = Objects.requireNonNull(policy, "policy");
@@ -286,6 +394,24 @@ public final class ToolGateLangChain4j implements AutoCloseable {
         }
 
         /**
+         * Names this instance in the approval queue, and how long a run of an approved call may take
+         * before its outcome counts as lost and the call becomes {@link ApprovalStatus#UNKNOWN}. By
+         * default the host name and process ID, and 5 minutes.
+         *
+         * @param id        this instance's name
+         * @param runLease  the lease
+         * @return this builder
+         */
+        public Builder executor(String id, Duration runLease) {
+            if (id == null || id.isBlank() || runLease.isNegative() || runLease.isZero()) {
+                throw new IllegalArgumentException("executor needs a name and a positive lease");
+            }
+            this.executorId = id;
+            this.lease = runLease;
+            return this;
+        }
+
+        /**
          * Builds the adapter and its gate.
          *
          * @return the adapter
@@ -295,7 +421,18 @@ public final class ToolGateLangChain4j implements AutoCloseable {
             ToolGate.Builder builder = ToolGate.builder(policy);
             gate.accept(builder);
             ToolGate built = builder.toolCatalog(catalog).clock(clock).build();
-            return new ToolGateLangChain4j(new Gating(built, catalog, clock, policy));
+            return new ToolGateLangChain4j(new Gating(built, catalog, clock, policy),
+                    executorId != null ? executorId : defaultExecutorId(), lease);
+        }
+
+        private static String defaultExecutorId() {
+            String host;
+            try {
+                host = InetAddress.getLocalHost().getHostName();
+            } catch (UnknownHostException unknown) {
+                host = "unknown-host";
+            }
+            return host + "-" + ProcessHandle.current().pid();
         }
     }
 }

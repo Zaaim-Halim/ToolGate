@@ -1,5 +1,6 @@
 package io.toolgate.springai;
 
+import java.util.HashMap;
 import java.util.function.Supplier;
 import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
@@ -48,18 +49,30 @@ final class ToolGateAdvisor implements CallAdvisor, StreamAdvisor {
 
     @Override
     public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
-        return chain.nextCall(gated(request, chain.getCallAdvisors().stream().anyMatch(BaseChatMemoryAdvisor.class::isInstance)));
+        var deferrals = new ToolGateDeferrals();
+        ChatClientResponse response = chain.nextCall(gated(request,
+                chain.getCallAdvisors().stream().anyMatch(BaseChatMemoryAdvisor.class::isInstance), deferrals));
+        return withDeferrals(response, deferrals);
     }
 
     @Override
     public Flux<ChatClientResponse> adviseStream(ChatClientRequest request, StreamAdvisorChain chain) {
-        return chain.nextStream(gated(request, chain.getStreamAdvisors().stream().anyMatch(BaseChatMemoryAdvisor.class::isInstance)));
+        var deferrals = new ToolGateDeferrals();
+        return chain.nextStream(gated(request,
+                        chain.getStreamAdvisors().stream().anyMatch(BaseChatMemoryAdvisor.class::isInstance), deferrals))
+                .map(response -> withDeferrals(response, deferrals));
+    }
+
+    /** Hands the application the request's deferred calls, through the response's context. */
+    private static ChatClientResponse withDeferrals(ChatClientResponse response, ToolGateDeferrals deferrals) {
+        return response.mutate().context(ToolGateDeferrals.KEY, deferrals).build();
     }
 
     /**
      * @param chatMemory whether a chat memory advisor takes part in the request
+     * @param deferrals  collects the request's deferred calls, through the tool context
      */
-    private ChatClientRequest gated(ChatClientRequest request, boolean chatMemory) {
+    private ChatClientRequest gated(ChatClientRequest request, boolean chatMemory, ToolGateDeferrals deferrals) {
         // The model sees only this request when no memory advisor adds history and the request itself carries no
         // earlier turns; only then may a request without a conversation ID be a session of its own.
         boolean standalone = !chatMemory && request.prompt().getInstructions().stream()
@@ -67,8 +80,9 @@ final class ToolGateAdvisor implements CallAdvisor, StreamAdvisor {
         Gating shared = gating.get();
         Prompt prompt = request.prompt();
         if (prompt.getOptions() instanceof ToolCallingChatOptions options) {
-            prompt = new Prompt(prompt.getInstructions(),
-                    options.mutate().toolContext(shared.completeContext(options.getToolContext(), request.context(), standalone)).build());
+            var context = new HashMap<String, Object>(shared.completeContext(options.getToolContext(), request.context(), standalone));
+            context.putIfAbsent(ToolGateDeferrals.KEY, deferrals);
+            prompt = new Prompt(prompt.getInstructions(), options.mutate().toolContext(context).build());
         }
         return request.mutate().prompt(GatedToolCallingManager.gated(prompt, shared)).build();
     }

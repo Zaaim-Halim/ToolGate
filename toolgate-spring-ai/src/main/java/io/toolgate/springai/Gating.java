@@ -15,6 +15,7 @@ import io.toolgate.api.policy.AgentPolicy;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -140,6 +141,11 @@ final class Gating {
 
     ToolGate gate() {
         return gate;
+    }
+
+    /** When a call deferred now expires, by its agent's approval expiry. */
+    Instant expiryOf(ToolCall call) {
+        return clock.instant().plus(policy.agent(call.agentId()).orElseThrow().approvalExpiry());
     }
 
     Clock clock() {

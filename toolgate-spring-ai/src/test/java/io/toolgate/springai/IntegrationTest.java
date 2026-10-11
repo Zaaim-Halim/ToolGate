@@ -4,19 +4,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.toolgate.api.Approval;
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Decision;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
+import io.toolgate.api.ToolId;
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.springai.MockModelServer.Call;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -71,8 +75,43 @@ class IntegrationTest {
 
         assertThat(approvals.approve(pending.approvalId(), LENA, JOB)).isInstanceOf(Approval.Released.class);
         assertThat(TestTools.RAN).containsExactly("issueRefund 480");
-        assertThat(approvals.approve(pending.approvalId(), LENA, JOB)).isInstanceOf(Approval.AlreadyDecided.class);
+        assertThat(approvals.approve(pending.approvalId(), LENA, JOB))
+                .isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.EXECUTED));
         assertThat(TestTools.RAN).as("released at most once").containsExactly("issueRefund 480");
+        assertThat(gating.gate().withStatus(ApprovalStatus.EXECUTED)).extracting(PendingCall::approvalId)
+                .contains(pending.approvalId());
+    }
+
+    /** G5: a chat screen learns which of its request's calls wait for review, from the response itself. */
+    @Test
+    void theResponseNamesTheRequestsDeferredCalls() {
+        MODEL.thenToolCalls(new Call("call_1", "issueRefund", "{\"order\":\"7731\",\"amount\":480}")).thenText("Pending.");
+
+        ChatClientResponse response = chatClients.build().prompt().user("Go").tools(new TestTools())
+                .toolContext(ToolGateContext.of("refund-review", JOB, session)).call().chatClientResponse();
+
+        assertThat(ToolGateDeferrals.of(response)).singleElement().satisfies(action -> {
+            assertThat(action.approvalId()).isEqualTo(pendingOfThisSession().approvalId());
+            assertThat(action.tool()).isEqualTo(ToolId.local("issueRefund"));
+            assertThat(action.expiresAt()).isAfter(Instant.now());
+        });
+    }
+
+    /** A call approved elsewhere, such as from a separate console, is run by this instance's executor, once. */
+    @Test
+    void aCallApprovedElsewhereIsRunByTheExecutor() {
+        MODEL.thenToolCalls(new Call("call_1", "issueRefund", "{\"order\":\"7731\",\"amount\":480}")).thenText("Pending.");
+        ask("refund-review", JOB);
+        PendingCall pending = pendingOfThisSession();
+
+        assertThat(gating.gate().approve(pending.approvalId(), LENA, JOB)).isInstanceOf(Approval.Released.class);
+        assertThat(TestTools.RAN).isEmpty();
+
+        assertThat(approvals.runApproved()).isEqualTo(1);
+        assertThat(approvals.runApproved()).isZero();
+        assertThat(TestTools.RAN).containsExactly("issueRefund 480");
+        assertThat(gating.gate().withStatus(ApprovalStatus.EXECUTED)).extracting(PendingCall::approvalId)
+                .contains(pending.approvalId());
     }
 
     /** Without the tool, nothing is approved: the release is not spent on a call that cannot run. */

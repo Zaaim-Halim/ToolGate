@@ -111,7 +111,7 @@ class CaseFEndToEndTest {
 
             assertThat(approvals.approve(approvalId, LENA, AGENT)).isInstanceOf(Approval.Released.class);
             assertThat(approvals.approve(approvalId, LENA, AGENT))
-                    .isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.RELEASED));
+                    .isEqualTo(new Approval.AlreadyDecided(ApprovalStatus.EXECUTED));
         }
         assertThat(RefundTools.issued()).containsExactly("7731:480");
     }
