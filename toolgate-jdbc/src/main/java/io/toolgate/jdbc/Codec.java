@@ -23,6 +23,7 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.Set;
 
 /**
@@ -71,6 +72,17 @@ final class Codec {
                     "label", text(declassified.label().name()),
                     "justification", text(declassified.justification()),
                     "at", number(declassified.at()));
+            case SessionEvent.CallUnresolved lost -> object(
+                    "type", text("CallUnresolved"),
+                    "sessionId", text(lost.sessionId()),
+                    "approvalId", text(lost.approvalId()),
+                    "tool", text(lost.tool().toString()),
+                    "at", number(lost.at()));
+            case SessionEvent.CallResolved known -> object(
+                    "type", text("CallResolved"),
+                    "sessionId", text(known.sessionId()),
+                    "approvalId", text(known.approvalId()),
+                    "at", number(known.at()));
         });
     }
 
@@ -88,6 +100,10 @@ final class Codec {
                     labels(field(event, "labels")), instant(event, "at"));
             case "Declassified" -> new SessionEvent.Declassified(string(event, "sessionId"),
                     Label.valueOf(string(event, "label")), string(event, "justification"), instant(event, "at"));
+            case "CallUnresolved" -> new SessionEvent.CallUnresolved(string(event, "sessionId"),
+                    string(event, "approvalId"), ToolId.parse(string(event, "tool")), instant(event, "at"));
+            case "CallResolved" -> new SessionEvent.CallResolved(string(event, "sessionId"),
+                    string(event, "approvalId"), instant(event, "at"));
             default -> throw new IllegalArgumentException("unknown event type " + string(event, "type"));
         };
     }
@@ -112,6 +128,23 @@ final class Codec {
 
     static Map<String, BigDecimal> totals(String json) {
         return amounts(ArgValueJson.read(json));
+    }
+
+    static String unresolved(Map<String, ToolId> unresolved) {
+        var fields = new LinkedHashMap<String, ArgValue>();
+        new TreeMap<>(unresolved).forEach((approvalId, tool) -> fields.put(approvalId, text(tool.toString())));
+        return ArgValueJson.write(ArgValue.object(fields));
+    }
+
+    static Map<String, ToolId> unresolved(String json) {
+        var unresolved = new TreeMap<String, ToolId>();
+        asObject(ArgValueJson.read(json)).fields().forEach((approvalId, tool) -> {
+            if (!(tool instanceof TextValue(String name))) {
+                throw new IllegalArgumentException("unresolved holds a non-string tool");
+            }
+            unresolved.put(approvalId, ToolId.parse(name));
+        });
+        return unresolved;
     }
 
     static long micros(Instant instant) {

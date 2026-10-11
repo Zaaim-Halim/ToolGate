@@ -115,6 +115,7 @@ public final class BuiltInEvaluators {
                 new McpServerEvaluator(),
                 new AllowListEvaluator(),
                 new TrifectaEvaluator(),
-                new IrreversibleEvaluator());
+                new IrreversibleEvaluator(),
+                new UnresolvedEvaluator());
     }
 }

@@ -54,12 +54,17 @@ public final class BuiltInRules {
     public static final String APPROVAL_UNAVAILABLE = "approval.unavailable";
     /** Not a rule: a downgrade's safe tool would itself have been downgraded, so the call was denied. */
     public static final String DOWNGRADE_CHAIN = "downgrade.chain";
+    /**
+     * While an approved call of a tool has an unknown outcome in a session, new calls to that tool in
+     * that session are denied: nobody knows whether the first refund went out.
+     */
+    public static final String APPROVAL_UNRESOLVED = "approval.unresolved";
 
     /** Every rule whose mode a policy may set. */
     public static final Set<String> CONFIGURABLE =
             Set.of(AGENT_KNOWN, MCP_SERVERS, ALLOW_LIST, TOOL_PINNED, ARGUMENTS_DECLARED, ARGUMENTS_READABLE,
                     DEFINITION_READABLE, TOOL_CALL_BUDGET, DENIAL_BUDGET, TAINT_TRIFECTA,
-                    TAINT_IRREVERSIBLE);
+                    TAINT_IRREVERSIBLE, APPROVAL_UNRESOLVED);
 
     private BuiltInRules() {}
 }

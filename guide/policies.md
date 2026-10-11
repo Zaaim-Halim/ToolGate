@@ -92,7 +92,10 @@ approval waits for a second person. More than 5 super admin decisions in an hour
 Every decision is kept with the call (who, under which access, when, and their comment). An approved
 call is `RELEASED`; an executor `claim`s it under a lease, runs it, and reports with `finished`, so the
 queue knows whether it ran. If the lease runs out with no outcome, `sweep()` marks it `UNKNOWN`, and
-nothing runs it again. The requester or a super admin can `cancel` a call nobody decided yet. Run
+nothing runs it again. Until someone checks the real system and calls `resolve(approvalId, by, ran,
+reason)`, new calls to the same tool in that session are denied (rule `approval.unresolved`), so the
+agent cannot send a second refund nobody knows about. A reviewer of the call's tenant or a super admin
+may resolve; the requester may not. The requester or a super admin can `cancel` a call nobody decided yet. Run
 `sweep()` on a schedule, such as every minute.
 
 A review screen lists `pending(viewer)`: only the calls that viewer may see, each saying whether they

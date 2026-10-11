@@ -78,6 +78,17 @@ class JdbcSessionStoreTest {
 
     /** The log is what replay will read, so every kind of event must come back exactly. */
     @Test
+    void keepsUnresolvedCallsInTheSnapshot() {
+        store.append(new SessionEvent.CallUnresolved("s1", "s1:c1", ToolId.local("issueRefund"), T0));
+        store.append(new SessionEvent.CallUnresolved("s1", "s1:c2", ToolId.mcp("payments", "refund"), T0));
+        store.append(new SessionEvent.CallResolved("s1", "s1:c1", T0));
+
+        assertThat(store.state("s1").unresolved()).containsExactly(Map.entry("s1:c2", ToolId.mcp("payments", "refund")));
+        assertThat(store.state("s1").unresolvedCallOf(ToolId.mcp("payments", "refund"))).contains("s1:c2");
+        assertThat(store.state("s1").unresolvedCallOf(ToolId.local("issueRefund"))).isEmpty();
+    }
+
+    @Test
     void eventLogReadsBackEveryKindOfEvent() {
         ObjectValue args = ObjectValue.of(Map.of("to", ArgValue.text("billing@mycompany.com"),
                 "amount", ArgValue.number(new BigDecimal("480.5")),
@@ -96,7 +107,9 @@ class JdbcSessionStoreTest {
                         Set.of(Label.UNTRUSTED_CONTENT, Label.PRIVATE_DATA), T0.plusSeconds(3)),
                 new SessionEvent.Declassified("s1", Label.UNTRUSTED_CONTENT, "parsed into a schema", T0.plusSeconds(4)),
                 new SessionEvent.CallReleased("s1", "s1:s1/2", "s1/2", Map.of("issueRefund.amount", new BigDecimal("480.5")),
-                        T0.plusSeconds(5)));
+                        T0.plusSeconds(5)),
+                new SessionEvent.CallUnresolved("s1", "s1:s1/2", ToolId.local("issueRefund"), T0.plusSeconds(6)),
+                new SessionEvent.CallResolved("s1", "s1:s1/2", T0.plusSeconds(7)));
         for (SessionEvent event : events) {
             store.append(event);
         }

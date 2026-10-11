@@ -24,7 +24,9 @@ public record ApprovalDecision(Kind kind, String by, ApprovalAccess access, Inst
         /** Reject; the call never runs. */
         REJECT,
         /** Withdraw before it was decided. */
-        CANCEL
+        CANCEL,
+        /** Say how a run with an unknown outcome really ended, after checking the real system. */
+        RESOLVE
     }
 
     /** Requires every component but the comment, which must not be blank when given. */

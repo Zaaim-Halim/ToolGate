@@ -34,6 +34,8 @@ import io.toolgate.spi.DecisionObserver;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.CallReleased;
+import io.toolgate.spi.SessionEvent.CallResolved;
+import io.toolgate.spi.SessionEvent.CallUnresolved;
 import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
 import io.toolgate.spi.SessionState;
@@ -371,6 +373,9 @@ public final class DefaultToolGate implements ToolGate {
             Instant now = clock.instant();
             ApprovalStatus outcome = result instanceof ToolResult.Succeeded ? ApprovalStatus.EXECUTED : ApprovalStatus.FAILED;
             if (approvals.replace(running, running.withExecution(run.get().finished(now, outcomeSummary(result)), outcome))) {
+                if (running.status() == ApprovalStatus.UNKNOWN) {
+                    sessions.append(new CallResolved(running.call().sessionId(), approvalId, now));
+                }
                 // The audit gets no output or error text: either can carry data the log must not hold.
                 auditApproval(running, outcome, executor, null,
                         outcome == ApprovalStatus.EXECUTED ? "the tool ran" : "the tool failed");
@@ -407,14 +412,66 @@ public final class DefaultToolGate implements ToolGate {
         int unknown = 0;
         for (PendingCall running : approvals.withStatus(ApprovalStatus.EXECUTING)) {
             Optional<Execution> run = running.run();
-            if (run.isPresent() && !now.isBefore(run.get().leaseUntil())
-                    && approvals.replace(running, running.withStatus(ApprovalStatus.UNKNOWN))) {
+            if (run.isPresent() && !now.isBefore(run.get().leaseUntil()) && markUnknown(running, now)) {
                 unknown++;
                 auditApproval(running, ApprovalStatus.UNKNOWN, "toolgate", null, "the lease of " + run.get().executor()
                         + " ran out at " + run.get().leaseUntil() + " with no outcome; check whether the tool ran");
             }
         }
         return new Sweep(expired, unknown);
+    }
+
+    /**
+     * Marks a run's outcome unknown. The session learns first, so the block on the tool can never be
+     * missing while the queue says unknown; if the run finished meanwhile, the block is lifted again.
+     */
+    private boolean markUnknown(PendingCall running, Instant now) {
+        String sessionId = running.call().sessionId();
+        sessions.append(new CallUnresolved(sessionId, running.approvalId(), running.call().tool(), now));
+        if (approvals.replace(running, running.withStatus(ApprovalStatus.UNKNOWN))) {
+            return true;
+        }
+        sessions.append(new CallResolved(sessionId, running.approvalId(), now));
+        return false;
+    }
+
+    @Override
+    public boolean resolve(String approvalId, Principal by, boolean ran, String reason) {
+        Objects.requireNonNull(by, "by");
+        requireNonBlank(reason, "reason");
+        for (int attempt = 0; attempt < MAX_DECISION_ATTEMPTS; attempt++) {
+            PendingCall unknown = pendingCall(approvalId);
+            ToolCall call = unknown.call();
+            if (isOwn(call, by) || access(call, by).filter(access ->
+                    access == ApprovalAccess.SUPER_ADMIN || access == ApprovalAccess.REVIEWER).isEmpty()) {
+                return false;
+            }
+            ApprovalAccess access = access(call, by).orElseThrow();
+            Instant now = clock.instant();
+            if (unknown.status() != ApprovalStatus.UNKNOWN) {
+                return repairUnresolved(unknown, now);
+            }
+            ApprovalStatus outcome = ran ? ApprovalStatus.EXECUTED : ApprovalStatus.FAILED;
+            var decision = new ApprovalDecision(ApprovalDecision.Kind.RESOLVE, by.id(), access, now, reason);
+            if (approvals.replace(unknown, unknown.withDecision(decision, outcome))) {
+                sessions.append(new CallResolved(call.sessionId(), approvalId, now));
+                watchSuperAdmin(access, by, now);
+                auditApproval(unknown, outcome, by.id(), access, reason);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Lifts a block the session still holds for a call whose outcome the queue already knows. */
+    private boolean repairUnresolved(PendingCall call, Instant now) {
+        boolean known = call.status() == ApprovalStatus.EXECUTED || call.status() == ApprovalStatus.FAILED;
+        String sessionId = call.call().sessionId();
+        if (!known || !sessions.state(sessionId).unresolved().containsKey(call.approvalId())) {
+            return false;
+        }
+        sessions.append(new CallResolved(sessionId, call.approvalId(), now));
+        return true;
     }
 
     /**

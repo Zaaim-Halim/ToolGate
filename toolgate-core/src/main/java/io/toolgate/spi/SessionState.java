@@ -4,14 +4,19 @@ import static io.toolgate.support.Checks.requireNonBlank;
 
 import io.toolgate.api.Decision;
 import io.toolgate.api.Label;
+import io.toolgate.api.ToolId;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.CallReleased;
+import io.toolgate.spi.SessionEvent.CallResolved;
+import io.toolgate.spi.SessionEvent.CallUnresolved;
 import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.TreeMap;
 
 /**
  * An immutable snapshot of one session, built by folding its events in order.
@@ -25,9 +30,10 @@ import java.util.Map;
  * @param denials   calls that were denied, for the denial budget
  * @param taint     the source labels the session holds, each with the call that first brought it in
  * @param totals    the sums that total limits watch, by rule ID: what allowed and released calls added
+ * @param unresolved the approved calls whose outcome is unknown, by approval ID, with their tools
  */
 public record SessionState(String sessionId, long version, int toolCalls, int denials, Map<Label, TaintSource> taint,
-                           Map<String, BigDecimal> totals) {
+                           Map<String, BigDecimal> totals, Map<String, ToolId> unresolved) {
 
     /** Rejects negative counters, which only a corrupt store could produce. */
     public SessionState {
@@ -37,6 +43,22 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         }
         taint = taint.isEmpty() ? Map.of() : Collections.unmodifiableMap(new EnumMap<>(taint));
         totals = Totals.copy(totals);
+        unresolved = Collections.unmodifiableMap(new TreeMap<>(unresolved));
+    }
+
+    /**
+     * A state with no unresolved calls.
+     *
+     * @param sessionId the session
+     * @param version   the number of events applied
+     * @param toolCalls calls that used tool-call budget
+     * @param denials   calls that were denied
+     * @param taint     the source labels the session holds
+     * @param totals    the sums that total limits watch
+     */
+    public SessionState(String sessionId, long version, int toolCalls, int denials, Map<Label, TaintSource> taint,
+                        Map<String, BigDecimal> totals) {
+        this(sessionId, version, toolCalls, denials, taint, totals, Map.of());
     }
 
     /**
@@ -46,7 +68,7 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
      * @return the state at version zero
      */
     public static SessionState empty(String sessionId) {
-        return new SessionState(sessionId, 0, 0, 0, Map.of(), Map.of());
+        return new SessionState(sessionId, 0, 0, 0, Map.of(), Map.of(), Map.of());
     }
 
     /**
@@ -75,6 +97,8 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
                     ? next(toolCalls, denials + 1, taint, totals)
                     : next(toolCalls, denials, withLabels(recorded), totals);
             case Declassified declassified -> next(toolCalls, denials, without(declassified.label()), totals);
+            case CallUnresolved lost -> withUnresolved(lost.approvalId(), lost.tool());
+            case CallResolved known -> withUnresolved(known.approvalId(), null);
         };
     }
 
@@ -98,9 +122,30 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         return totals.getOrDefault(ruleId, BigDecimal.ZERO);
     }
 
+    /**
+     * The unresolved call of a tool, if the session has one.
+     *
+     * @param tool the tool
+     * @return the approval ID of a call of that tool whose outcome is unknown, or empty
+     */
+    public Optional<String> unresolvedCallOf(ToolId tool) {
+        return unresolved.entrySet().stream().filter(entry -> entry.getValue().equals(tool)).map(Map.Entry::getKey).findFirst();
+    }
+
     private SessionState next(int newToolCalls, int newDenials, Map<Label, TaintSource> newTaint,
                               Map<String, BigDecimal> newTotals) {
-        return new SessionState(sessionId, version + 1, newToolCalls, newDenials, newTaint, newTotals);
+        return new SessionState(sessionId, version + 1, newToolCalls, newDenials, newTaint, newTotals, unresolved);
+    }
+
+    /** One more unresolved call, or one fewer when {@code tool} is null. */
+    private SessionState withUnresolved(String approvalId, ToolId tool) {
+        var updated = new TreeMap<>(unresolved);
+        if (tool == null) {
+            updated.remove(approvalId);
+        } else {
+            updated.put(approvalId, tool);
+        }
+        return new SessionState(sessionId, version + 1, toolCalls, denials, taint, totals, updated);
     }
 
     /** The first source of each label is kept: it is where the session became tainted. */

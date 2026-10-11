@@ -15,6 +15,8 @@ import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.CallReleased;
+import io.toolgate.spi.SessionEvent.CallResolved;
+import io.toolgate.spi.SessionEvent.CallUnresolved;
 import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
 import io.toolgate.spi.SessionState;
@@ -126,6 +128,9 @@ public final class Replayer {
                     case CallReleased released -> release(released);
                     case ResultRecorded result -> result(result.callId(), result.succeeded(), result.at());
                     case Declassified declassified -> store.append(declassified);
+                    // What happened to approved runs is history the proposed policy cannot change.
+                    case CallUnresolved lost -> store.append(lost);
+                    case CallResolved known -> store.append(known);
                 }
             }
         }

@@ -244,6 +244,22 @@ public interface ToolGate extends AutoCloseable {
     boolean finished(String approvalId, String executor, ToolResult result);
 
     /**
+     * Records how a run with an unknown outcome really ended, after a person checked the real system,
+     * such as the payment provider. Until then, new calls to the same tool in that session are denied
+     * by {@code approval.unresolved}; this lifts the block. Only a reviewer of the call's tenant or a
+     * super admin may, never for their own call. If the outcome was recorded but the session missed it,
+     * resolving again repairs the session.
+     *
+     * @param approvalId the call, in {@link ApprovalStatus#UNKNOWN}
+     * @param by         who checked
+     * @param ran        whether the tool did run: {@link ApprovalStatus#EXECUTED} if so, else {@link ApprovalStatus#FAILED}
+     * @param reason     what they found, for the audit trail
+     * @return {@code true} if resolved; {@code false} if the call's outcome is not unknown, or {@code by} may not resolve it
+     * @throws IllegalArgumentException if no call has that ID, or the reason is blank
+     */
+    boolean resolve(String approvalId, Principal by, boolean ran, String reason);
+
+    /**
      * Keeps the queue current: expires pending calls past their expiry, and marks calls whose
      * executor's lease ran out {@link ApprovalStatus#UNKNOWN}. Approving checks expiry too, so this
      * only keeps the queue and the audit trail current; run it on a schedule, such as every minute.

@@ -49,6 +49,7 @@ CREATE TABLE toolgate_session (
     denials     INT           NOT NULL,
     taint       CLOB          NOT NULL,
     totals      CLOB          NOT NULL,
+    unresolved  CLOB          NOT NULL,
     updated_at  BIGINT        NOT NULL
 );
 CREATE INDEX toolgate_session_updated ON toolgate_session (updated_at);

@@ -228,28 +228,30 @@ public final class JdbcSessionStore implements SessionStore {
         long now = Codec.micros(clock.instant());
         if (stored.isEmpty()) {
             try (PreparedStatement insert = connection.prepareStatement("INSERT INTO toolgate_session"
-                    + " (session_id, version, tool_calls, denials, taint, totals, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+                    + " (session_id, version, tool_calls, denials, taint, totals, unresolved, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
                 insert.setString(1, sessionId);
                 insert.setLong(2, next.version());
                 insert.setInt(3, next.toolCalls());
                 insert.setInt(4, next.denials());
                 insert.setString(5, Codec.taint(next.taint()));
                 insert.setString(6, Codec.totals(next.totals()));
-                insert.setLong(7, now);
+                insert.setString(7, Codec.unresolved(next.unresolved()));
+                insert.setLong(8, now);
                 insert.executeUpdate();
             }
         } else {
             try (PreparedStatement update = connection.prepareStatement("UPDATE toolgate_session"
-                    + " SET version = ?, tool_calls = ?, denials = ?, taint = ?, totals = ?, updated_at = ?"
+                    + " SET version = ?, tool_calls = ?, denials = ?, taint = ?, totals = ?, unresolved = ?, updated_at = ?"
                     + " WHERE session_id = ? AND version = ?")) {
                 update.setLong(1, next.version());
                 update.setInt(2, next.toolCalls());
                 update.setInt(3, next.denials());
                 update.setString(4, Codec.taint(next.taint()));
                 update.setString(5, Codec.totals(next.totals()));
-                update.setLong(6, now);
-                update.setString(7, sessionId);
-                update.setLong(8, expectedVersion);
+                update.setString(6, Codec.unresolved(next.unresolved()));
+                update.setLong(7, now);
+                update.setString(8, sessionId);
+                update.setLong(9, expectedVersion);
                 if (update.executeUpdate() != 1) {
                     return false;
                 }
@@ -279,7 +281,7 @@ public final class JdbcSessionStore implements SessionStore {
 
     private static Optional<SessionState> read(Connection connection, String sessionId) throws SQLException {
         try (PreparedStatement select = connection.prepareStatement(
-                "SELECT version, tool_calls, denials, taint, totals FROM toolgate_session WHERE session_id = ?")) {
+                "SELECT version, tool_calls, denials, taint, totals, unresolved FROM toolgate_session WHERE session_id = ?")) {
             select.setString(1, sessionId);
             try (ResultSet row = select.executeQuery()) {
                 if (!row.next()) {
@@ -287,7 +289,8 @@ public final class JdbcSessionStore implements SessionStore {
                 }
                 try {
                     return Optional.of(new SessionState(sessionId, row.getLong("version"), row.getInt("tool_calls"),
-                            row.getInt("denials"), Codec.taint(row.getString("taint")), Codec.totals(row.getString("totals"))));
+                            row.getInt("denials"), Codec.taint(row.getString("taint")), Codec.totals(row.getString("totals")),
+                            Codec.unresolved(row.getString("unresolved"))));
                 } catch (IllegalArgumentException corrupt) {
                     throw new JdbcStoreException("unreadable state of session " + sessionId, corrupt);
                 }

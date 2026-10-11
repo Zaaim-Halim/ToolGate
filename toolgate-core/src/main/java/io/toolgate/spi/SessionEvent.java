@@ -21,7 +21,7 @@ import java.util.Set;
  */
 public sealed interface SessionEvent
         permits SessionEvent.CallDecided, SessionEvent.ResultRecorded, SessionEvent.Declassified,
-                SessionEvent.CallReleased {
+                SessionEvent.CallReleased, SessionEvent.CallUnresolved, SessionEvent.CallResolved {
 
     /**
      * The session this event belongs to.
@@ -120,6 +120,43 @@ public sealed interface SessionEvent
             requireNonBlank(approvalId, "approvalId");
             requireNonBlank(callId, "callId");
             spent = Totals.copy(spent);
+            Objects.requireNonNull(at, "at");
+        }
+    }
+
+    /**
+     * An approved call's run ended with no known outcome: its tool may or may not have run. Until it is
+     * resolved, new calls to the same tool in this session are denied.
+     *
+     * @param sessionId  the session
+     * @param approvalId the call's approval ID
+     * @param tool       its tool
+     * @param at         when the outcome was found lost
+     */
+    record CallUnresolved(String sessionId, String approvalId, ToolId tool, Instant at) implements SessionEvent {
+
+        /** Requires every component. */
+        public CallUnresolved {
+            requireNonBlank(sessionId, "sessionId");
+            requireNonBlank(approvalId, "approvalId");
+            Objects.requireNonNull(tool, "tool");
+            Objects.requireNonNull(at, "at");
+        }
+    }
+
+    /**
+     * An unresolved call's outcome became known, from its executor or from a person who checked.
+     *
+     * @param sessionId  the session
+     * @param approvalId the call's approval ID
+     * @param at         when
+     */
+    record CallResolved(String sessionId, String approvalId, Instant at) implements SessionEvent {
+
+        /** Requires every component. */
+        public CallResolved {
+            requireNonBlank(sessionId, "sessionId");
+            requireNonBlank(approvalId, "approvalId");
             Objects.requireNonNull(at, "at");
         }
     }

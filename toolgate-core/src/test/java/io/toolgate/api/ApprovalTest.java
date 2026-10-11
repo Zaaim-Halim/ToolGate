@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.InvalidPolicyException;
 import io.toolgate.api.policy.TaintAction;
 import io.toolgate.api.policy.ToolGatePolicy;
@@ -15,6 +16,7 @@ import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.session.InMemorySessionStore;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.PendingCall;
+import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionStore;
 import java.time.Clock;
 import java.time.Duration;
@@ -454,6 +456,73 @@ class ApprovalTest {
         assertThat(queue.get(approvalId).orElseThrow().status()).isEqualTo(ApprovalStatus.EXECUTED);
     }
 
+    /** Nobody knows whether the first refund went out, so the agent may not send a second one. */
+    @Test
+    void anUnknownOutcomeBlocksTheSameToolInTheSessionUntilResolved() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String lost = loseOutcome(gate, "c2");
+
+        Decision second = gate.check(call("c3", "issueRefund", JOB, Map.of("order", ArgValue.number(7732))));
+        assertThat(second).isInstanceOfSatisfying(Decision.Deny.class,
+                deny -> assertThat(deny.ruleId()).isEqualTo(BuiltInRules.APPROVAL_UNRESOLVED));
+        assertThat(gate.check(call("c4", "lookupCustomer", JOB, Map.of()))).isInstanceOf(Decision.Allow.class);
+        assertThat(gate.check(new ToolCall("c5", JOB, "refund-agent", "another-session", ToolId.local("issueRefund"),
+                ObjectValue.of(Map.of()), clock.instant()))).isNotInstanceOf(Decision.Deny.class);
+
+        assertThat(gate.resolve(lost, LENA, true, "the payment provider shows refund R-1")).isTrue();
+        assertThat(queue.get(lost).orElseThrow().status()).isEqualTo(ApprovalStatus.EXECUTED);
+        assertThat(queue.get(lost).orElseThrow().decisions()).last()
+                .satisfies(decision -> assertThat(decision.kind()).isEqualTo(ApprovalDecision.Kind.RESOLVE));
+        assertThat(gate.check(call("c6", "issueRefund", JOB, Map.of("order", ArgValue.number(7732)))).ruleId())
+                .isNotEqualTo(BuiltInRules.APPROVAL_UNRESOLVED);
+    }
+
+    @Test
+    void anotherApprovedCallOfTheToolIsRefusedWhileOneIsUnresolved() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String waiting = deferRefund(gate, JOB, "c3");
+        loseOutcome(gate, "c2");
+
+        assertThat(gate.approve(waiting, LENA, JOB)).isInstanceOfSatisfying(Approval.Refused.class,
+                refused -> assertThat(refused.reason()).contains(BuiltInRules.APPROVAL_UNRESOLVED));
+    }
+
+    @Test
+    void aLateOutcomeFromTheExecutorLiftsTheBlock() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String lost = loseOutcome(gate, "c2");
+
+        gate.finished(lost, "node-1", new ToolResult.Failed("provider timed out"));
+
+        assertThat(sessions.state("refunds-refund-agent").unresolved()).isEmpty();
+        assertThat(queue.get(lost).orElseThrow().status()).isEqualTo(ApprovalStatus.FAILED);
+    }
+
+    @Test
+    void onlyAReviewerOfTheTenantOrASuperAdminMayResolve() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin").auditors("compliance")));
+        String lost = loseOutcome(gate, "c2");
+
+        assertThat(gate.resolve(lost, JOB, true, "I am sure it ran")).isFalse();
+        assertThat(gate.resolve(lost, Principal.user("ada", Tenant.of("operator"), "compliance"), true, "looks fine")).isFalse();
+        assertThat(gate.resolve(lost, Principal.user("gus", Tenant.of("globex"), "finance"), true, "checked")).isFalse();
+        assertThat(gate.resolve(lost, ROOT, false, "no refund at the provider")).isTrue();
+        assertThat(queue.get(lost).orElseThrow().status()).isEqualTo(ApprovalStatus.FAILED);
+        assertThat(gate.resolve(lost, LENA, true, "again")).isFalse();
+    }
+
+    /** If the session missed the resolution, resolving again lifts the block rather than leaving it forever. */
+    @Test
+    void resolvingAgainRepairsASessionThatMissedTheOutcome() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String lost = loseOutcome(gate, "c2");
+        gate.resolve(lost, LENA, true, "ran");
+        sessions.append(new SessionEvent.CallUnresolved("refunds-refund-agent", lost, ToolId.local("issueRefund"), clock.instant()));
+
+        assertThat(gate.resolve(lost, LENA, true, "repair")).isTrue();
+        assertThat(sessions.state("refunds-refund-agent").unresolved()).isEmpty();
+    }
+
     @Test
     void aBurstOfSuperAdminDecisionsRaisesOneAlertPerWindow() {
         ToolGatePolicy policy = refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin"));
@@ -537,6 +606,16 @@ class ApprovalTest {
                     extra.accept(a);
                 })
                 .build();
+    }
+
+    /** Defers, approves and claims a refund, then lets its lease run out, so its outcome is unknown. */
+    private String loseOutcome(ToolGate gate, String callId) {
+        String approvalId = deferRefund(gate, JOB, callId);
+        gate.approve(approvalId, LENA, JOB);
+        gate.claim(approvalId, "node-1", Duration.ofMinutes(1));
+        clock.advance(Duration.ofMinutes(2));
+        assertThat(gate.sweep().unknown()).isEqualTo(1);
+        return approvalId;
     }
 
     private String deferRefund(ToolGate gate, Principal principal) {
