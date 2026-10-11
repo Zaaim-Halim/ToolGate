@@ -190,7 +190,7 @@ class TaintRulesTest {
     }
 
     private static ToolGate gate(ToolGatePolicy policy) {
-        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { }).build();
+        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog().build();
     }
 
     /** Checks a call and, as an adapter would, records its result if it ran. */

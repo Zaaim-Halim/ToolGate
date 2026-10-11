@@ -42,7 +42,7 @@ class ResultRulesPolicyTest {
         ToolGatePolicy byId = policy(a -> a.allow("searchInvoices")
                 .result("searchInvoices", "items[*].id", sameTenant("invoice")));
 
-        ToolGate.builder(direct).auditSink(event -> { }).build().close();
+        ToolGate.builder(direct).noDefaultLog().build().close();
         assertThatIllegalStateException().isThrownBy(() -> ToolGate.builder(byId).build())
                 .withMessageContaining("ownershipResolver");
     }

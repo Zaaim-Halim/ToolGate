@@ -67,7 +67,8 @@ Every decision is a JSON line on the `toolgate.audit` logger:
 ```
 
 `decision` is what happened; `computed` and `computedRule` are what enforcement would have done. When the log shows only the decisions you want, switch
-to `Mode.ENFORCE`.
+to `Mode.ENFORCE`. To send decisions to a SIEM, Micrometer or OpenTelemetry as well, see
+[Audit, metrics and traces](audit.md).
 
 ## Next
 

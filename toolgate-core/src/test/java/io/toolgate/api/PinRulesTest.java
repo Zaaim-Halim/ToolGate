@@ -133,7 +133,7 @@ class PinRulesTest {
     }
 
     private ToolGate gate(ToolGatePolicy policy) {
-        return ToolGate.builder(policy).toolCatalog(catalog).auditSink(event -> { }).build();
+        return ToolGate.builder(policy).toolCatalog(catalog).noDefaultLog().build();
     }
 
     private Decision check(ToolGate gate, ToolId tool) {

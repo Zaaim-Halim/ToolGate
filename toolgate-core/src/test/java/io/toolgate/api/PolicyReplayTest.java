@@ -197,7 +197,7 @@ class PolicyReplayTest {
     }
 
     private ToolGate live(ToolGatePolicy policy) {
-        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).sessionStore(history).auditSink(event -> { }).build();
+        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).sessionStore(history).noDefaultLog().build();
     }
 
     private Decision run(ToolGate gate, String session, String tool, Map<String, ArgValue> args) {

@@ -59,7 +59,7 @@ class DeferralQueueingTest {
 
         InMemoryApprovalQueue other = new InMemoryApprovalQueue();
         ToolGate custom = ToolGate.builder(policy(a -> a.approvalExpiry(Duration.ofHours(2))))
-                .approvalQueue(other).clock(Clock.fixed(NOW, ZoneOffset.UTC)).auditSink(event -> { }).build();
+                .approvalQueue(other).clock(Clock.fixed(NOW, ZoneOffset.UTC)).noDefaultLog().build();
         taint(custom);
         refund(custom, "c2");
         assertThat(other.get("refunds:c2").orElseThrow().expiresAt()).isEqualTo(NOW.plus(Duration.ofHours(2)));
@@ -112,7 +112,7 @@ class DeferralQueueingTest {
                 return List.of();
             }
         };
-        ToolGate gate = ToolGate.builder(policy(a -> { })).approvalQueue(broken).auditSink(event -> { }).build();
+        ToolGate gate = ToolGate.builder(policy(a -> { })).approvalQueue(broken).noDefaultLog().build();
         taint(gate);
 
         assertThat(refund(gate, "c2")).isInstanceOfSatisfying(Decision.Deny.class,

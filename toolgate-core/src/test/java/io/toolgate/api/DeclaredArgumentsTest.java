@@ -25,7 +25,7 @@ class DeclaredArgumentsTest {
             .build();
     private final ToolCatalog.Mutable catalog = ToolCatalog.inMemory()
             .put(Catalogs.definition(FETCH, Set.of("url", "timeout")));
-    private final ToolGate gate = ToolGate.builder(policy).toolCatalog(catalog).auditSink(event -> { }).build();
+    private final ToolGate gate = ToolGate.builder(policy).toolCatalog(catalog).noDefaultLog().build();
     private final AtomicInteger calls = new AtomicInteger();
 
     @Test
@@ -101,7 +101,7 @@ class DeclaredArgumentsTest {
                 .ruleMode(BuiltInRules.ARGUMENTS_DECLARED, Mode.MONITOR)
                 .agent("ops", a -> a.allow("fetch").rule("fetch.url", hosts("status.example")))
                 .build();
-        ToolGate monitoring = ToolGate.builder(monitored).toolCatalog(catalog).auditSink(event -> { }).build();
+        ToolGate monitoring = ToolGate.builder(monitored).toolCatalog(catalog).noDefaultLog().build();
 
         assertThat(monitoring.check(call("ops", FETCH, Map.of("url", "https://status.example/", "proxy", "x"))))
                 .isInstanceOf(Decision.Allow.class);

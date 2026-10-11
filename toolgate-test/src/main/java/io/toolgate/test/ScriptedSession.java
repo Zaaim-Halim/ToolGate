@@ -66,6 +66,7 @@ public final class ScriptedSession implements AutoCloseable {
                 .approvalQueue(approvalQueue)
                 .ownershipResolver(new ScriptedOwners())
                 .toolCatalog(catalog)
+                .noDefaultLog()
                 .auditSink(auditEvents::add)
                 .clock(clock)
                 .build();

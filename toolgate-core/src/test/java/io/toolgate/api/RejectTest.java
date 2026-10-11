@@ -55,7 +55,7 @@ class RejectTest {
     private static ToolGate gate(Mode mode) {
         ToolGatePolicy policy = ToolGatePolicy.builder().mode(mode).defaults(d -> d.denialBudget(2))
                 .agent("mailer", a -> a.allow("sendEmail")).build();
-        return ToolGate.builder(policy).auditSink(event -> { }).build();
+        return ToolGate.builder(policy).noDefaultLog().build();
     }
 
     private ToolCall call() {

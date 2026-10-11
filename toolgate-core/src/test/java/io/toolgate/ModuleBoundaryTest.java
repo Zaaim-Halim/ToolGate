@@ -14,7 +14,11 @@ import org.junit.jupiter.api.Test;
  */
 class ModuleBoundaryTest {
 
-    private static final Set<String> PUBLIC_PACKAGES = Set.of("io.toolgate.api", "io.toolgate.api.policy", "io.toolgate.spi");
+    private static final Set<String> PUBLIC_PACKAGES = Set.of("io.toolgate.api", "io.toolgate.api.policy", "io.toolgate.spi",
+            "io.toolgate.telemetry");
+    /** Only the telemetry package uses these, so an application that does not use it never needs them. */
+    private static final Set<String> OPTIONAL_MODULES = Set.of("micrometer.core", "io.opentelemetry.api",
+            "io.opentelemetry.context");
 
     private final ModuleDescriptor descriptor = ModuleBoundaryTest.class.getModule().getDescriptor();
 
@@ -27,7 +31,7 @@ class ModuleBoundaryTest {
     }
 
     @Test
-    void exportsNothingButApiAndSpi() {
+    void exportsNothingButApiSpiAndTelemetry() {
         assertThat(descriptor.exports())
                 .extracting(Exports::source)
                 .allSatisfy(exported -> assertThat(PUBLIC_PACKAGES).contains(exported));
@@ -39,7 +43,10 @@ class ModuleBoundaryTest {
     }
 
     @Test
-    void requiresNothingButTheJavaBaseModule() {
-        assertThat(descriptor.requires()).extracting(Requires::name).containsExactly("java.base");
+    void requiresNothingButTheJavaBaseModuleAndTheOptionalTelemetryLibraries() {
+        assertThat(descriptor.requires()).filteredOn(required -> !required.modifiers().contains(Requires.Modifier.STATIC))
+                .extracting(Requires::name).containsExactly("java.base");
+        assertThat(descriptor.requires()).filteredOn(required -> required.modifiers().contains(Requires.Modifier.STATIC))
+                .extracting(Requires::name).containsExactlyInAnyOrderElementsOf(OPTIONAL_MODULES);
     }
 }

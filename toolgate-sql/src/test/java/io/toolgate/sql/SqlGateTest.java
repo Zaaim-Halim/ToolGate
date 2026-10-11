@@ -30,7 +30,7 @@ class SqlGateTest {
                 .build();
         var catalog = ToolCatalog.inMemory().put(ToolDefinition.of(ToolId.local("runQuery"), "Run a read-only query",
                 "{\"type\":\"object\",\"properties\":{\"sql\":{\"type\":\"string\"}}}"));
-        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(catalog).auditSink(event -> { }).build()) {
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(catalog).noDefaultLog().build()) {
             assertThat(query(gate, "c1", "SELECT status FROM orders WHERE id = 42")).isInstanceOf(Decision.Allow.class);
             assertThat(query(gate, "c2", "DELETE FROM orders WHERE 1=1"))
                     .isInstanceOfSatisfying(Decision.Deny.class, deny -> {

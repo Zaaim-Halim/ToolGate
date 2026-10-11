@@ -64,7 +64,7 @@ class CasesBCEEndToEndTest {
         MODEL.close();
     }
 
-    /** Collects audit events, in place of the JDK logger. */
+    /** Collects audit events; the {@code toolgate.audit} log gets them too. */
     @TestConfiguration
     static class Audit {
 

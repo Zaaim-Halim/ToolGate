@@ -6,7 +6,6 @@ import io.toolgate.api.Decision;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.api.policy.BuiltInRules;
-import io.toolgate.audit.SystemLoggerSink;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.AuditSink;
 import java.io.IOException;
@@ -69,17 +68,13 @@ class RealModelCasesTest {
         registry.add("demo.ops.logs", LOGS::toString);
     }
 
-    /** Collects audit events for the report, and still logs them as {@code toolgate.audit} JSON lines. */
+    /** Collects audit events for the report; the {@code toolgate.audit} log still gets them too. */
     @TestConfiguration
     static class Audit {
 
         @Bean
         AuditSink collectingAuditSink() {
-            AuditSink log = new SystemLoggerSink();
-            return event -> {
-                AUDIT.add(event);
-                log.emit(event);
-            };
+            return AUDIT::add;
         }
     }
 

@@ -3,6 +3,8 @@ package io.toolgate.api;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.ArgumentSummary;
 import io.toolgate.audit.AsyncAuditDispatcher;
+import io.toolgate.audit.AuditChannel;
+import io.toolgate.audit.FanOutSink;
 import io.toolgate.audit.SystemLoggerSink;
 import io.toolgate.engine.DefaultToolGate;
 import io.toolgate.queue.InMemoryApprovalQueue;
@@ -11,12 +13,14 @@ import io.toolgate.rules.ResultChecker;
 import io.toolgate.session.InMemorySessionStore;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditSink;
+import io.toolgate.spi.DecisionObserver;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionStore;
 import io.toolgate.spi.ToolCatalog;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -29,8 +33,9 @@ import java.util.Optional;
  * {@link Decision}. Implementations are thread-safe; parallel calls in one session are checked
  * against consistent session state, so they cannot overshoot a budget together.
  *
- * <p>Every decision is also sent to the audit sink, off the request path. {@link #close} delivers
- * the events still queued; call it when the application shuts down.
+ * <p>Every decision is also sent to the audit sinks, off the request path, and to the decision
+ * observers, on it. {@link #close} delivers the events still queued; call it when the application
+ * shuts down.
  */
 public interface ToolGate extends AutoCloseable {
 
@@ -171,9 +176,10 @@ public interface ToolGate extends AutoCloseable {
     int expirePending();
 
     /**
-     * Audit events that never reached the sink, because its queue was full, it threw, or the event
-     * came after {@link #close}. Worth a metric and an alert: enforcement is unaffected, but the
-     * audit trail has gaps.
+     * Gaps in the audit trail: events not delivered to every sink, because their queue was full, a sink
+     * threw (an event counts once however many sinks missed it), or the event came after
+     * {@link #close}; plus decision observer calls that threw. Worth a metric and an alert:
+     * enforcement is unaffected, but the audit trail has gaps.
      *
      * @return how many were dropped since the gate was built
      */
@@ -205,7 +211,9 @@ public interface ToolGate extends AutoCloseable {
         private HostResolver hostResolver;
         private OwnershipResolver ownershipResolver;
         private ToolCatalog toolCatalog;
-        private AuditSink auditSink;
+        private final List<AuditSink> auditSinks = new ArrayList<>();
+        private boolean defaultLog = true;
+        private final List<DecisionObserver> decisionObservers = new ArrayList<>();
         private byte[] argumentHashKey;
         private Clock clock = Clock.systemUTC();
 
@@ -277,14 +285,39 @@ public interface ToolGate extends AutoCloseable {
         }
 
         /**
-         * Where audit events go. Defaults to one JSON line per event on the JDK logger
-         * {@code toolgate.audit}, which Spring Boot routes to SLF4J.
+         * Also sends audit events to a sink, such as a SIEM or a metrics registry. Every sink gets
+         * every event, in the order added, after the default log unless {@link #noDefaultLog} was
+         * called; a failing sink never keeps an event from the others.
          *
          * @param sink the sink, called from one background thread
          * @return this builder
          */
         public Builder auditSink(AuditSink sink) {
-            this.auditSink = Objects.requireNonNull(sink, "auditSink");
+            auditSinks.add(Objects.requireNonNull(sink, "auditSink"));
+            return this;
+        }
+
+        /**
+         * Turns off the default audit log: one JSON line per event on the JDK logger
+         * {@code toolgate.audit}, which Spring Boot routes to SLF4J. Without it and without any
+         * {@link #auditSink}, nothing is audited.
+         *
+         * @return this builder
+         */
+        public Builder noDefaultLog() {
+            this.defaultLog = false;
+            return this;
+        }
+
+        /**
+         * Also tells an observer about each check as it ends, on the checking thread, such as to
+         * annotate the tool call's trace span. Observers are called in the order added.
+         *
+         * @param observer the observer; fast and non-blocking, since it runs on every check
+         * @return this builder
+         */
+        public Builder decisionObserver(DecisionObserver observer) {
+            decisionObservers.add(Objects.requireNonNull(observer, "decisionObserver"));
             return this;
         }
 
@@ -343,11 +376,24 @@ public interface ToolGate extends AutoCloseable {
                     new ResultChecker(policy, owners),
                     sessionStore != null ? sessionStore : new InMemorySessionStore(),
                     approvalQueue != null ? approvalQueue : new InMemoryApprovalQueue(),
-                    new AsyncAuditDispatcher(auditSink != null ? auditSink : new SystemLoggerSink(),
-                            AsyncAuditDispatcher.DEFAULT_CAPACITY),
+                    auditChannel(),
+                    decisionObservers,
                     argumentHashKey != null ? ArgumentSummary.keyed(argumentHashKey) : ArgumentSummary.typesOnly(),
                     clock,
                     toolCatalog != null ? toolCatalog : BuiltInEvaluators.NO_TOOLS);
+        }
+
+        private AuditChannel auditChannel() {
+            var sinks = new ArrayList<AuditSink>();
+            if (defaultLog) {
+                sinks.add(new SystemLoggerSink());
+            }
+            sinks.addAll(auditSinks);
+            return switch (sinks.size()) {
+                case 0 -> AuditChannel.NONE;
+                case 1 -> new AsyncAuditDispatcher(sinks.getFirst(), AsyncAuditDispatcher.DEFAULT_CAPACITY);
+                default -> new AsyncAuditDispatcher(new FanOutSink(sinks), AsyncAuditDispatcher.DEFAULT_CAPACITY);
+            };
         }
     }
 }

@@ -303,7 +303,7 @@ class ExampleCasesTest {
         @Test
         void theReplayFindsTheSupplierNotificationsThenOnlyTheCustomerReplies() {
             var history = new RecordingStore();
-            try (ToolGate live = ToolGate.builder(emails()).sessionStore(history).auditSink(event -> { }).build()) {
+            try (ToolGate live = ToolGate.builder(emails()).sessionStore(history).noDefaultLog().build()) {
                 int call = 0;
                 for (int day = 0; day < 7; day++) {
                     String session = "day-" + day;

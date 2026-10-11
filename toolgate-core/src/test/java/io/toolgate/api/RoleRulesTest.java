@@ -16,7 +16,7 @@ class RoleRulesTest {
                     .allow("getInvoice", "issueRefund")
                     .requireRole("issueRefund", "finance", "support-lead"))
             .build();
-    private final ToolGate gate = ToolGate.builder(policy).auditSink(event -> { }).build();
+    private final ToolGate gate = ToolGate.builder(policy).noDefaultLog().build();
 
     @Test
     void anyOneOfTheRolesIsEnough() {

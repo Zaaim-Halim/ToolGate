@@ -59,7 +59,8 @@ the run ends.
 ## 5. Run and read the log
 
 Decisions go to the `toolgate.audit` logger as JSON lines; `computed` and `computedRule` show what
-enforcement would have done. Switch to `Mode.ENFORCE` when they look right.
+enforcement would have done. Switch to `Mode.ENFORCE` when they look right. To send decisions to a
+SIEM, Micrometer or OpenTelemetry as well, see [Audit, metrics and traces](audit.md).
 
 Not available for tools registered through ToolGate: LangChain4j's compensating actions
 (`@CompensateFor`) and tool search (`toolSearchStrategy`).

@@ -138,7 +138,7 @@ class OwnershipRulesTest {
 
     @Test
     void resolverFailureDenies() {
-        ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { }).ownershipResolver(new OwnershipResolver() {
+        ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog().ownershipResolver(new OwnershipResolver() {
             @Override
             public Optional<String> tenantOf(String resourceType, String id) {
                 throw new IllegalStateException("database down");
@@ -177,7 +177,7 @@ class OwnershipRulesTest {
                 return known;
             }
         };
-        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { })
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog()
                 .ownershipResolver(batching).build()) {
             assertThat(gate.check(call(MARIA, "mergeInvoices", ids("INV-118", "INV-119", "INV-118"))))
                     .isInstanceOf(Decision.Allow.class);
@@ -209,7 +209,7 @@ class OwnershipRulesTest {
                 return null;
             }
         };
-        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { })
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog()
                 .ownershipResolver(broken).build()) {
             assertThat(getInvoice(gate, "INV-118")).isInstanceOf(Decision.Deny.class);
         }
@@ -232,7 +232,7 @@ class OwnershipRulesTest {
     }
 
     private ToolGate gate(ToolGatePolicy gatePolicy) {
-        return ToolGate.builder(gatePolicy).toolCatalog(Catalogs.declaring(gatePolicy)).auditSink(event -> { }).ownershipResolver(owners).build();
+        return ToolGate.builder(gatePolicy).toolCatalog(Catalogs.declaring(gatePolicy)).noDefaultLog().ownershipResolver(owners).build();
     }
 
     private Decision getInvoice(ToolGate gate, String id) {

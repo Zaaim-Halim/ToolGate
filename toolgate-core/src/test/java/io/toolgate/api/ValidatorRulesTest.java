@@ -145,7 +145,7 @@ class ValidatorRulesTest {
     }
 
     private static ToolGate gate(ToolGatePolicy policy) {
-        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).auditSink(event -> { }).build();
+        return ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog().build();
     }
 
     private static Decision paint(ToolGate gate, ArgValue color) {

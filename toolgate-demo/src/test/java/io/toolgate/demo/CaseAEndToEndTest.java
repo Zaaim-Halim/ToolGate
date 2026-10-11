@@ -48,7 +48,7 @@ class CaseAEndToEndTest {
         registry.add("spring.ai.openai.api-key", () -> "test");
     }
 
-    /** Collects audit events, in place of the JDK logger. */
+    /** Collects audit events; the {@code toolgate.audit} log gets them too. */
     @TestConfiguration
     static class Audit {
 

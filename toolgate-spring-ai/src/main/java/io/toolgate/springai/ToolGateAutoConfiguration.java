@@ -1,13 +1,20 @@
 package io.toolgate.springai;
 
+import io.micrometer.core.instrument.FunctionCounter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.MeterBinder;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditSink;
+import io.toolgate.spi.DecisionObserver;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
 import io.toolgate.spi.SessionStore;
 import io.toolgate.spi.ToolCatalog;
+import io.toolgate.telemetry.MicrometerAuditSink;
+import io.toolgate.telemetry.MicrometerCheckTimer;
+import io.toolgate.telemetry.OpenTelemetryDecisions;
 import java.time.Clock;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ChatClientBuilderCustomizer;
@@ -18,14 +25,20 @@ import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
  * Puts ToolGate between Spring AI and every tool. The application supplies a {@link ToolGatePolicy}
- * bean, and may supply a {@link SessionStore}, {@link ApprovalQueue}, {@link AuditSink},
- * {@link OwnershipResolver}, {@link HostResolver} or {@link Clock}; everything else is wired here.
+ * bean, and may supply a {@link SessionStore}, {@link ApprovalQueue}, {@link OwnershipResolver},
+ * {@link HostResolver} or {@link Clock}, and any number of {@link AuditSink} and
+ * {@link DecisionObserver} beans; everything else is wired here.
+ *
+ * <p>Decisions go to the {@code toolgate.audit} log unless {@code toolgate.audit.log.enabled=false}. Micrometer
+ * metrics ({@code toolgate.audit.micrometer.enabled=true}) and OpenTelemetry span attributes
+ * ({@code toolgate.audit.opentelemetry.enabled=true}) are off until the application turns them on.
  *
  * <p>Spring Boot's own {@link ToolCallingManager} and {@link ToolCallbackResolver} are wrapped rather
  * than replaced, so their configuration stays as the application set it, and Spring Boot's
@@ -58,18 +71,21 @@ public class ToolGateAutoConfiguration {
      * @param catalog   the tool catalog
      * @param sessions  a session store, or the in-memory default
      * @param approvals an approval queue, or the in-memory default
-     * @param audit     an audit sink, or the JDK logger
+     * @param audit     audit sinks, each given every event, besides the log
+     * @param observers decision observers, each told of every check
      * @param owners    an ownership resolver, required by ownership rules
      * @param hosts     a host resolver, to check where URL hosts resolve
      * @param clock     a clock, or the system clock
+     * @param properties the {@code toolgate.*} settings
      * @return the gate, closed when the application stops
      */
     @Bean(destroyMethod = "close")
     @ConditionalOnMissingBean
     public ToolGate toolGate(ObjectProvider<ToolGatePolicy> policy, ToolCatalog.Mutable catalog,
                              ObjectProvider<SessionStore> sessions, ObjectProvider<ApprovalQueue> approvals,
-                             ObjectProvider<AuditSink> audit, ObjectProvider<OwnershipResolver> owners,
-                             ObjectProvider<HostResolver> hosts, ObjectProvider<Clock> clock) {
+                             ObjectProvider<AuditSink> audit, ObjectProvider<DecisionObserver> observers,
+                             ObjectProvider<OwnershipResolver> owners, ObjectProvider<HostResolver> hosts,
+                             ObjectProvider<Clock> clock, ToolGateProperties properties) {
         ToolGatePolicy required = policy.getIfAvailable();
         if (required == null) {
             throw new IllegalStateException("toolgate-spring-ai needs a ToolGatePolicy bean; without one, every tool"
@@ -78,7 +94,11 @@ public class ToolGateAutoConfiguration {
         ToolGate.Builder builder = ToolGate.builder(required).toolCatalog(catalog).clock(clock.getIfAvailable(Clock::systemUTC));
         sessions.ifAvailable(builder::sessionStore);
         approvals.ifAvailable(builder::approvalQueue);
-        audit.ifAvailable(builder::auditSink);
+        if (!properties.audit().log().enabled()) {
+            builder.noDefaultLog();
+        }
+        audit.orderedStream().forEach(builder::auditSink);
+        observers.orderedStream().forEach(builder::decisionObserver);
         owners.ifAvailable(builder::ownershipResolver);
         hosts.ifAvailable(builder::hostResolver);
         return builder.build();
@@ -101,6 +121,62 @@ public class ToolGateAutoConfiguration {
         @ConditionalOnMissingBean
         ToolGatePrincipalResolver toolGatePrincipalResolver() {
             return new SpringSecurityPrincipals();
+        }
+    }
+
+    /**
+     * Micrometer metrics, when the application turns them on: counter {@code toolgate.decisions}, timer
+     * {@code toolgate.check.duration}, and function counter {@code toolgate.audit.dropped} for audit gaps.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
+    @ConditionalOnProperty(prefix = "toolgate.audit.micrometer", name = "enabled", havingValue = "true")
+    static class Micrometer {
+
+        /** The counter of {@link ToolGate#droppedAuditEvents()}. */
+        static final String DROPPED = "toolgate.audit.dropped";
+
+        @Bean
+        @ConditionalOnMissingBean
+        MicrometerAuditSink toolGateMicrometerAuditSink(ObjectProvider<MeterRegistry> registry, ToolGatePolicy policy) {
+            return new MicrometerAuditSink(requireRegistry(registry), policy);
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        MicrometerCheckTimer toolGateMicrometerCheckTimer(ObjectProvider<MeterRegistry> registry) {
+            return new MicrometerCheckTimer(requireRegistry(registry));
+        }
+
+        // The gate is looked up when the counter is read, never while the registry is being set up: the
+        // gate's own sinks need the registry, so binding it eagerly would be a cycle.
+        @Bean
+        MeterBinder toolGateDroppedAuditEvents(ObjectProvider<ToolGate> gate) {
+            return registry -> FunctionCounter.builder(DROPPED, gate, provider -> provider.getObject().droppedAuditEvents())
+                    .description("Audit events and observer calls ToolGate dropped; enforcement is unaffected")
+                    .register(registry);
+        }
+
+        private static MeterRegistry requireRegistry(ObjectProvider<MeterRegistry> registry) {
+            MeterRegistry available = registry.getIfAvailable();
+            if (available == null) {
+                throw new IllegalStateException("toolgate.audit.micrometer.enabled=true needs a MeterRegistry bean,"
+                        + " such as Spring Boot's with spring-boot-starter-actuator");
+            }
+            return available;
+        }
+    }
+
+    /** Decisions on the current OpenTelemetry span, when the application turns them on. */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "io.opentelemetry.api.trace.Span")
+    @ConditionalOnProperty(prefix = "toolgate.audit.opentelemetry", name = "enabled", havingValue = "true")
+    static class OpenTelemetry {
+
+        @Bean
+        @ConditionalOnMissingBean
+        OpenTelemetryDecisions toolGateOpenTelemetryDecisions() {
+            return new OpenTelemetryDecisions();
         }
     }
 

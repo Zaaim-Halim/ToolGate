@@ -67,7 +67,8 @@ public final class Replayer {
         ToolGate.Builder builder = ToolGate.builder(policy)
                 .sessionStore(store)
                 .approvalQueue(ApprovalQueue.inMemory())
-                .auditSink(event -> { })
+                // Replayed calls are not decisions; they must never reach the real audit log.
+                .noDefaultLog()
                 .clock(clock);
         if (owners != null) {
             builder.ownershipResolver(owners);

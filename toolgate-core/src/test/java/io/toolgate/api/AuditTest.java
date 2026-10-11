@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.spi.AuditEvent;
+import io.toolgate.spi.DecisionObserver;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -163,8 +164,96 @@ class AuditTest {
         assertThat(gate.droppedAuditEvents()).isEqualTo(3);
     }
 
+    @Test
+    void everySinkGetsEveryEventAndAFailingOneKeepsNothingFromTheOthers() {
+        List<AuditEvent> second = new CopyOnWriteArrayList<>();
+        ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog()
+                .auditSink(events::add)
+                .auditSink(event -> {
+                    throw new IllegalStateException("SIEM down");
+                })
+                .auditSink(second::add).build();
+        gate.check(fetch("c1", "https://docs.example/a"));
+        gate.close();
+
+        assertThat(events).hasSize(2).isEqualTo(second);
+        assertThat(gate.droppedAuditEvents()).as("each event one of the sinks missed").isEqualTo(2);
+    }
+
+    @Test
+    void withoutTheDefaultLogOrAnySinkNothingIsAuditedAndChecksStillWork() {
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog().build()) {
+            assertThat(gate.check(fetch("c1", "https://evil.example/"))).isInstanceOf(Decision.Deny.class);
+            assertThat(gate.droppedAuditEvents()).isZero();
+        }
+    }
+
+    @Test
+    void observersSeeEachCheckOnTheCheckingThreadAsItEnds() {
+        List<DecisionObserver.Check> checks = new CopyOnWriteArrayList<>();
+        List<Thread> threads = new CopyOnWriteArrayList<>();
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog()
+                .decisionObserver(checks::add)
+                .decisionObserver(check -> threads.add(Thread.currentThread())).build()) {
+            ToolCall allowed = fetch("c1", "https://docs.example/a");
+            Decision decision = gate.check(allowed);
+
+            assertThat(checks).singleElement().satisfies(check -> {
+                assertThat(check.call()).isEqualTo(allowed);
+                assertThat(check.applied()).isEqualTo(decision).isEqualTo(check.computed());
+                assertThat(check.mode()).isEqualTo(Mode.ENFORCE);
+                assertThat(check.took()).isPositive();
+            });
+            assertThat(threads).containsExactly(Thread.currentThread());
+        }
+    }
+
+    @Test
+    void inMonitorModeObserversSeeTheDecisionThatWasNotApplied() {
+        ToolGatePolicy monitored = ToolGatePolicy.builder().mode(Mode.MONITOR)
+                .agent("support-chat", a -> a.allow("fetch").rule("fetch.url", hosts("docs.example"))).build();
+        List<DecisionObserver.Check> checks = new CopyOnWriteArrayList<>();
+        try (ToolGate gate = ToolGate.builder(monitored).toolCatalog(Catalogs.declaring(monitored)).noDefaultLog()
+                .decisionObserver(checks::add).build()) {
+            gate.check(fetch("c1", "http://169.254.169.254/"));
+        }
+
+        assertThat(checks).singleElement().satisfies(check -> {
+            assertThat(check.applied()).isEqualTo(new Decision.Allow("mode.monitor"));
+            assertThat(check.computed().ruleId()).isEqualTo("fetch.url");
+            assertThat(check.mode()).isEqualTo(Mode.MONITOR);
+        });
+    }
+
+    @Test
+    void aFailingObserverNeverChangesADecisionAndIsCountedAsAGap() {
+        List<DecisionObserver.Check> later = new CopyOnWriteArrayList<>();
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(Catalogs.declaring(policy)).noDefaultLog()
+                .decisionObserver(check -> {
+                    throw new IllegalStateException("tracer broken");
+                })
+                .decisionObserver(later::add).build()) {
+            assertThat(gate.check(fetch("c1", "https://evil.example/"))).isInstanceOf(Decision.Deny.class);
+            assertThat(gate.check(fetch("c2", "https://docs.example/"))).isInstanceOf(Decision.Allow.class);
+            assertThat(gate.droppedAuditEvents()).isEqualTo(2);
+        }
+
+        assertThat(later).hasSize(2);
+    }
+
+    @Test
+    void offModeCallsNoObserver() {
+        ToolGatePolicy off = ToolGatePolicy.builder().mode(Mode.OFF).agent("support-chat", a -> a.allow("fetch")).build();
+        List<DecisionObserver.Check> checks = new CopyOnWriteArrayList<>();
+        try (ToolGate gate = ToolGate.builder(off).noDefaultLog().decisionObserver(checks::add).build()) {
+            gate.check(fetch("c1", "https://evil.example/"));
+        }
+
+        assertThat(checks).isEmpty();
+    }
+
     private ToolGate gate(ToolGatePolicy gatePolicy) {
-        return ToolGate.builder(gatePolicy).toolCatalog(Catalogs.declaring(gatePolicy)).auditSink(events::add).clock(CLOCK).build();
+        return ToolGate.builder(gatePolicy).toolCatalog(Catalogs.declaring(gatePolicy)).noDefaultLog().auditSink(events::add).clock(CLOCK).build();
     }
 
     private AuditEvent.Decided decided(int index) {

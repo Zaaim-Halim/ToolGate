@@ -72,6 +72,9 @@
         <httpclient5.version>5.6.5</httpclient5.version>
         <picocli.version>4.7.7</picocli.version>
         <langchain4j-mcp.version>1.22.0-beta32</langchain4j-mcp.version>
+        <!-- Optional in core, for its telemetry: the versions Spring Boot 4.1.1 manages. Only stable API is used. -->
+        <micrometer.version>1.17.1</micrometer.version>
+        <opentelemetry.version>1.62.0</opentelemetry.version>
     </properties>
 
     <dependencyManagement>
@@ -142,6 +145,16 @@
                 <groupId>dev.langchain4j</groupId>
                 <artifactId>langchain4j-mcp</artifactId>
                 <version>${langchain4j-mcp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-core</artifactId>
+                <version>${micrometer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-api</artifactId>
+                <version>${opentelemetry.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

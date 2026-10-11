@@ -78,7 +78,7 @@ public class CheckBenchmark {
                 .put(ToolDefinition.of(ToolId.local("fetch"), "Fetch a page", "{\"properties\":{\"url\":{\"type\":\"string\"}}}"))
                 .put(ToolDefinition.of(ToolId.local("readFile"), "Read a file", "{\"properties\":{\"path\":{\"type\":\"string\"}}}"))
                 .put(ToolDefinition.of(ToolId.local("runQuery"), "Run a query", "{\"properties\":{\"sql\":{\"type\":\"string\"}}}"));
-        gate = ToolGate.builder(policy).toolCatalog(catalog).auditSink(event -> { }).build();
+        gate = ToolGate.builder(policy).toolCatalog(catalog).noDefaultLog().build();
         allowListCalls = calls("getCustomer", "id", "C-5512");
         urlCalls = calls("fetch", "url", "https://status.vendor.example/api/v2/status");
         deniedUrlCalls = calls("fetch", "url", "http://169.254.169.254/latest/meta-data/");

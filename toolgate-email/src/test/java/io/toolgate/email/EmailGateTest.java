@@ -30,7 +30,7 @@ class EmailGateTest {
                 .build();
         var catalog = ToolCatalog.inMemory().put(ToolDefinition.of(ToolId.local("sendEmail"), "Send an email",
                 "{\"type\":\"object\",\"properties\":{\"to\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"}}}"));
-        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(catalog).auditSink(event -> { }).build()) {
+        try (ToolGate gate = ToolGate.builder(policy).toolCatalog(catalog).noDefaultLog().build()) {
             assertThat(send(gate, "c1", "ops@mycompany.com")).isInstanceOf(Decision.Allow.class);
             assertThat(send(gate, "c2", "ops@mycompany.com, attacker@evil.example"))
                     .isInstanceOfSatisfying(Decision.Deny.class, deny -> {

@@ -24,6 +24,7 @@ import io.toolgate.rules.ResultChecker;
 import io.toolgate.rules.Spending;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditEvent;
+import io.toolgate.spi.DecisionObserver;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.CallReleased;
@@ -45,6 +46,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Checks calls with the engine and records each applied decision in the session, optimistically:
@@ -72,13 +74,17 @@ public final class DefaultToolGate implements ToolGate {
     private final ApprovalQueue approvals;
     private final ResultChecker results;
     private final AuditChannel audit;
+    private final List<DecisionObserver> observers;
+    /** Observer calls that threw; counted with the dropped audit events, since both leave gaps. */
+    private final AtomicLong failedObservations = new AtomicLong();
     private final ArgumentSummary argumentSummary;
     private final Clock clock;
     private final ToolCatalog catalog;
 
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, ResultChecker results,
                            SessionStore sessions, ApprovalQueue approvals, AuditChannel audit,
-                           ArgumentSummary argumentSummary, Clock clock, ToolCatalog catalog) {
+                           List<DecisionObserver> observers, ArgumentSummary argumentSummary, Clock clock,
+                           ToolCatalog catalog) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.engine = new DecisionEngine(policy, evaluators);
@@ -89,6 +95,7 @@ public final class DefaultToolGate implements ToolGate {
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.audit = Objects.requireNonNull(audit, "audit");
+        this.observers = List.copyOf(observers);
         this.argumentSummary = Objects.requireNonNull(argumentSummary, "argumentSummary");
         this.clock = Objects.requireNonNull(clock, "clock");
         Instant loadedAt = clock.instant();
@@ -98,7 +105,7 @@ public final class DefaultToolGate implements ToolGate {
     /** A gate without audit, for tests of decisions alone. */
     public DefaultToolGate(ToolGatePolicy policy, List<Evaluator> evaluators, SessionStore sessions) {
         this(policy, evaluators, new ResultChecker(policy, BuiltInEvaluators.NO_OWNERS), sessions,
-                new InMemoryApprovalQueue(), AuditChannel.NONE, ArgumentSummary.typesOnly(), Clock.systemUTC(),
+                new InMemoryApprovalQueue(), AuditChannel.NONE, List.of(), ArgumentSummary.typesOnly(), Clock.systemUTC(),
                 BuiltInEvaluators.NO_TOOLS);
     }
 
@@ -152,13 +159,14 @@ public final class DefaultToolGate implements ToolGate {
         if (policy.mode() == Mode.OFF) {
             return new Decision.Allow(BuiltInRules.MODE_OFF);
         }
+        long startedNanos = System.nanoTime();
         try {
-            return decideAndRecord(call, definitions, deciding);
+            return decideAndRecord(call, definitions, deciding, startedNanos);
         } catch (RuntimeException storeFailure) {
             // Evaluators cannot throw past the engine, so this is the store. Without session state
             // every later call would be decided blind, so the run ends rather than this call alone.
             var ended = new Decision.Terminate(BuiltInRules.SESSION_UNAVAILABLE, "session store failed: " + storeFailure);
-            audit(call, ended, ended, 0, SessionState.empty(call.sessionId()));
+            report(call, ended, ended, 0, SessionState.empty(call.sessionId()), startedNanos);
             return ended;
         }
     }
@@ -344,7 +352,7 @@ public final class DefaultToolGate implements ToolGate {
 
     @Override
     public long droppedAuditEvents() {
-        return audit.dropped();
+        return audit.dropped() + failedObservations.get();
     }
 
     @Override
@@ -352,7 +360,8 @@ public final class DefaultToolGate implements ToolGate {
         audit.close();
     }
 
-    private Decision decideAndRecord(ToolCall call, ToolCatalog definitions, DecisionEngine deciding) {
+    private Decision decideAndRecord(ToolCall call, ToolCatalog definitions, DecisionEngine deciding,
+                                     long startedNanos) {
         for (int attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt++) {
             SessionState state = sessions.state(call.sessionId());
             Evaluation evaluation = decide(call, state, definitions, deciding);
@@ -361,18 +370,18 @@ public final class DefaultToolGate implements ToolGate {
                     call.args(), decision, evaluation.computed(), spent(call, decision), policy.hash(), call.at());
             if (decision instanceof Decision.Terminate) {
                 sessions.append(event);
-                audit(call, decision, evaluation.computed(), state.apply(event).toolCalls(), state);
+                report(call, decision, evaluation.computed(), state.apply(event).toolCalls(), state, startedNanos);
                 return decision;
             }
             if (sessions.append(event, state.version())) {
                 Decision queued = decision instanceof Decision.Defer defer ? enqueue(call, defer) : decision;
-                audit(call, queued, evaluation.computed(), state.apply(event).toolCalls(), state);
+                report(call, queued, evaluation.computed(), state.apply(event).toolCalls(), state, startedNanos);
                 return queued;
             }
         }
         var contention = new Decision.Deny(BuiltInRules.SESSION_CONTENTION,
                 "session " + call.sessionId() + " changed on each of " + MAX_APPEND_ATTEMPTS + " attempts");
-        audit(call, contention, contention, 0, SessionState.empty(call.sessionId()));
+        report(call, contention, contention, 0, SessionState.empty(call.sessionId()), startedNanos);
         return contention;
     }
 
@@ -415,6 +424,24 @@ public final class DefaultToolGate implements ToolGate {
             case Decision.Defer deferred -> deferred;
             case Decision.Terminate terminated -> terminated;
         };
+    }
+
+    /** Ends a check: tells the observers, on this thread, and queues the audit event. */
+    private void report(ToolCall call, Decision applied, Decision computed, int toolCalls, SessionState before,
+                        long startedNanos) {
+        Duration took = Duration.ofNanos(System.nanoTime() - startedNanos);
+        if (!observers.isEmpty()) {
+            var check = new DecisionObserver.Check(call, applied, computed, policy.mode(), took);
+            for (DecisionObserver observer : observers) {
+                try {
+                    observer.decided(check);
+                } catch (RuntimeException failed) {
+                    // An observer must never change a decision, so its failure only leaves a gap.
+                    failedObservations.incrementAndGet();
+                }
+            }
+        }
+        audit(call, applied, computed, toolCalls, before);
     }
 
     /** Queues the audit event; the time is taken now, and the arguments are summarized off this thread. */

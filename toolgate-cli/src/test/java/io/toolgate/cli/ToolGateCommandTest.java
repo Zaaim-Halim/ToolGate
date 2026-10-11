@@ -50,7 +50,7 @@ class ToolGateCommandTest {
         var dataSource = new DriverDataSource(jdbcUrl, null, null, getClass().getClassLoader());
         Instant now = Instant.now();
         try (ToolGate live = ToolGate.builder(new Policies.Current().get()).sessionStore(new JdbcSessionStore(dataSource))
-                .auditSink(event -> { }).build()) {
+                .noDefaultLog().build()) {
             int call = 0;
             for (int day = 0; day < 7; day++) {
                 for (String to : List.of("ops@mycompany.com", "orders@supplier-a.example", "orders@supplier-b.example",
@@ -86,7 +86,7 @@ class ToolGateCommandTest {
         Clock tenDaysAgo = Clock.fixed(Instant.now().minus(Duration.ofDays(10)), ZoneOffset.UTC);
         try (ToolGate old = ToolGate.builder(new Policies.Current().get())
                 .sessionStore(new JdbcSessionStore(dataSource, ValueCodec.unencrypted(), tenDaysAgo))
-                .clock(tenDaysAgo).auditSink(event -> { }).build()) {
+                .clock(tenDaysAgo).noDefaultLog().build()) {
             old.check(send("old", "old-1", "attacker@evil.example", tenDaysAgo.instant()));
         }
 
@@ -110,7 +110,7 @@ class ToolGateCommandTest {
         }
         var dataSource = new DriverDataSource(encryptedUrl, null, null, getClass().getClassLoader());
         try (ToolGate live = ToolGate.builder(new Policies.Current().get())
-                .sessionStore(new JdbcSessionStore(dataSource, new Policies.Codec().get())).auditSink(event -> { }).build()) {
+                .sessionStore(new JdbcSessionStore(dataSource, new Policies.Codec().get())).noDefaultLog().build()) {
             live.check(send("sealed", "s-1", "attacker@evil.example", Instant.now()));
         }
 

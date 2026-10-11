@@ -29,7 +29,7 @@ class TaintRecordingTest {
                     "mcp:jira/search_issues"))
             .build();
     private final SessionStore store = new InMemorySessionStore();
-    private final ToolGate gate = ToolGate.builder(policy).sessionStore(store).auditSink(event -> { }).build();
+    private final ToolGate gate = ToolGate.builder(policy).sessionStore(store).noDefaultLog().build();
 
     @Test
     void resultsBringTheirSourceLabelsWithTheirSource() {
@@ -87,7 +87,7 @@ class TaintRecordingTest {
                 store.append(event);
             }
         };
-        ToolGate recordingGate = ToolGate.builder(policy).sessionStore(recording).auditSink(event -> { }).build();
+        ToolGate recordingGate = ToolGate.builder(policy).sessionStore(recording).noDefaultLog().build();
         recordingGate.recordResult(call("job/1", ToolId.local("fetchSupplierPage")), ok());
 
         recordingGate.declassify("job", UNTRUSTED_CONTENT, "page parsed into SupplierTerms; free text dropped");
@@ -106,7 +106,7 @@ class TaintRecordingTest {
     @Test
     void offModeRecordsNothing() {
         ToolGate off = ToolGate.builder(ToolGatePolicy.builder().mode(Mode.OFF).build())
-                .sessionStore(store).auditSink(event -> { }).build();
+                .sessionStore(store).noDefaultLog().build();
 
         off.recordResult(call("job/1", ToolId.mcp("jira", "search_issues")), ok());
 
@@ -132,7 +132,7 @@ class TaintRecordingTest {
                 throw new IllegalStateException("store down");
             }
         };
-        ToolGate brokenGate = ToolGate.builder(policy).sessionStore(broken).auditSink(event -> { }).build();
+        ToolGate brokenGate = ToolGate.builder(policy).sessionStore(broken).noDefaultLog().build();
 
         assertThatThrownBy(() -> brokenGate.recordResult(call("job/1", ToolId.local("readInvoice")), ok()))
                 .hasMessageContaining("store down");

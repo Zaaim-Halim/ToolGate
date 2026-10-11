@@ -133,7 +133,7 @@ class TwoInstancesTest {
                 .toolCatalog(CATALOG)
                 .approvalQueue(new JdbcApprovalQueue(database))
                 .sessionStore(sessions)
-                .auditSink(event -> { })
+                .noDefaultLog()
                 .build();
     }
 
