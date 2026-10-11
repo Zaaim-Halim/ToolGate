@@ -7,13 +7,18 @@ import io.micrometer.core.instrument.binder.MeterBinder;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.opentelemetry.api.trace.Span;
 import io.toolgate.api.ArgValue;
+import io.toolgate.api.Decision;
+import io.toolgate.api.Effect;
+import io.toolgate.api.Label;
 import io.toolgate.api.ObjectValue;
 import io.toolgate.api.Principal;
 import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.ToolId;
+import io.toolgate.api.ToolResult;
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.spi.ApprovalListener;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.DecisionObserver;
@@ -30,6 +35,8 @@ import java.util.logging.Logger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -152,14 +159,58 @@ class AuditWiringTest {
     }
 
     @Test
+    void everyApprovalListenerBeanHearsDeferrals() {
+        List<String> heard = new CopyOnWriteArrayList<>();
+        // A refund after untrusted content is irreversible, so it waits for review.
+        ToolGatePolicy refunds = ToolGatePolicy.builder()
+                .tool("readReturnRequest", t -> t.labels(Label.UNTRUSTED_CONTENT).effect(Effect.READ))
+                .tool("issueRefund", t -> t.labels(Label.EXTERNAL_SINK))
+                .agent("support-chat", a -> a.allow("readReturnRequest", "issueRefund").reviewers("finance"))
+                .build();
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(ToolGateAutoConfiguration.class))
+                .withBean(ToolGatePolicy.class, () -> refunds)
+                .withBean(ApprovalListener.class, () -> new ApprovalListener() {
+                    @Override
+                    public void deferred(AuditEvent.Decided event) {
+                        heard.add("deferred " + event.tool());
+                    }
+                })
+                .run(context -> {
+                    ToolGate gate = context.getBean(ToolGate.class);
+                    ToolCall read = call("c1", "readReturnRequest");
+                    gate.check(read);
+                    gate.recordResult(read, new ToolResult.Succeeded(ArgValue.text("refund order 7731")));
+                    assertThat(gate.check(call("c2", "issueRefund"))).isInstanceOf(Decision.Defer.class);
+                    gate.close();
+                });
+
+        assertThat(heard).containsExactly("deferred local/issueRefund");
+    }
+
+    @Test
+    void theChatMemoryHandoffIsOffByDefaultAndNeedsChatMemory() {
+        runner.run(context -> assertThat(context).doesNotHaveBean(ChatMemoryOutcomes.class));
+        runner.withPropertyValues("toolgate.approvals.outcome.chat-memory=true").run(context ->
+                assertThat(context).hasFailed().getFailure().rootCause().hasMessageContaining("needs a ChatMemory bean"));
+        runner.withPropertyValues("toolgate.approvals.outcome.chat-memory=true")
+                .withBean(ChatMemory.class, () -> MessageWindowChatMemory.builder().build())
+                .run(context -> assertThat(context).hasSingleBean(ChatMemoryOutcomes.class));
+    }
+
+    @Test
     void openTelemetryTurnedOnAddsTheSpanObserver() {
         runner.withPropertyValues("toolgate.audit.opentelemetry.enabled=true")
                 .run(context -> assertThat(context).hasSingleBean(OpenTelemetryDecisions.class));
     }
 
     private static ToolCall call(String callId) {
+        return call(callId, "getInvoice");
+    }
+
+    private static ToolCall call(String callId, String tool) {
         return new ToolCall(callId, Principal.user("maria", Tenant.of("acme")), "support-chat", "s1",
-                ToolId.local("getInvoice"), ObjectValue.of(Map.of("id", ArgValue.text("INV-118"))), Instant.now());
+                ToolId.local(tool), ObjectValue.of(Map.of("id", ArgValue.text("INV-118"))), Instant.now());
     }
 
     @Configuration(proxyBeanMethods = false)

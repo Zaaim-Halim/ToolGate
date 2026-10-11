@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
 import io.toolgate.api.ToolGate;
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.spi.ApprovalListener;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.DecisionObserver;
@@ -18,6 +19,7 @@ import io.toolgate.telemetry.OpenTelemetryDecisions;
 import java.time.Clock;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ChatClientBuilderCustomizer;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.tool.resolution.ToolCallbackResolver;
 import org.springframework.beans.factory.ObjectProvider;
@@ -73,6 +75,7 @@ public class ToolGateAutoConfiguration {
      * @param approvals an approval queue, or the in-memory default
      * @param audit     audit sinks, each given every event, besides the log
      * @param observers decision observers, each told of every check
+     * @param listeners approval listeners, each told what happens to deferred calls
      * @param owners    an ownership resolver, required by ownership rules
      * @param hosts     a host resolver, to check where URL hosts resolve
      * @param clock     a clock, or the system clock
@@ -84,6 +87,7 @@ public class ToolGateAutoConfiguration {
     public ToolGate toolGate(ObjectProvider<ToolGatePolicy> policy, ToolCatalog.Mutable catalog,
                              ObjectProvider<SessionStore> sessions, ObjectProvider<ApprovalQueue> approvals,
                              ObjectProvider<AuditSink> audit, ObjectProvider<DecisionObserver> observers,
+                             ObjectProvider<ApprovalListener> listeners,
                              ObjectProvider<OwnershipResolver> owners, ObjectProvider<HostResolver> hosts,
                              ObjectProvider<Clock> clock, ToolGateProperties properties) {
         ToolGatePolicy required = policy.getIfAvailable();
@@ -99,6 +103,7 @@ public class ToolGateAutoConfiguration {
         }
         audit.orderedStream().forEach(builder::auditSink);
         observers.orderedStream().forEach(builder::decisionObserver);
+        listeners.orderedStream().forEach(builder::approvalListener);
         owners.ifAvailable(builder::ownershipResolver);
         hosts.ifAvailable(builder::hostResolver);
         return builder.build();
@@ -226,6 +231,24 @@ public class ToolGateAutoConfiguration {
     public ToolGateApprovals toolGateApprovals(ObjectProvider<Gating> gating, ToolGateProperties properties) {
         ToolGateProperties.Executor executor = properties.approvals().executor();
         return new ToolGateApprovals(gating::getObject, executor.resolvedId(), executor.lease());
+    }
+
+    /**
+     * Tells the agent, through chat memory, what became of the calls it asked for, when the application
+     * turns it on.
+     *
+     * @param memory the application's chat memory
+     * @return the listener
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "toolgate.approvals.outcome", name = "chat-memory", havingValue = "true")
+    public ChatMemoryOutcomes toolGateChatMemoryOutcomes(ObjectProvider<ChatMemory> memory) {
+        ChatMemory available = memory.getIfAvailable();
+        if (available == null) {
+            throw new IllegalStateException("toolgate.approvals.outcome.chat-memory=true needs a ChatMemory bean");
+        }
+        return new ChatMemoryOutcomes(available);
     }
 
     /**

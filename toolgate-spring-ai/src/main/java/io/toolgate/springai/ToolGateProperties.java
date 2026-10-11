@@ -21,8 +21,17 @@ public record ToolGateProperties(String agent, @DefaultValue Audit audit, @Defau
      * Settings under {@code toolgate.approvals.*}.
      *
      * @param executor the executor that runs approved calls
+     * @param outcome  how the agent learns what became of the calls it asked for
      */
-    public record Approvals(@DefaultValue Executor executor) {}
+    public record Approvals(@DefaultValue Executor executor, @DefaultValue Outcome outcome) {}
+
+    /**
+     * Settings under {@code toolgate.approvals.outcome.*}.
+     *
+     * @param chatMemory {@code toolgate.approvals.outcome.chat-memory}: add a message ToolGate writes to the
+     *                   conversation's chat memory when a deferred call is decided or finishes; off by default
+     */
+    public record Outcome(boolean chatMemory) {}
 
     /**
      * The executor that runs released calls, under {@code toolgate.approvals.executor.*}. Each instance

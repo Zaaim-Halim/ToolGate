@@ -12,6 +12,7 @@ import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.rules.ResultChecker;
 import io.toolgate.session.InMemorySessionStore;
+import io.toolgate.spi.ApprovalListener;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.AuditSink;
 import io.toolgate.spi.DecisionObserver;
@@ -413,6 +414,18 @@ public interface ToolGate extends AutoCloseable {
         public Builder auditSink(AuditSink sink) {
             auditSinks.add(Objects.requireNonNull(sink, "auditSink"));
             return this;
+        }
+
+        /**
+         * Also tells a listener what happens to deferred calls: deferrals, decisions, outcomes and
+         * bursts of super admin decisions. A listener is an audit sink underneath, so it runs off the
+         * request path, with the same isolation as {@link #auditSink}.
+         *
+         * @param listener the listener
+         * @return this builder
+         */
+        public Builder approvalListener(ApprovalListener listener) {
+            return auditSink(Objects.requireNonNull(listener, "approvalListener").asSink());
         }
 
         /**

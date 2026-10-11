@@ -14,6 +14,7 @@ import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.AuditJson;
 import io.toolgate.queue.InMemoryApprovalQueue;
 import io.toolgate.session.InMemorySessionStore;
+import io.toolgate.spi.ApprovalListener;
 import io.toolgate.spi.AuditEvent;
 import io.toolgate.spi.PendingCall;
 import io.toolgate.spi.SessionEvent;
@@ -521,6 +522,50 @@ class ApprovalTest {
 
         assertThat(gate.resolve(lost, LENA, true, "repair")).isTrue();
         assertThat(sessions.state("refunds-refund-agent").unresolved()).isEmpty();
+    }
+
+    @Test
+    void anApprovalListenerHearsEveryStepOfACallsLife() {
+        List<String> heard = new CopyOnWriteArrayList<>();
+        ApprovalListener listener = new ApprovalListener() {
+            @Override
+            public void deferred(AuditEvent.Decided event) {
+                heard.add("deferred " + event.callId());
+            }
+
+            @Override
+            public void decided(AuditEvent.ApprovalDecided event) {
+                heard.add("decided " + event.status());
+            }
+
+            @Override
+            public void recorded(AuditEvent.ApprovalRecorded event) {
+                heard.add("recorded " + event.decidedBy());
+            }
+
+            @Override
+            public void finished(AuditEvent.ApprovalDecided event) {
+                heard.add("finished " + event.status());
+            }
+
+            @Override
+            public void superAdminBurst(AuditEvent.SuperAdminBurst event) {
+                heard.add("burst");
+            }
+        };
+        ToolGatePolicy policy = refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin").superAdminConfirmation());
+        try (ToolGate gate = ToolGate.builder(policy).approvalQueue(queue).sessionStore(sessions).clock(clock)
+                .noDefaultLog().approvalListener(listener).superAdminAlert(1, Duration.ofHours(1)).build()) {
+            String approvalId = deferRefund(gate, JOB);
+            gate.approve(approvalId, ROOT, JOB, "finance is away");
+            gate.approve(approvalId, LENA, JOB, "confirmed");
+            gate.claim(approvalId, "node-1", Duration.ofMinutes(1));
+            gate.finished(approvalId, "node-1", new ToolResult.Succeeded(ArgValue.text("R-1")));
+            gate.reject(deferRefund(gate, JOB, "c3"), ROOT, "duplicate");
+        }
+
+        assertThat(heard).containsExactly("deferred c2", "recorded root", "decided RELEASED", "finished EXECUTED",
+                "deferred c3", "burst", "decided REJECTED");
     }
 
     @Test

@@ -87,6 +87,23 @@ overwrites them. A call the policy refuses also adds the event `toolgate.denied`
 and `toolgate.enforced` (false in monitor mode). Deny reasons are left out of traces, since they can
 quote the denied value; the log has them.
 
+## Approval events
+
+An `ApprovalListener` hears what happens to deferred calls: `deferred`, `decided` (approved, refused,
+rejected, cancelled, expired), `recorded` (a super admin's approval waiting for a second person),
+`finished` (executed, failed or unknown) and `superAdminBurst`. Use it to tell reviewers a call is
+waiting, or to page someone. It is an audit sink underneath, so it runs off the request path, and its
+events carry no argument values: link to your review screen instead of describing the call.
+
+```java
+ToolGate.builder(policy).approvalListener(new SlackApprovals(webhook)).build();
+```
+
+On Spring AI, declare it as an `ApprovalListener` bean. To tell the agent what became of the calls it
+asked for, set `toolgate.approvals.outcome.chat-memory=true` (with a `ChatMemory` bean): ToolGate adds
+a message it writes itself, never the tool's output, to the conversation, so the agent knows on the
+user's next turn. It suits chat agents, whose session is the conversation ID.
+
 ## Your own observers
 
 A `DecisionObserver` sees each check as it ends, on the thread that asked for it, with the decision
