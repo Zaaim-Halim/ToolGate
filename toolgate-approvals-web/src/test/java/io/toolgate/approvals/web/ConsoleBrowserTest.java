@@ -7,8 +7,13 @@ import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
+import io.toolgate.api.ApprovalStatus;
+import io.toolgate.api.Principal;
+import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolGate;
+import io.toolgate.spi.PendingCall;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -89,6 +94,33 @@ class ConsoleBrowserTest {
         page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console.png")).setFullPage(true));
         assertThat(page.locator("#arguments img")).hasCount(0);
         assertThat(approvalId).isNotBlank();
+    }
+
+    /** A run whose outcome was lost shows up in History, and a reviewer records what really happened. */
+    @Test
+    void aReviewerResolvesAnUnknownOutcomeFromHistory() throws InterruptedException {
+        String approvalId = Fixtures.deferRefund(gate, "s-" + UUID.randomUUID(), "lost refund");
+        gate.approve(approvalId, Principal.user("lena", Tenant.of("acme"), "finance"), Fixtures.JOB);
+        gate.claim(approvalId, "crashed-node", Duration.ofMillis(1));
+        Thread.sleep(20);
+        gate.sweep();
+
+        page.navigate("/toolgate/approvals");
+        page.locator("#tab-history").click();
+        page.locator("#history-status").selectOption("UNKNOWN");
+        page.locator("#history-items button.item").first().click();
+        assertThat(page.locator("#detail-status")).hasText("outcome unknown");
+        page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console-history.png")).setFullPage(true));
+        page.locator("#comment").fill("the provider shows the refund");
+        page.locator("#resolve-ran").click();
+
+        assertThat(page.locator("#message")).containsText("Recorded");
+        org.assertj.core.api.Assertions.assertThat(gate.withStatus(ApprovalStatus.EXECUTED))
+                .extracting(PendingCall::approvalId).contains(approvalId);
+
+        page.locator("#tab-overview").click();
+        assertThat(page.locator("#numbers")).containsText("Waiting now");
+        page.screenshot(new Page.ScreenshotOptions().setPath(Paths.get("target", "console-overview.png")).setFullPage(true));
     }
 
     @Test

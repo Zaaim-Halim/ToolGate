@@ -117,8 +117,10 @@ arguments, shown, masked or hidden by the agent's review view:
 ```
 
 Without a review view, arguments the policy has rules on are shown and all others are masked. A
-deferral reason that would quote a masked or hidden argument ("480 is above 200") is withheld. The
-inbox, `pending(viewer)`, returns the same masked review items. Values that could look like something
+deferral reason that would quote a masked or hidden argument ("480 is above 200") is withheld. The inbox, `pending(viewer)`, returns the same masked review items, and so does
+`history(viewer, ApprovalQuery.decidedSince(since, limit))` for decided calls, newest first. An item's
+`mayDecide()` says whether the viewer may take the step its status allows: approve or reject it while
+pending, resolve it while its outcome is unknown. Values that could look like something
 else carry warnings: a text-direction or invisible character, or a non-ASCII letter, which also flags
 legitimate names such as Müller, so reviewers should read it as "check this", not "this is an attack".
 Render everything as plain text: the arguments came from the model. Approve with the item's `digest()`,

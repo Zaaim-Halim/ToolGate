@@ -10,6 +10,7 @@ import dev.langchain4j.service.tool.ToolExecutionResult;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolService;
 import io.toolgate.api.Approval;
+import io.toolgate.api.ApprovalQuery;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
@@ -179,6 +180,18 @@ public final class ToolGateLangChain4j implements AutoCloseable {
             execute(approvalId, tool.get());
         }
         return approval;
+    }
+
+    /**
+     * Calls a viewer may see in the query's statuses, newest first, masked; see
+     * {@link io.toolgate.api.ToolGate#history}.
+     *
+     * @param viewer who is looking
+     * @param query  which calls
+     * @return the calls as review items
+     */
+    public List<ReviewItem> history(Principal viewer, ApprovalQuery query) {
+        return gating.gate().history(viewer, query);
     }
 
     /**

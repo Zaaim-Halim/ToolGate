@@ -146,3 +146,21 @@ textarea {
 }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .message { margin-top: 14px; font-weight: 500; }
+
+.tabs {
+    display: flex;
+    gap: 4px;
+    max-width: 1280px;
+    margin: 16px auto 0;
+    padding: 0 20px;
+}
+.tab { border-radius: var(--radius) var(--radius) 0 0; border-bottom: none; background: transparent; }
+.tab[aria-selected="true"] { background: var(--panel); border-color: var(--line); font-weight: 600; }
+.filter { color: var(--muted); font-size: 0.9rem; display: flex; gap: 6px; align-items: center; }
+select { font: inherit; padding: 4px 8px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.overview { grid-column: 1 / -1; }
+.numbers { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin: 16px 0 0; }
+.stat { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+.numbers dt { color: var(--muted); font-size: 0.85rem; }
+.numbers dd { margin: 2px 0 0; font-size: 1.5rem; font-weight: 600; }
+@media (max-width: 800px) { .tabs { padding: 0 12px; } }

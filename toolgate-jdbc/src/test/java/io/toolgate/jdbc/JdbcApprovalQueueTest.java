@@ -168,6 +168,26 @@ class JdbcApprovalQueueTest {
         assertThat(queue.pending()).extracting(PendingCall::approvalId).containsExactly("refunds:c2", "refunds:c3");
     }
 
+    @Test
+    void findsAPageOfCallsByStatusAndTimeNewestFirst() {
+        for (int call = 1; call <= 5; call++) {
+            queue.add(refund("refunds:c" + call, T0.plusSeconds(call * 60L)));
+        }
+        move("refunds:c1", ApprovalStatus.REJECTED);
+        move("refunds:c2", ApprovalStatus.EXPIRED);
+        move("refunds:c4", ApprovalStatus.REJECTED);
+        var decided = java.util.EnumSet.of(ApprovalStatus.REJECTED, ApprovalStatus.EXPIRED);
+
+        assertThat(queue.find(decided, T0, 10, 0)).extracting(PendingCall::approvalId)
+                .containsExactly("refunds:c4", "refunds:c2", "refunds:c1");
+        assertThat(queue.find(decided, T0, 2, 1)).extracting(PendingCall::approvalId)
+                .containsExactly("refunds:c2", "refunds:c1");
+        assertThat(queue.find(decided, T0.plusSeconds(120), 10, 0)).extracting(PendingCall::approvalId)
+                .containsExactly("refunds:c4", "refunds:c2");
+        assertThat(queue.find(java.util.Set.of(ApprovalStatus.PENDING), T0, 10, 0)).extracting(PendingCall::approvalId)
+                .containsExactly("refunds:c5", "refunds:c3");
+    }
+
     /** An ID too long for its column is not silently dropped: the failure reaches ToolGate, which denies the call. */
     @Test
     void anIdTooLongForItsColumnFailsLoudly() {

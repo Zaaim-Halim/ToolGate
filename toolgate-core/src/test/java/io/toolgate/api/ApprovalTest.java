@@ -744,6 +744,80 @@ class ApprovalTest {
     }
 
     @Test
+    void historyListsDecidedCallsNewestFirstAndOnlyWhatTheViewerMaySee() {
+        ToolGate gate = gate(refundPolicy(a -> { }));
+        String rejected = deferRefund(gate, JOB, "c2");
+        gate.reject(rejected, LENA, "duplicate");
+        clock.advance(Duration.ofMinutes(1));
+        String released = deferRefund(gate, JOB, "c3");
+        gate.approve(released, LENA, JOB);
+        deferRefund(gate, JOB, "c4");
+
+        assertThat(gate.history(LENA, ApprovalQuery.decidedSince(clock.instant().minus(Duration.ofDays(1)), 10)))
+                .extracting(ReviewItem::approvalId, ReviewItem::status)
+                .containsExactly(tuple(released, ApprovalStatus.RELEASED), tuple(rejected, ApprovalStatus.REJECTED));
+        assertThat(gate.history(LENA, new ApprovalQuery(Set.of(ApprovalStatus.REJECTED), Instant.EPOCH, 10)))
+                .extracting(ReviewItem::approvalId).containsExactly(rejected);
+        assertThat(gate.history(Principal.user("gus", Tenant.of("globex"), "finance"),
+                ApprovalQuery.decidedSince(Instant.EPOCH, 10))).isEmpty();
+        assertThat(gate.history(LENA, ApprovalQuery.decidedSince(clock.instant().plusSeconds(1), 10))).isEmpty();
+    }
+
+    /** The queue cannot filter by viewer, so history reads on past pages of calls the viewer may not see. */
+    @Test
+    void historyReadsPastCallsTheViewerMayNotSee() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")));
+        Principal globexJob = Principal.service("refund-agent", Tenant.of("globex"));
+        String mine = deferRefund(gate, JOB, "c1");
+        gate.reject(mine, LENA, "duplicate");
+        for (int call = 2; call <= 6; call++) {
+            clock.advance(Duration.ofSeconds(1));
+            gate.reject(deferRefund(gate, globexJob, "c" + call), ROOT, "other tenant's cleanup " + call);
+        }
+
+        assertThat(gate.history(LENA, ApprovalQuery.decidedSince(Instant.EPOCH, 2)))
+                .extracting(ReviewItem::approvalId).containsExactly(mine);
+        assertThat(gate.history(ROOT, ApprovalQuery.decidedSince(Instant.EPOCH, 3))).hasSize(3);
+    }
+
+    @Test
+    void aSuperAdminsHistoryIsAuditedOnce() {
+        try (ToolGate gate = gate(refundPolicy(a -> { }, p -> p.superAdmins("toolgate-admin")))) {
+            gate.reject(deferRefund(gate, JOB, "c2"), LENA, "duplicate");
+            gate.history(LENA, ApprovalQuery.decidedSince(Instant.EPOCH, 10));
+            gate.history(ROOT, ApprovalQuery.decidedSince(Instant.EPOCH, 10));
+        }
+
+        assertThat(events).filteredOn(AuditEvent.ApprovalsListed.class::isInstance).singleElement()
+                .satisfies(event -> assertThat(((AuditEvent.ApprovalsListed) event).viewer()).isEqualTo("root"));
+    }
+
+    /** "May decide" means the next step the status allows: resolving, once the outcome is unknown. */
+    @Test
+    void aReviewerMayResolveAnUnknownCallAndTheRequesterMayNot() {
+        ToolGate gate = gate(refundPolicy(a -> { }, p -> p.auditors("compliance")));
+        String lost = loseOutcome(gate, "c2");
+        Instant since = Instant.EPOCH;
+
+        assertThat(gate.reviewItem(lost, LENA).orElseThrow().mayDecide()).isTrue();
+        assertThat(gate.reviewItem(lost, JOB).orElseThrow().mayDecide()).isFalse();
+        assertThat(gate.reviewItem(lost, Principal.user("ada", Tenant.of("operator"), "compliance")).orElseThrow()
+                .mayDecide()).isFalse();
+        assertThat(gate.history(LENA, new ApprovalQuery(Set.of(ApprovalStatus.UNKNOWN), since, 10)))
+                .singleElement().satisfies(item -> assertThat(item.mayDecide()).isTrue());
+        gate.resolve(lost, LENA, true, "ran at the provider");
+        assertThat(gate.reviewItem(lost, LENA).orElseThrow().mayDecide()).isFalse();
+    }
+
+    @Test
+    void aQueryNeedsStatusesAndALimitInRange() {
+        assertThatIllegalArgumentException().isThrownBy(() -> new ApprovalQuery(Set.of(), Instant.EPOCH, 10));
+        assertThatIllegalArgumentException().isThrownBy(() -> ApprovalQuery.decidedSince(Instant.EPOCH, 0));
+        assertThatIllegalArgumentException().isThrownBy(() -> ApprovalQuery.decidedSince(Instant.EPOCH, 501));
+        assertThat(ApprovalQuery.decidedSince(Instant.EPOCH, 1).statuses()).doesNotContain(ApprovalStatus.PENDING);
+    }
+
+    @Test
     void aReviewViewMustNameAnAllowedToolAndEachArgumentOnce() {
         assertThatThrownBy(() -> refundPolicy(a -> a.review("wireMoney", r -> r.show("iban"))))
                 .isInstanceOf(InvalidPolicyException.class);

@@ -149,6 +149,29 @@ class ApprovalsMvcTest {
     }
 
     @Test
+    void historyShowsDecidedCallsToTheirTenantOnly() throws Exception {
+        mvc.perform(post("/toolgate/api/approvals/decisions").with(lena()).contentType(MediaType.APPLICATION_JSON)
+                .header(RequestGuard.HEADER, "1")
+                .content("{\"approvalId\":\"" + approvalId + "\",\"kind\":\"reject\",\"comment\":\"duplicate\"}"));
+
+        mvc.perform(get("/toolgate/api/approvals/history").with(lena()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.approvalId == '%s')].status", approvalId).value("REJECTED"))
+                .andExpect(jsonPath("$[?(@.approvalId == '%s')].decisions[0].comment", approvalId).value("duplicate"));
+        mvc.perform(get("/toolgate/api/approvals/history").param("status", "executed,failed").with(lena()))
+                .andExpect(jsonPath("$[?(@.approvalId == '%s')]", approvalId).isEmpty());
+        mvc.perform(get("/toolgate/api/approvals/history").with(gus()))
+                .andExpect(jsonPath("$[?(@.approvalId == '%s')]", approvalId).isEmpty());
+        mvc.perform(get("/toolgate/api/approvals/history")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/toolgate/api/approvals/history").param("status", "SHIPPED").with(lena()))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/toolgate/api/approvals/history").param("days", "365").with(lena()))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/toolgate/api/approvals/history").param("limit", "0").with(lena()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void everyResponseCarriesTheConsoleHeaders() throws Exception {
         for (String path : new String[] {"/toolgate/api/approvals", "/toolgate/approvals/index.html", "/toolgate/approvals/app.js"}) {
             mvc.perform(get(path).with(lena()))

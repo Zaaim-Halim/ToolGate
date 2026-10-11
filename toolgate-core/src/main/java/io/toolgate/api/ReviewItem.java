@@ -27,7 +27,8 @@ import java.util.Objects;
  * @param provenance     where the session's taint came from, when the call was viewed
  * @param decisions      what people decided so far, oldest first
  * @param access         why the viewer sees it
- * @param mayDecide      whether the viewer may approve or reject it
+ * @param mayDecide      whether the viewer may take the step its status allows: approve or reject it while
+ *                       {@link ApprovalStatus#PENDING}, resolve it while {@link ApprovalStatus#UNKNOWN}
  * @param digest         a hash of what this view shows; pass it to
  *                       {@link ToolGate#approve(String, Principal, Principal, String, String)}
  */

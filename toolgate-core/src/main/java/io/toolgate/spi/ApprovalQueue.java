@@ -2,8 +2,11 @@ package io.toolgate.spi;
 
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.queue.InMemoryApprovalQueue;
+import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Stores deferred calls until a reviewer decides, or they expire.
@@ -61,6 +64,24 @@ public interface ApprovalQueue {
      * @return the calls
      */
     List<PendingCall> withStatus(ApprovalStatus status);
+
+    /**
+     * A page of calls in some statuses, deferred at or after a time, newest first: a history screen's
+     * search, bounded so it never loads a whole queue. The default reads {@link #withStatus} for each
+     * status; a store with a database should override it with one bounded query.
+     *
+     * @param statuses      the statuses
+     * @param deferredSince only calls deferred at or after this time
+     * @param limit         at most this many calls
+     * @param offset        how many matching calls to skip, for the next page
+     * @return the calls, newest first
+     */
+    default List<PendingCall> find(Set<ApprovalStatus> statuses, Instant deferredSince, int limit, int offset) {
+        return statuses.stream().flatMap(status -> withStatus(status).stream())
+                .filter(call -> !call.deferredAt().isBefore(deferredSince))
+                .sorted(Comparator.comparing(PendingCall::deferredAt).thenComparing(PendingCall::approvalId).reversed())
+                .skip(offset).limit(limit).toList();
+    }
 
     /**
      * Calls still waiting for a decision, oldest first, including any past their expiry that have

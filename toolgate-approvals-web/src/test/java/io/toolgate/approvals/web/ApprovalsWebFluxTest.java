@@ -71,6 +71,18 @@ class ApprovalsWebFluxTest {
     }
 
     @Test
+    void historyShowsDecidedCalls() {
+        lena().post().uri("/toolgate/api/approvals/decisions").contentType(MediaType.APPLICATION_JSON)
+                .header(RequestGuard.HEADER, "1")
+                .bodyValue("{\"approvalId\":\"" + approvalId + "\",\"kind\":\"reject\",\"comment\":\"duplicate\"}")
+                .exchange().expectStatus().isOk();
+
+        lena().get().uri("/toolgate/api/approvals/history").exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$[?(@.approvalId == '%s')].status".formatted(approvalId)).isEqualTo("REJECTED");
+        lena().get().uri("/toolgate/api/approvals/history?days=0").exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
     void everyResponseCarriesTheConsoleHeaders() {
         for (String path : new String[] {"/toolgate/api/approvals", "/toolgate/approvals/index.html"}) {
             lena().get().uri(path).exchange().expectStatus().isOk().expectHeader()

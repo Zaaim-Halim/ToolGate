@@ -1,6 +1,7 @@
 package io.toolgate.springai;
 
 import io.toolgate.api.Approval;
+import io.toolgate.api.ApprovalQuery;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
@@ -127,6 +128,18 @@ public final class ToolGateApprovals {
             execute(shared, approvalId, tool.get());
         }
         return approval;
+    }
+
+    /**
+     * Calls a viewer may see in the query's statuses, newest first, masked; see
+     * {@link io.toolgate.api.ToolGate#history}.
+     *
+     * @param viewer who is looking
+     * @param query  which calls
+     * @return the calls as review items
+     */
+    public List<ReviewItem> history(Principal viewer, ApprovalQuery query) {
+        return gating.get().gate().history(viewer, query);
     }
 
     /**

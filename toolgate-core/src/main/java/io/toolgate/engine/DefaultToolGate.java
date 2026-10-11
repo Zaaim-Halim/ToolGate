@@ -5,6 +5,7 @@ import static io.toolgate.support.Checks.requireNonBlank;
 import io.toolgate.api.Approval;
 import io.toolgate.api.ApprovalAccess;
 import io.toolgate.api.ApprovalDecision;
+import io.toolgate.api.ApprovalQuery;
 import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.ArgValue;
 import io.toolgate.api.ArgValueJson;
@@ -73,6 +74,8 @@ public final class DefaultToolGate implements ToolGate {
     /** Decisions on one call rarely race; a few attempts settle any honest contention. */
     private static final int MAX_DECISION_ATTEMPTS = 16;
     private static final int MAX_SUMMARY_CHARS = 500;
+    /** How many pages a history reads looking for calls the viewer may see, so a narrow viewer never scans everything. */
+    private static final int MAX_HISTORY_PAGES = 20;
 
     /** The labels a session can hold; EXTERNAL_SINK describes tools, not data. */
     private static final Set<Label> SOURCE_LABELS = EnumSet.of(Label.PRIVATE_DATA, Label.UNTRUSTED_CONTENT);
@@ -424,8 +427,22 @@ public final class DefaultToolGate implements ToolGate {
                 .toList();
         return new ReviewItem(pending.approvalId(), call.agentId(), call.tool(), shown.title(), call.principal(),
                 pending.status(), pending.expiresAt(), pending.deferral().ruleId(), shown.reason(), shown.arguments(),
-                provenance, pending.decisions(), access,
-                pending.status() == ApprovalStatus.PENDING && permissionProblem(call, viewer).isEmpty(), shown.digest());
+                provenance, pending.decisions(), access, mayTakeNextStep(pending, viewer), shown.digest());
+    }
+
+    /** Whether the viewer may take the step the call's status allows: decide it while pending, resolve it while unknown. */
+    private boolean mayTakeNextStep(PendingCall pending, Principal viewer) {
+        return switch (pending.status()) {
+            case PENDING -> permissionProblem(pending.call(), viewer).isEmpty();
+            case UNKNOWN -> mayResolve(pending.call(), viewer);
+            default -> false;
+        };
+    }
+
+    /** A reviewer of the call's tenant or a super admin, never for their own call. */
+    private boolean mayResolve(ToolCall call, Principal by) {
+        return !isOwn(call, by) && access(call, by)
+                .filter(access -> access == ApprovalAccess.SUPER_ADMIN || access == ApprovalAccess.REVIEWER).isPresent();
     }
 
     /** The digest of a call's review view: the same for every viewer, since the view is the policy's. */
@@ -458,14 +475,42 @@ public final class DefaultToolGate implements ToolGate {
                 }
             }
         }
-        if (strongest != null) {
-            // One trace per listing, not per call, so a screen that polls does not flood the audit log.
-            Instant at = clock.instant();
-            ApprovalAccess listedAs = strongest;
-            int count = items.size();
-            audit.submit(() -> new AuditEvent.ApprovalsListed(at, viewer.id(), listedAs, count));
-        }
+        auditListing(viewer, strongest, items.size());
         return List.copyOf(items);
+    }
+
+    @Override
+    public List<ReviewItem> history(Principal viewer, ApprovalQuery query) {
+        Objects.requireNonNull(viewer, "viewer");
+        Objects.requireNonNull(query, "query");
+        var items = new ArrayList<ReviewItem>();
+        ApprovalAccess strongest = null;
+        // The queue cannot filter by what a viewer may see, so read pages until there are enough or none left.
+        for (int page = 0; page < MAX_HISTORY_PAGES && items.size() < query.limit(); page++) {
+            List<PendingCall> calls = approvals.find(query.statuses(), query.since(), query.limit(), page * query.limit());
+            for (PendingCall call : calls) {
+                Optional<ApprovalAccess> access = access(call.call(), viewer);
+                if (access.isPresent() && items.size() < query.limit()) {
+                    items.add(item(call, viewer, access.get()));
+                    if (isPrivileged(access.get()) && (strongest == null || access.get().compareTo(strongest) < 0)) {
+                        strongest = access.get();
+                    }
+                }
+            }
+            if (calls.size() < query.limit()) {
+                break;
+            }
+        }
+        auditListing(viewer, strongest, items.size());
+        return List.copyOf(items);
+    }
+
+    /** One trace per listing by a super admin or auditor, not per call, so a screen that polls does not flood the log. */
+    private void auditListing(Principal viewer, ApprovalAccess strongest, int count) {
+        if (strongest != null) {
+            Instant at = clock.instant();
+            audit.submit(() -> new AuditEvent.ApprovalsListed(at, viewer.id(), strongest, count));
+        }
     }
 
     @Override
@@ -510,8 +555,7 @@ public final class DefaultToolGate implements ToolGate {
         for (int attempt = 0; attempt < MAX_DECISION_ATTEMPTS; attempt++) {
             PendingCall unknown = pendingCall(approvalId);
             ToolCall call = unknown.call();
-            if (isOwn(call, by) || access(call, by).filter(access ->
-                    access == ApprovalAccess.SUPER_ADMIN || access == ApprovalAccess.REVIEWER).isEmpty()) {
+            if (!mayResolve(call, by)) {
                 return false;
             }
             ApprovalAccess access = access(call, by).orElseThrow();

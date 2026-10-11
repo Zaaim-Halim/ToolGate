@@ -36,6 +36,13 @@ final class ApprovalsWebFluxController {
         return blocking(() -> api.inbox(user));
     }
 
+    @GetMapping("/history")
+    Mono<List<ApiModel.Item>> history(Principal user, @RequestParam(required = false) String status,
+                                      @RequestParam(defaultValue = "7") int days,
+                                      @RequestParam(defaultValue = "100") int limit) {
+        return blocking(() -> api.history(user, status, days, limit));
+    }
+
     @GetMapping("/item")
     Mono<ApiModel.Item> item(Principal user, @RequestParam(required = false) String id) {
         return blocking(() -> api.item(user, id));

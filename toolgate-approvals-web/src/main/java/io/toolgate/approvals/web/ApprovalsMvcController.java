@@ -30,6 +30,12 @@ final class ApprovalsMvcController {
         return api.inbox(user);
     }
 
+    @GetMapping("/history")
+    List<ApiModel.Item> history(Principal user, @RequestParam(required = false) String status,
+                                @RequestParam(defaultValue = "7") int days, @RequestParam(defaultValue = "100") int limit) {
+        return api.history(user, status, days, limit);
+    }
+
     @GetMapping("/item")
     ApiModel.Item item(Principal user, @RequestParam(required = false) String id) {
         return api.item(user, id);

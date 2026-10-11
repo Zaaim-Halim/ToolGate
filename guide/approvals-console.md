@@ -2,7 +2,9 @@
 
 A review screen for deferred calls, for Spring MVC and Spring WebFlux applications with Spring
 Security. Reviewers open `/toolgate/approvals/`, see the calls they may decide, masked by the policy's
-review views, and approve, reject or withdraw them. The same actions are a REST API at
+review views, and approve, reject or withdraw them. A History tab lists decided calls of the last 7
+days, where a reviewer also resolves a run whose outcome was lost ("it ran" or "it did not run"), and an
+Overview counts what waits and what was decided. The same actions are a REST API at
 `/toolgate/api/approvals`, for your own screens.
 
 ## 1. Add the module and turn it on
@@ -79,6 +81,7 @@ users up, so a role revoked since then counts.
 | Method and path | Body | Answer |
 |---|---|---|
 | `GET /toolgate/api/approvals` | | The calls you may see, masked |
+| `GET /toolgate/api/approvals/history?status=…&days=7&limit=100` | | Decided calls you may see, newest first; `status` is a comma-separated list (default: every decided status), `days` 1 to 90, `limit` 1 to 500 |
 | `GET /toolgate/api/approvals/item?id=…` | | One call; 404 also when you may not see it |
 | `GET /toolgate/api/approvals/me` | | Who you are signed in as, and the application's name |
 | `POST /toolgate/api/approvals/decisions` | `{approvalId, kind, comment, digest, ran}` | `{outcome, reason, status}` |

@@ -3,6 +3,13 @@
 
 const API = "/toolgate/api/approvals";
 const REFRESH_MS = 30_000;
+const HISTORY_DAYS = 7;
+const STATUS_LABEL = {
+    PENDING: "waiting", RELEASED: "approved", EXECUTING: "running", EXECUTED: "ran", FAILED: "failed",
+    UNKNOWN: "outcome unknown", REFUSED: "refused on re-check", REJECTED: "rejected", EXPIRED: "expired",
+    CANCELLED: "withdrawn",
+};
+let view = "inbox";
 
 const $ = (id) => document.getElementById(id);
 let current = null;
@@ -75,6 +82,66 @@ async function loadInbox() {
     }
 }
 
+async function loadHistory() {
+    const list = $("history-items");
+    const status = $("history-status").value;
+    const query = `/history?days=${HISTORY_DAYS}&limit=200` + (status ? `&status=${encodeURIComponent(status)}` : "");
+    try {
+        const items = await request(query);
+        list.replaceChildren(...items.map(row));
+        $("history-state").textContent = items.length ? "" : "Nothing decided in this period.";
+    } catch (failure) {
+        $("history-state").textContent = failure.message;
+    }
+}
+
+async function loadOverview() {
+    const numbers = $("numbers");
+    try {
+        const [waiting, decided] = await Promise.all([request(""), request(`/history?days=${HISTORY_DAYS}&limit=500`)]);
+        const counts = new Map();
+        for (const item of decided) {
+            counts.set(item.status, (counts.get(item.status) || 0) + 1);
+        }
+        const oldest = waiting.reduce((first, item) => (!first || item.expiresAt < first.expiresAt ? item : first), null);
+        const entries = [
+            ["Waiting now", waiting.length],
+            ["You can decide", waiting.filter((item) => item.mayDecide).length],
+            ["Expiring first", oldest ? when(oldest.expiresAt) : "—"],
+            ...["EXECUTED", "FAILED", "UNKNOWN", "REJECTED", "EXPIRED", "CANCELLED", "REFUSED"]
+                .map((status) => [`${STATUS_LABEL[status]} (7 days)`, counts.get(status) || 0]),
+        ];
+        numbers.replaceChildren(...entries.map(([label, value]) => {
+            const stat = element("div", null, "stat");
+            stat.append(element("dt", label), element("dd", value));
+            return stat;
+        }));
+    } catch (failure) {
+        numbers.replaceChildren(element("dd", failure.message));
+    }
+}
+
+function switchTo(next) {
+    view = next;
+    for (const name of ["inbox", "history", "overview"]) {
+        $(`view-${name}`).hidden = name !== next;
+        $(`tab-${name}`).setAttribute("aria-selected", String(name === next));
+    }
+    $("detail").hidden = true;
+    current = null;
+    refreshView();
+}
+
+function refreshView() {
+    if (view === "history") {
+        return loadHistory();
+    }
+    if (view === "overview") {
+        return loadOverview();
+    }
+    return loadInbox();
+}
+
 function row(item) {
     const entry = element("li");
     const button = element("button", null, "item");
@@ -85,8 +152,12 @@ function row(item) {
         element("span", `${item.tool} · for ${party(item.requester)}`, "sub"),
         element("span", `expires ${when(item.expiresAt)}`, "sub"));
     const flags = element("span", null, "flags");
-    flags.append(element("span", item.mayDecide ? "you can decide" : item.access.toLowerCase().replace("_", " "),
-        item.mayDecide ? "badge ok" : "badge"));
+    if (item.status !== "PENDING") {
+        flags.append(element("span", STATUS_LABEL[item.status] || item.status,
+            item.status === "UNKNOWN" || item.status === "FAILED" ? "badge warn" : "badge"));
+    }
+    flags.append(element("span", item.mayDecide ? (item.status === "UNKNOWN" ? "you can resolve" : "you can decide")
+        : item.access.toLowerCase().replace("_", " "), item.mayDecide ? "badge ok" : "badge"));
     if (item.provenance.length) {
         flags.append(element("span", "untrusted input", "badge warn"));
     }
@@ -99,9 +170,11 @@ function row(item) {
     return entry;
 }
 
-async function open(approvalId) {
+async function open(approvalId, keepMessage = false) {
     current = approvalId;
-    $("message").textContent = "";
+    if (!keepMessage) {
+        $("message").textContent = "";
+    }
     try {
         show(await request(`/item?id=${encodeURIComponent(approvalId)}`));
     } catch (failure) {
@@ -118,7 +191,7 @@ function show(item) {
     detail.dataset.approvalId = item.approvalId;
     detail.dataset.digest = item.digest;
     $("detail-title").textContent = item.title;
-    $("detail-status").textContent = item.status;
+    $("detail-status").textContent = STATUS_LABEL[item.status] || item.status;
     $("detail-meta").textContent = `${item.tool} · agent ${item.agent} · for ${party(item.requester)} · expires ${when(item.expiresAt)}`;
     $("detail-rule").textContent = item.deferralRule;
     $("detail-reason").textContent = item.deferralReason;
@@ -138,15 +211,22 @@ function show(item) {
     $("history-block").hidden = item.decisions.length === 0;
 
     const pending = item.status === "PENDING";
-    $("decide").hidden = !pending || (!item.mayDecide && item.access !== "REQUESTER" && item.access !== "SUPER_ADMIN");
-    $("approve").hidden = !item.mayDecide;
-    $("reject").hidden = !item.mayDecide;
-    $("cancel").hidden = !(item.access === "REQUESTER" || item.access === "SUPER_ADMIN");
-    $("comment-hint").textContent = item.access === "SUPER_ADMIN"
-        ? "(required: super admin decisions are audited and need a justification)"
-        : "(required to reject or withdraw)";
-    $("decide-hint").textContent = item.mayDecide ? ""
-        : item.access === "AUDITOR" ? "Auditors can see calls but not decide them." : "";
+    const unknown = item.status === "UNKNOWN";
+    const mayWithdraw = pending && (item.access === "REQUESTER" || item.access === "SUPER_ADMIN");
+    $("decide").hidden = !((pending && item.mayDecide) || mayWithdraw || (unknown && item.mayDecide));
+    $("approve").hidden = !(pending && item.mayDecide);
+    $("reject").hidden = !(pending && item.mayDecide);
+    $("cancel").hidden = !mayWithdraw;
+    $("resolve-ran").hidden = !(unknown && item.mayDecide);
+    $("resolve-not").hidden = !(unknown && item.mayDecide);
+    $("comment-hint").textContent = unknown
+        ? "(required: say what you found in the real system)"
+        : item.access === "SUPER_ADMIN"
+            ? "(required: super admin decisions are audited and need a justification)"
+            : "(required to reject or withdraw)";
+    $("decide-hint").textContent = unknown && item.mayDecide
+        ? "Nobody knows whether this ran. Check the real system, then record what happened."
+        : item.mayDecide ? "" : item.access === "AUDITOR" ? "Auditors can see calls but not decide them." : "";
     $("comment").value = "";
 }
 
@@ -166,7 +246,7 @@ function argumentRow(argument) {
     return row;
 }
 
-async function decide(kind) {
+async function decide(kind, ran) {
     const detail = $("detail");
     const comment = $("comment").value.trim();
     if (kind !== "approve" && !comment) {
@@ -178,13 +258,17 @@ async function decide(kind) {
     if (kind === "approve") {
         payload.digest = detail.dataset.digest;
     }
+    if (kind === "resolve") {
+        payload.ran = ran;
+    }
     setBusy(true);
     try {
         const outcome = await request("/decisions", {method: "POST", body: JSON.stringify(payload)});
         $("message").textContent = describe(kind, outcome);
-        await loadInbox();
+        await refreshView();
         if (current) {
-            await open(current);
+            // Show the call as it is now, keeping the outcome just reported.
+            await open(current, true);
         }
     } catch (failure) {
         $("message").textContent = failure.message;
@@ -202,22 +286,29 @@ function describe(kind, outcome) {
         case "not-permitted": return `Not done:${reason}`;
         case "already-decided": return `Someone already decided this call (${outcome.status}).`;
         case "expired": return "This call expired before it was decided.";
-        case "done": return kind === "reject" ? "Rejected." : kind === "cancel" ? "Withdrawn." : "Done.";
+        case "done": return kind === "reject" ? "Rejected." : kind === "cancel" ? "Withdrawn."
+            : kind === "resolve" ? "Recorded. The agent may use this tool again in that session." : "Done.";
         default: return "Nothing changed: the call was already decided, or you may not do that.";
     }
 }
 
 function setBusy(busy) {
-    for (const id of ["approve", "reject", "cancel"]) {
+    for (const id of ["approve", "reject", "cancel", "resolve-ran", "resolve-not"]) {
         $(id).disabled = busy;
     }
 }
 
 $("refresh").addEventListener("click", loadInbox);
+$("tab-inbox").addEventListener("click", () => switchTo("inbox"));
+$("tab-history").addEventListener("click", () => switchTo("history"));
+$("tab-overview").addEventListener("click", () => switchTo("overview"));
+$("history-status").addEventListener("change", loadHistory);
+$("resolve-ran").addEventListener("click", () => decide("resolve", true));
+$("resolve-not").addEventListener("click", () => decide("resolve", false));
 $("approve").addEventListener("click", () => decide("approve"));
 $("reject").addEventListener("click", () => decide("reject"));
 $("cancel").addEventListener("click", () => decide("cancel"));
 
 loadViewer();
 loadInbox();
-setInterval(loadInbox, REFRESH_MS);
+setInterval(refreshView, REFRESH_MS);

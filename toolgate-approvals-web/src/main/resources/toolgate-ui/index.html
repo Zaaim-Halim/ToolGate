@@ -18,14 +18,43 @@
     <div class="viewer" id="viewer" aria-live="polite"></div>
 </header>
 
+<nav class="tabs" aria-label="Views">
+    <button type="button" class="tab" id="tab-inbox" aria-selected="true">Waiting</button>
+    <button type="button" class="tab" id="tab-history" aria-selected="false">History</button>
+    <button type="button" class="tab" id="tab-overview" aria-selected="false">Overview</button>
+</nav>
+
 <main class="layout">
-    <section class="inbox" aria-labelledby="inbox-title">
+    <section class="inbox" id="view-inbox" aria-labelledby="inbox-title">
         <div class="section-head">
             <h1 id="inbox-title">Waiting for review</h1>
             <button type="button" id="refresh" class="quiet">Refresh</button>
         </div>
         <p class="hint" id="inbox-state">Loading…</p>
         <ul class="items" id="items"></ul>
+    </section>
+
+    <section class="inbox" id="view-history" aria-labelledby="history-title" hidden>
+        <div class="section-head">
+            <h1 id="history-title">Decided in the last 7 days</h1>
+            <label class="filter">Show
+                <select id="history-status">
+                    <option value="">everything decided</option>
+                    <option value="UNKNOWN">outcome unknown</option>
+                    <option value="EXECUTED,FAILED">ran or failed</option>
+                    <option value="REJECTED,CANCELLED,EXPIRED,REFUSED">did not run</option>
+                    <option value="RELEASED,EXECUTING">approved, running</option>
+                </select>
+            </label>
+        </div>
+        <p class="hint" id="history-state"></p>
+        <ul class="items" id="history-items"></ul>
+    </section>
+
+    <section class="overview" id="view-overview" aria-labelledby="overview-title" hidden>
+        <h1 id="overview-title">Overview</h1>
+        <p class="hint">What you may see: waiting now, and decided in the last 7 days.</p>
+        <dl class="numbers" id="numbers"></dl>
     </section>
 
     <section class="detail" id="detail" aria-live="polite" hidden>
@@ -68,6 +97,8 @@
                 <button type="button" id="approve" class="primary">Approve</button>
                 <button type="button" id="reject" class="danger">Reject</button>
                 <button type="button" id="cancel" class="quiet" hidden>Withdraw</button>
+                <button type="button" id="resolve-ran" class="primary" hidden>It ran</button>
+                <button type="button" id="resolve-not" class="danger" hidden>It did not run</button>
             </div>
             <p class="hint" id="decide-hint"></p>
         </form>

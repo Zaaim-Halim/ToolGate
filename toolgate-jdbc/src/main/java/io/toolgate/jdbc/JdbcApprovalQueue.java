@@ -277,6 +277,37 @@ public final class JdbcApprovalQueue implements ApprovalQueue {
         }
     }
 
+    /** One bounded query; {@code LIMIT ... OFFSET ...} reads the same on H2, PostgreSQL and MySQL. */
+    @Override
+    public List<PendingCall> find(Set<ApprovalStatus> statuses, Instant deferredSince, int limit, int offset) {
+        requireSchema();
+        if (statuses.isEmpty() || limit <= 0) {
+            return List.of();
+        }
+        String placeholders = String.join(", ", java.util.Collections.nCopies(statuses.size(), "?"));
+        String sql = "SELECT " + COLUMNS + " FROM " + table + " WHERE status IN (" + placeholders + ")"
+                + " AND deferred_at >= ? ORDER BY deferred_at DESC, approval_id DESC LIMIT ? OFFSET ?";
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement select = connection.prepareStatement(sql)) {
+            int parameter = 1;
+            for (ApprovalStatus status : statuses) {
+                select.setString(parameter++, status.name());
+            }
+            select.setLong(parameter++, micros(deferredSince));
+            select.setInt(parameter++, limit);
+            select.setInt(parameter, offset);
+            try (ResultSet rows = select.executeQuery()) {
+                var calls = new ArrayList<PendingCall>();
+                while (rows.next()) {
+                    calls.add(read(connection, rows));
+                }
+                return calls;
+            }
+        } catch (SQLException failure) {
+            throw new JdbcStoreException("could not search the approval queue", failure);
+        }
+    }
+
     private boolean update(Connection connection, String sql, PendingCall expected, PendingCall next) throws SQLException {
         try (PreparedStatement update = connection.prepareStatement(sql)) {
             update.setString(1, next.status().name());

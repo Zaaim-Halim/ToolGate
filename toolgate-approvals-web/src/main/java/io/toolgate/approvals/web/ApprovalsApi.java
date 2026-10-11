@@ -1,12 +1,18 @@
 package io.toolgate.approvals.web;
 
 import io.toolgate.api.Approval;
+import io.toolgate.api.ApprovalQuery;
+import io.toolgate.api.ApprovalStatus;
 import io.toolgate.api.Principal;
 import io.toolgate.api.ReviewItem;
 import io.toolgate.springai.ToolGateApprovals;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 
@@ -15,6 +21,9 @@ import org.springframework.security.core.Authentication;
  * resolves who is asking and translates. The controllers add HTTP; this never touches it.
  */
 final class ApprovalsApi {
+
+    /** How far back a history may reach, so a screen never asks for years of calls at once. */
+    static final int MAX_HISTORY_DAYS = 90;
 
     private final ToolGateApprovals approvals;
     private final ToolGateReviewerResolver reviewers;
@@ -32,6 +41,40 @@ final class ApprovalsApi {
     /** The inbox: the calls the viewer may see, masked. */
     List<ApiModel.Item> inbox(java.security.Principal user) {
         return approvals.pending(viewer(user)).stream().map(ApiModel.Item::of).toList();
+    }
+
+    /**
+     * Decided calls the viewer may see, newest first.
+     *
+     * @param statuses comma-separated statuses, or null for every decided one
+     * @param days     how far back, 1 to 90
+     * @param limit    how many, 1 to {@value ApprovalQuery#MAX_LIMIT}
+     */
+    List<ApiModel.Item> history(java.security.Principal user, String statuses, int days, int limit) {
+        Principal viewer = viewer(user);
+        if (days < 1 || days > MAX_HISTORY_DAYS) {
+            throw ApiException.badRequest("days must be from 1 to " + MAX_HISTORY_DAYS);
+        }
+        if (limit < 1 || limit > ApprovalQuery.MAX_LIMIT) {
+            throw ApiException.badRequest("limit must be from 1 to " + ApprovalQuery.MAX_LIMIT);
+        }
+        Instant since = Instant.now().minus(Duration.ofDays(days));
+        ApprovalQuery query = statuses == null || statuses.isBlank()
+                ? ApprovalQuery.decidedSince(since, limit)
+                : new ApprovalQuery(parse(statuses), since, limit);
+        return approvals.history(viewer, query).stream().map(ApiModel.Item::of).toList();
+    }
+
+    private static Set<ApprovalStatus> parse(String statuses) {
+        var parsed = EnumSet.noneOf(ApprovalStatus.class);
+        for (String status : statuses.split(",")) {
+            try {
+                parsed.add(ApprovalStatus.valueOf(status.strip().toUpperCase(Locale.ROOT)));
+            } catch (IllegalArgumentException unknown) {
+                throw ApiException.badRequest("unknown status '" + status.strip() + "'");
+            }
+        }
+        return parsed;
     }
 
     /** One call, or 404 if it does not exist or the viewer may not see it. */

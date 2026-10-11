@@ -212,6 +212,16 @@ public interface ToolGate extends AutoCloseable {
     List<PendingCall> pending();
 
     /**
+     * Calls a viewer may see, in the query's statuses, newest first, masked like {@link #pending(Principal)}:
+     * a review screen's history. A super admin's or auditor's listing is audited, once per call.
+     *
+     * @param viewer who is looking
+     * @param query  which calls
+     * @return at most {@code query.limit()} items
+     */
+    List<ReviewItem> history(Principal viewer, ApprovalQuery query);
+
+    /**
      * One deferred call as a viewer may see it on a review screen: the action, why it waits, where the
      * session's taint came from, and its arguments shown, masked or hidden by the policy's review view.
      * A super admin's or auditor's view is audited.
