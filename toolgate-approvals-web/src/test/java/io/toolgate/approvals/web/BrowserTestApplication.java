@@ -27,6 +27,8 @@ class BrowserTestApplication {
     @Bean
     InMemoryUserDetailsManager users() {
         return new InMemoryUserDetailsManager(
-                User.withUsername("lena").password("{noop}lena-pass").roles("finance").build());
+                User.withUsername("lena").password("{noop}lena-pass").roles("finance").build(),
+                User.withUsername("gus").password("{noop}gus-pass").roles("finance").build(),
+                User.withUsername("root").password("{noop}root-pass").roles("toolgate-admin").build());
     }
 }
