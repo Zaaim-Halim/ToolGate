@@ -16,7 +16,8 @@ public class InvoiceJob {
     InvoiceJob(ChatClient.Builder chatClients, InvoiceTools tools) {
         this.chatClient = chatClients
                 .defaultSystem("You process supplier invoices for the accounts team at mycompany.com. Read the invoice,"
-                        + " check the supplier's payment terms, and email a summary to billing@mycompany.com.")
+                        + " check the supplier's payment terms at https://acme.suppliers.example/terms, and email a summary"
+                        + " to billing@mycompany.com.")
                 .build();
         this.tools = tools;
     }

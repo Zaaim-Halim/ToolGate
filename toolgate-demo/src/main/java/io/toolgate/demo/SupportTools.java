@@ -11,19 +11,23 @@ import org.springframework.stereotype.Component;
 public class SupportTools {
 
     private final Mailbox mailbox;
+    private final ToolRuns runs;
 
-    SupportTools(Mailbox mailbox) {
+    SupportTools(Mailbox mailbox, ToolRuns runs) {
         this.mailbox = mailbox;
+        this.runs = runs;
     }
 
     @Tool(description = "Get an invoice by its ID")
     String getInvoice(String id) {
+        runs.ran("getInvoice", id);
         return "{\"id\":\"" + id + "\",\"tenant\":\"" + InvoiceTools.TENANT_OF_INVOICE.getOrDefault(id, "unknown")
                 + "\",\"amount\":\"1200.00\"}";
     }
 
     @Tool(description = "Send an email")
     String sendEmail(String to, String body) {
+        runs.ran("sendEmail", to);
         mailbox.send(to);
         return "sent to " + to;
     }
