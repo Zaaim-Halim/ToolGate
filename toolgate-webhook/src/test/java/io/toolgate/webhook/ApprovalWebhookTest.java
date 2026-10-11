@@ -133,6 +133,27 @@ class ApprovalWebhookTest {
     }
 
     @Test
+    void teamsGetsAnAdaptiveCardWithAButtonToTheConsole() {
+        ApprovalWebhook webhook = ApprovalWebhook.teams(url()).consoleUrl("https://app.example.com/toolgate/approvals/").build();
+
+        webhook.expiringSoon(new AuditEvent.ApprovalExpiring(Instant.now(), "a-1", "s1", "refund-agent",
+                ToolId.local("issueRefund"), Instant.parse("2026-10-12T10:00:00Z")));
+        webhook.close();
+
+        assertThat(received).singleElement().satisfies(delivery -> {
+            assertThat(delivery.signature()).isNull();
+            assertThat(delivery.body()).isEqualTo("{\"type\":\"message\",\"attachments\":[{\"contentType\":"
+                    + "\"application/vnd.microsoft.card.adaptive\",\"content\":{\"$schema\":"
+                    + "\"http://adaptivecards.io/schemas/adaptive-card.json\",\"type\":\"AdaptiveCard\",\"version\":\"1.4\","
+                    + "\"body\":[{\"type\":\"TextBlock\",\"text\":\"ToolGate\",\"weight\":\"Bolder\",\"size\":\"Small\","
+                    + "\"isSubtle\":true},{\"type\":\"TextBlock\",\"text\":\"A request from **refund-agent** to run"
+                    + " local/issueRefund expires at 2026-10-12T10:00:00Z unless someone decides.\",\"wrap\":true}],"
+                    + "\"actions\":[{\"type\":\"Action.OpenUrl\",\"title\":\"Review it\","
+                    + "\"url\":\"https://app.example.com/toolgate/approvals/?id=a-1\"}]}}]}");
+        });
+    }
+
+    @Test
     void refusesPlainHttpToAnotherHostAndAShortSecret() {
         assertThatIllegalArgumentException().isThrownBy(() -> ApprovalWebhook.slack(URI.create("http://hooks.slack.com/x")));
         assertThatIllegalArgumentException().isThrownBy(() -> ApprovalWebhook.signed(url(), new byte[16]));

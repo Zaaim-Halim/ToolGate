@@ -64,6 +64,13 @@
             <artifactId>spring-context-support</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- Optional: approval webhooks, only when the application has toolgate-webhook. -->
+        <dependency>
+            <groupId>io.github.zaaim-halim.toolgate</groupId>
+            <artifactId>toolgate-webhook</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-webmvc</artifactId>

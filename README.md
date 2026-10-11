@@ -25,7 +25,7 @@ Start with the [guide](guide/README.md): ToolGate in monitor mode on Spring AI o
   re-checked when approved; run once under a lease on any instance; and its outcome reaches the agent. A
   review console and REST API for Spring applications ship as an opt-in module, with a graph of how each
   request came about in its session; reviewers hear of waiting and expiring calls by signed webhook,
-  Slack or email ([policies](guide/policies.md#approvals), [console](guide/approvals-console.md)).
+  Slack, Teams or email ([policies](guide/policies.md#approvals), [console](guide/approvals-console.md)).
 
 ## Building
 
@@ -59,7 +59,7 @@ java -jar toolgate-benchmarks/target/benchmarks.jar
 | Module          | Contents                                                                 |
 | --------------- | ------------------------------------------------------------------------ |
 | `toolgate-core` | Policy model, decision engine, validators, session state, approvals, audit events. No runtime dependencies; Micrometer and the OpenTelemetry API are optional, for its telemetry package. |
-| `toolgate-webhook` | Approval notifications as signed webhooks (HMAC-SHA256, replay-safe) or Slack messages, with retries; `WebhookSignature` for receivers. JDK only. |
+| `toolgate-webhook` | Approval notifications as signed webhooks (HMAC-SHA256, replay-safe), Slack messages or Teams cards, with retries; `WebhookSignature` for receivers. JDK only. |
 | `toolgate-jdbc` | Approval queue, session store and audit table in the application's database, through plain JDBC, for applications with more than one instance; stable read views and `ToolGateQueries` for the application's own dashboards; retention. Ships DDL for H2, PostgreSQL and MySQL. |
 | `toolgate-email` | The `emailDomains` rule: recipients parsed with Jakarta Mail, every one checked, and every address form that mail libraries read differently denied. |
 | `toolgate-sql` | The `readOnlySql` rule: a pre-check on JSqlParser that denies anything but one query. It only denies; the database enforces read-only. |

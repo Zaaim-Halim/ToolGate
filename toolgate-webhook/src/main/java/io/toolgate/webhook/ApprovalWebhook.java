@@ -37,7 +37,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p><b>Formats.</b> {@link #signed} posts JSON signed with HMAC-SHA256 ({@link WebhookSignature}), for the
  * application's own receivers, relays and incident tools. {@link #slack} posts a readable message to a Slack
- * incoming webhook, whose URL is itself the secret, so it is not signed.
+ * incoming webhook, and {@link #teams} an Adaptive Card to a Microsoft Teams workflow or incoming webhook;
+ * their URLs are themselves the secret, so they are not signed.
  *
  * <p><b>What is sent.</b> IDs, the agent, the tool, the status, who decided, and a link to the console:
  * never argument values, reasons or comments, which can quote them. A reviewer follows the link to see the
@@ -71,7 +72,9 @@ public final class ApprovalWebhook implements ApprovalListener, AutoCloseable {
         /** JSON, signed in the {@value WebhookSignature#HEADER} header. */
         SIGNED_JSON,
         /** A Slack incoming-webhook message. */
-        SLACK
+        SLACK,
+        /** A Microsoft Teams message with an Adaptive Card, for a Teams workflow or incoming webhook. */
+        TEAMS
     }
 
     private static final System.Logger LOG = System.getLogger(ApprovalWebhook.class.getName());
@@ -134,6 +137,18 @@ public final class ApprovalWebhook implements ApprovalListener, AutoCloseable {
      */
     public static Builder slack(URI url) {
         return new Builder(url, Format.SLACK, null);
+    }
+
+    /**
+     * A webhook posting to Microsoft Teams: a Teams workflow's "when a webhook request is received" URL, or an
+     * older incoming webhook. Messages are Adaptive Cards with a button to the console.
+     *
+     * @param url the webhook's URL, which is its secret: keep it out of source code
+     * @return a builder
+     * @throws IllegalArgumentException if the URL is not HTTPS
+     */
+    public static Builder teams(URI url) {
+        return new Builder(url, Format.TEAMS, null);
     }
 
     @Override
@@ -236,6 +251,7 @@ public final class ApprovalWebhook implements ApprovalListener, AutoCloseable {
         return switch (format) {
             case SIGNED_JSON -> Messages.json(notice, link);
             case SLACK -> Messages.slack(notice, link);
+            case TEAMS -> Messages.teams(notice, link);
         };
     }
 
@@ -466,7 +482,8 @@ public final class ApprovalWebhook implements ApprovalListener, AutoCloseable {
             boolean local = host.equals("localhost") || host.equals("127.0.0.1") || host.equals("[::1]");
             // Notifications name agents, tools and reviewers: plain HTTP only to this machine, for tests.
             if (!scheme.equals("https") && !(scheme.equals("http") && local)) {
-                throw new IllegalArgumentException("a webhook URL must use HTTPS, was " + url);
+                // Only the scheme and host: a Slack or Teams URL is itself a secret, and this ends up in logs.
+                throw new IllegalArgumentException("a webhook URL must use HTTPS, was " + scheme + "://" + host + "/…");
             }
             return url;
         }

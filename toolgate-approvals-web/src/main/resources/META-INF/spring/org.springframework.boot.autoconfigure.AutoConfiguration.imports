@@ -1,2 +1,3 @@
 io.toolgate.approvals.web.ToolGateApprovalsWebAutoConfiguration
 io.toolgate.approvals.web.ToolGateApprovalMailAutoConfiguration
+io.toolgate.approvals.web.ToolGateApprovalWebhookAutoConfiguration

@@ -177,9 +177,26 @@ review screen instead of describing the call. On Spring AI, declare it as an `Ap
 instance, when its expiry is within an hour, or a quarter of its life if that is sooner. Change it with
 `expiryWarning(Duration)` on the gate's builder, or turn it off with `noExpiryWarning()`.
 
-### Webhooks and Slack
+### Webhooks, Slack and Teams
 
-`toolgate-webhook` posts these events over HTTPS, with nothing but the JDK:
+`toolgate-webhook` posts these events over HTTPS, with nothing but the JDK. On Spring, with
+`toolgate-approvals-web`, configure them in properties; any number, each with its own events:
+
+```properties
+toolgate.approvals.notify.console-url=https://refunds.example.com/toolgate/approvals/
+toolgate.approvals.notify.webhooks[0].url=https://ops.example.com/hooks/toolgate
+toolgate.approvals.notify.webhooks[0].secret=${TOOLGATE_WEBHOOK_SECRET}         # signed-json, 32+ random characters
+toolgate.approvals.notify.webhooks[1].url=${TEAMS_WORKFLOW_URL}
+toolgate.approvals.notify.webhooks[1].format=teams                              # or slack
+toolgate.approvals.notify.webhooks[1].events=deferred,expiring
+```
+
+Events are `deferred`, `expiring`, `decided`, `recorded`, `finished` and `super-admin-burst`, all by
+default. A Slack or Teams URL is itself the secret: keep it in the environment, not in source control.
+For Teams, create a workflow from the template "Post to a channel when a webhook request is received"
+and use its URL; ToolGate posts an Adaptive Card with a button to the console.
+
+Without Spring, or to configure one in code:
 
 ```java
 ApprovalWebhook webhook = ApprovalWebhook.signed(URI.create("https://ops.example.com/hooks/toolgate"), secret)
@@ -187,9 +204,10 @@ ApprovalWebhook webhook = ApprovalWebhook.signed(URI.create("https://ops.example
         .build();
 ToolGate.builder(policy).approvalListener(webhook).build();
 
-// Or a Slack incoming webhook, for a reviewers' channel:
+// Or a Slack incoming webhook, or a Teams workflow, for a reviewers' channel:
 ApprovalWebhook.slack(URI.create(slackUrl)).consoleUrl(consoleUrl)
         .events(ApprovalWebhook.Event.DEFERRED, ApprovalWebhook.Event.EXPIRING).build();
+ApprovalWebhook.teams(URI.create(teamsUrl)).consoleUrl(consoleUrl).build();
 ```
 
 A signed delivery is flat JSON (`type`, `time`, `approvalId`, `agent`, `tool`, `tenant`, `status`, `by`,

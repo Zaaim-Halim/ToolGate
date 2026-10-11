@@ -2,7 +2,7 @@ package io.toolgate.webhook;
 
 import io.toolgate.webhook.ApprovalWebhook.Notice;
 
-/** Writes a notice as signed-webhook JSON or as a Slack message. */
+/** Writes a notice as signed-webhook JSON, a Slack message or a Teams card. */
 final class Messages {
 
     private Messages() {}
@@ -30,57 +30,114 @@ final class Messages {
 
     /** The Slack format: one sentence a reviewer can act on, and a link. */
     static String slack(Notice notice, String link) {
-        String agent = "*" + escape(notice.agent()) + "*";
-        String tool = "`" + escape(notice.tool()) + "`";
-        String text = switch (notice.type()) {
-            case "approval.deferred" -> ":hourglass: " + agent + " asks to run " + tool
-                    + (notice.tenant() == null ? "" : " for " + escape(notice.tenant())) + ". It waits for a decision.";
-            case "approval.expiring" -> ":alarm_clock: A request from " + agent + " to run " + tool + " expires at "
-                    + notice.expiresAt() + " unless someone decides.";
-            case "approval.recorded" -> ":lock: " + escape(notice.by()) + " approved " + agent + "'s request to run "
-                    + tool + " as a super admin. It needs a second person.";
-            case "approval.decided" -> decided(notice, agent, tool);
-            case "approval.finished" -> finished(notice, agent, tool);
-            case "superadmin.burst" -> ":rotating_light: " + notice.burst().decisions() + " super admin decisions within "
-                    + notice.burst().window() + ", the last by " + escape(notice.by()) + ". Check that they were expected.";
-            default -> escape(notice.type());
-        };
+        String text = sentence(notice, Style.SLACK);
         if (link != null) {
-            text += " <" + link + "|" + (notice.type().equals("approval.finished") ? "Open it" : "Review it") + ">";
+            text += " <" + link + "|" + action(notice) + ">";
         } else if (notice.approvalId() != null) {
-            text += " (" + escape(notice.approvalId()) + ")";
+            text += " (" + Style.SLACK.escape(notice.approvalId()) + ")";
         }
         var json = new StringBuilder("{");
         field(json, "text", text);
         return json.append('}').toString();
     }
 
-    private static String decided(Notice notice, String agent, String tool) {
-        String by = notice.by() == null || notice.by().equals("toolgate") ? "" : " by " + escape(notice.by());
-        return switch (notice.status()) {
-            case "released" -> ":white_check_mark: " + agent + "'s request to run " + tool + " was approved" + by + ".";
-            case "refused" -> ":no_entry: " + agent + "'s request to run " + tool
-                    + " was approved" + by + ", but refused on re-check: something changed since.";
-            case "rejected" -> ":x: " + agent + "'s request to run " + tool + " was rejected" + by + ".";
-            case "cancelled" -> ":leftwards_arrow_with_hook: " + agent + "'s request to run " + tool + " was withdrawn" + by + ".";
-            case "expired" -> ":hourglass_flowing_sand: " + agent + "'s request to run " + tool + " expired: nobody decided.";
-            default -> agent + "'s request to run " + tool + " is now " + escape(notice.status()) + by + ".";
+    /**
+     * The Teams format: an Adaptive Card in a message, which Teams workflow webhooks ("Post to a channel when
+     * a webhook request is received") and the older incoming webhooks both accept.
+     */
+    static String teams(Notice notice, String link) {
+        String text = sentence(notice, Style.TEAMS);
+        if (link == null && notice.approvalId() != null) {
+            text += " (" + notice.approvalId() + ")";
+        }
+        var card = new StringBuilder("{\"type\":\"message\",\"attachments\":[{\"contentType\":")
+                .append(string("application/vnd.microsoft.card.adaptive"))
+                .append(",\"content\":{\"$schema\":").append(string("http://adaptivecards.io/schemas/adaptive-card.json"))
+                .append(",\"type\":\"AdaptiveCard\",\"version\":\"1.4\",\"body\":[")
+                .append("{\"type\":\"TextBlock\",\"text\":").append(string("ToolGate"))
+                .append(",\"weight\":\"Bolder\",\"size\":\"Small\",\"isSubtle\":true},")
+                .append("{\"type\":\"TextBlock\",\"text\":").append(string(text)).append(",\"wrap\":true}]");
+        if (link != null) {
+            card.append(",\"actions\":[{\"type\":\"Action.OpenUrl\",\"title\":").append(string(action(notice)))
+                    .append(",\"url\":").append(string(link)).append("}]");
+        }
+        return card.append("}}]}").toString();
+    }
+
+    private static String action(Notice notice) {
+        return notice.type().equals("approval.finished") ? "Open it" : "Review it";
+    }
+
+    /** One sentence a reviewer can act on, marked up for the chat tool. */
+    private static String sentence(Notice notice, Style style) {
+        String agent = style.bold(notice.agent());
+        String tool = style.code(notice.tool());
+        return switch (notice.type()) {
+            case "approval.deferred" -> style.emoji(":hourglass:") + agent + " asks to run " + tool
+                    + (notice.tenant() == null ? "" : " for " + style.escape(notice.tenant())) + ". It waits for a decision.";
+            case "approval.expiring" -> style.emoji(":alarm_clock:") + "A request from " + agent + " to run " + tool
+                    + " expires at " + notice.expiresAt() + " unless someone decides.";
+            case "approval.recorded" -> style.emoji(":lock:") + style.escape(notice.by()) + " approved " + agent
+                    + "'s request to run " + tool + " as a super admin. It needs a second person.";
+            case "approval.decided" -> decided(notice, agent, tool, style);
+            case "approval.finished" -> finished(notice, agent, tool, style);
+            case "superadmin.burst" -> style.emoji(":rotating_light:") + notice.burst().decisions()
+                    + " super admin decisions within " + notice.burst().window() + ", the last by "
+                    + style.escape(notice.by()) + ". Check that they were expected.";
+            default -> style.escape(notice.type());
         };
     }
 
-    private static String finished(Notice notice, String agent, String tool) {
+    private static String decided(Notice notice, String agent, String tool, Style style) {
+        String by = notice.by() == null || notice.by().equals("toolgate") ? "" : " by " + style.escape(notice.by());
+        String request = agent + "'s request to run " + tool;
         return switch (notice.status()) {
-            case "executed" -> ":white_check_mark: " + tool + " ran for " + agent + ".";
-            case "failed" -> ":warning: " + tool + " failed for " + agent + ".";
-            case "unknown" -> ":question: Nobody knows whether " + tool + " ran for " + agent
+            case "released" -> style.emoji(":white_check_mark:") + request + " was approved" + by + ".";
+            case "refused" -> style.emoji(":no_entry:") + request + " was approved" + by
+                    + ", but refused on re-check: something changed since.";
+            case "rejected" -> style.emoji(":x:") + request + " was rejected" + by + ".";
+            case "cancelled" -> style.emoji(":leftwards_arrow_with_hook:") + request + " was withdrawn" + by + ".";
+            case "expired" -> style.emoji(":hourglass_flowing_sand:") + request + " expired: nobody decided.";
+            default -> request + " is now " + style.escape(notice.status()) + by + ".";
+        };
+    }
+
+    private static String finished(Notice notice, String agent, String tool, Style style) {
+        return switch (notice.status()) {
+            case "executed" -> style.emoji(":white_check_mark:") + tool + " ran for " + agent + ".";
+            case "failed" -> style.emoji(":warning:") + tool + " failed for " + agent + ".";
+            case "unknown" -> style.emoji(":question:") + "Nobody knows whether " + tool + " ran for " + agent
                     + ". Check the real system, then resolve it in the console.";
-            default -> tool + " for " + agent + " is now " + escape(notice.status()) + ".";
+            default -> tool + " for " + agent + " is now " + style.escape(notice.status()) + ".";
         };
     }
 
-    /** Slack's three control characters; everything else is shown as written. */
-    private static String escape(String text) {
-        return text == null ? "" : text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    /** How a chat tool marks up a sentence. */
+    private enum Style {
+        /** Slack mrkdwn: bold, code, emoji shortcodes, and its three control characters escaped. */
+        SLACK,
+        /** Adaptive Card markdown: bold only, no emoji; the card's JSON escaping carries the rest. */
+        TEAMS;
+
+        String bold(String text) {
+            return this == SLACK ? "*" + escape(text) + "*" : "**" + escape(text) + "**";
+        }
+
+        String code(String text) {
+            return this == SLACK ? "`" + escape(text) + "`" : escape(text);
+        }
+
+        String emoji(String shortcode) {
+            return this == SLACK ? shortcode + " " : "";
+        }
+
+        String escape(String text) {
+            if (text == null) {
+                return "";
+            }
+            // Adaptive Card markdown has no reliable escape, and IDs come from the application, not the model.
+            return this == SLACK ? text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") : text;
+        }
     }
 
     private static void field(StringBuilder json, String name, String value) {
@@ -90,7 +147,12 @@ final class Messages {
         if (json.length() > 1) {
             json.append(',');
         }
-        json.append('"').append(name).append("\":\"");
+        json.append('"').append(name).append("\":").append(string(value));
+    }
+
+    /** A JSON string, quoted and escaped. */
+    private static String string(String value) {
+        var json = new StringBuilder("\"");
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
             switch (c) {
@@ -108,6 +170,6 @@ final class Messages {
                 }
             }
         }
-        json.append('"');
+        return json.append('"').toString();
     }
 }
