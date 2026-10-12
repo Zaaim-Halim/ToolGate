@@ -14,7 +14,8 @@ ToolGatePolicy.builder()
         .ruleMode("taint.trifecta", Mode.MONITOR)
 ```
 
-Before each policy change, [replay](replay.md) recorded traffic through the new policy, and keep the
+To write the first enforcing policy, [draft one](replay.md#suggest) from a week of monitor mode. Before
+each policy change, [replay](replay.md) recorded traffic through the new policy, and keep the
 policy under test with [`toolgate-test`](testing.md). `Mode.OFF` is the emergency switch: tools run as
 if ToolGate were not there.
 

@@ -35,6 +35,13 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- A suggested policy may use emailDomains: the round-trip test compiles one. -->
+            <groupId>io.github.zaaim-halim.toolgate</groupId>
+            <artifactId>toolgate-email</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>

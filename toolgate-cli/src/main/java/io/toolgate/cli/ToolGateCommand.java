@@ -8,8 +8,8 @@ import picocli.CommandLine.Command;
  * the application's classes or a jar given with {@code --classpath}.
  */
 @Command(name = "toolgate", mixinStandardHelpOptions = true, version = "toolgate 0.1.0",
-        description = "Validate ToolGate policies and replay recorded tool calls through a proposed one.",
-        subcommands = {ValidateCommand.class, ReplayCommand.class})
+        description = "Validate ToolGate policies, replay recorded tool calls through a proposed one, and draft one from them.",
+        subcommands = {ValidateCommand.class, ReplayCommand.class, SuggestCommand.class})
 public final class ToolGateCommand implements Runnable {
 
     /**

@@ -25,8 +25,8 @@ policy before you enforce it.
   modes.
 - [Helpers for tool authors](helpers.md): email and SQL rules, SafeJdbc, SafeHttp.
 - [Testing policies](testing.md): assert what ToolGate decides, without a model.
-- [Replaying a policy change](replay.md): run recorded calls through a proposed policy with the
-  `toolgate` command.
+- [Drafting and replaying policies](replay.md): draft a policy from recorded calls, and run them
+  through a proposed one, with the `toolgate` command.
 
 ## Operating
 

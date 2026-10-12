@@ -64,8 +64,9 @@ line in the audit log:
   Teams or email.
 - **Helpers for tool authors**: `SafeHttp` connects only to the addresses it checked; `SafeJdbc` runs a
   model's query read-only, with limits.
-- **Tests and replay**: assert what your policy decides with `toolgate-test`, and replay last week's
-  recorded calls through a proposed policy with the `toolgate` command before deploying it.
+- **Drafts, tests and replay**: draft a policy from a week of monitor mode with `toolgate suggest`,
+  assert what it decides with `toolgate-test`, and replay recorded calls through a proposed policy
+  before deploying it.
 
 ## Documentation
 
@@ -76,7 +77,7 @@ The [guide](guide/README.md) starts with ToolGate in monitor mode in a few minut
 | [Spring AI](guide/spring-ai.md) | [Policies](guide/policies.md) | [Running in production](guide/production.md) |
 | [LangChain4j](guide/langchain4j.md) | [Spring configuration](guide/configuration.md) | [Audit, metrics and traces](guide/audit.md) |
 | [Using the core directly](guide/core.md) | [Helpers for tool authors](guide/helpers.md) | [The approvals console](guide/approvals-console.md) |
-| [Testing policies](guide/testing.md) | [Known limitations](guide/limitations.md) | [Replaying a policy change](guide/replay.md) |
+| [Testing policies](guide/testing.md) | [Known limitations](guide/limitations.md) | [Drafting and replaying policies](guide/replay.md) |
 
 ## Compatibility
 
@@ -106,7 +107,7 @@ Artifacts are published under the group `io.github.zaaim-halim.toolgate`.
 | `toolgate-safe-jdbc` | `SafeJdbc`: runs a model's query in a read-only transaction (PostgreSQL, MySQL, MariaDB) or as a read-only role, with a timeout and limits on what comes back. |
 | `toolgate-safe-http` | `SafeHttp`: an Apache HttpClient 5 client that checks every request and redirect against URL rules, and connects only to the addresses it checked. |
 | `toolgate-test` | Policy tests: scripted sessions play tool calls as a compromised model would. A JUnit 5 extension (`@ToolGateTest`) or plain `ScriptedSession.of(...)`. |
-| `toolgate-cli` | The `toolgate` command: `validate` a policy, and `replay` recorded tool calls through a proposed one. |
+| `toolgate-cli` | The `toolgate` command: `validate` a policy, `suggest` one from recorded tool calls, and `replay` recorded calls through a proposed one. |
 
 Not published: `toolgate-demo` (three example agents on Spring AI behind one policy, run end to end
 against a scripted model in its tests), `toolgate-fuzz` (Jazzer fuzz targets for the parsers and

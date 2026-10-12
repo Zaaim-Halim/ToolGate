@@ -112,5 +112,5 @@ rewrites `Host` without forwarding the original makes every decision fail with 4
 ## Versions
 
 0.1.0 is tested with Java 21, Spring Boot 4.1.1, Spring AI 2.0.1, LangChain4j 1.22.0, PostgreSQL 17 and
-MySQL 9.6. The adapters
-rely on framework internals that other versions may change. Every API may change before 1.0.
+MySQL 9.6. The adapters rely on framework internals that other versions may change. Every API may change
+before 1.0.

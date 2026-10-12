@@ -141,12 +141,12 @@ class ToolGateCommandTest {
 
     @Test
     void durations() {
-        assertThat(ReplayCommand.duration("7d")).isEqualTo(Duration.ofDays(7));
-        assertThat(ReplayCommand.duration("12h")).isEqualTo(Duration.ofHours(12));
-        assertThat(ReplayCommand.duration("P2D")).isEqualTo(Duration.ofDays(2));
-        assertThatIllegalArgumentException().isThrownBy(() -> ReplayCommand.duration("7"));
-        assertThatIllegalArgumentException().isThrownBy(() -> ReplayCommand.duration("0d"));
-        assertThatIllegalArgumentException().isThrownBy(() -> ReplayCommand.duration("d"));
+        assertThat(History.duration("7d")).isEqualTo(Duration.ofDays(7));
+        assertThat(History.duration("12h")).isEqualTo(Duration.ofHours(12));
+        assertThat(History.duration("P2D")).isEqualTo(Duration.ofDays(2));
+        assertThatIllegalArgumentException().isThrownBy(() -> History.duration("7"));
+        assertThatIllegalArgumentException().isThrownBy(() -> History.duration("0d"));
+        assertThatIllegalArgumentException().isThrownBy(() -> History.duration("d"));
     }
 
     private int run(String... args) {
