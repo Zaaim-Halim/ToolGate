@@ -55,10 +55,13 @@ memory is a session of its own, since the model sees nothing from earlier reques
 ## 4. Build chat clients from Spring Boot's builder
 
 Inject `ChatClient.Builder`; its clients are gated. A client built by hand with
-`ChatClient.create(model)` is not: use `ToolGateChatClients.builder(model)` instead. Tool beans are
-guarded either way: a hand-built client that runs one is refused (or logged, in monitor mode). To guard
-them, ToolGate wraps tool beans in a proxy, like `@Transactional` does: call their methods, never read
-their fields from outside.
+`ChatClient.create(model)` or `ChatClient.builder(model)` is not: use `ToolGateChatClients.builder(model)`
+instead. Tool beans are guarded either way: a hand-built client that runs one is refused (or logged, in
+monitor mode). To guard them, ToolGate wraps tool beans in a proxy, like `@Transactional` does: call
+their methods, never read their fields from outside.
+
+> **Important.** In a hand-built client, tools passed as plain objects, function callbacks, MCP tools
+> and `final` tool classes run **unchecked**. See [Known limitations](limitations.md#spring-ai-tools-a-hand-built-chatclient-runs-unchecked).
 
 ## 5. Run and read the log
 
@@ -74,6 +77,8 @@ to `Mode.ENFORCE`. To send decisions to a SIEM, Micrometer or OpenTelemetry as w
 
 ## Next
 
-- Add [argument rules, taint labels and budgets](policies.md).
-- Keep sessions and the review queue in your database with `toolgate-jdbc` when you run more than one instance.
+- Add [argument rules, taint labels and budgets](policies.md), and [test them](testing.md).
 - Before deploying a stricter policy, [replay](replay.md) last week's traffic through it.
+- Before enforcing in production, work through [Running in production](production.md): database
+  stores, encryption, approvals and alerts.
+- Every `toolgate.*` property is in the [configuration reference](configuration.md).

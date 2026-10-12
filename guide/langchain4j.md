@@ -62,5 +62,22 @@ Decisions go to the `toolgate.audit` logger as JSON lines; `computed` and `compu
 enforcement would have done. Switch to `Mode.ENFORCE` when they look right. To send decisions to a
 SIEM, Micrometer or OpenTelemetry as well, see [Audit, metrics and traces](audit.md).
 
+## 6. Approvals
+
+A deferred call waits in the gate's approval queue. Approve it with `toolGate.approve(approvalId,
+reviewer, currentPrincipal, comment, digest)`, which re-checks it and runs it. To run calls approved on
+another instance or from a console, call `toolGate.runApproved()` on a schedule, such as every 30
+seconds; it also sweeps the queue, expiring old calls. Stores, audit sinks and listeners are set on the
+underlying gate's builder: `ToolGateLangChain4j.builder(policy).gate(g -> g.approvalQueue(queue))`. Register tools that can need approval with
+`agent(...).tools(...)`, so every instance has them. See [Approvals](policies.md#approvals).
+
+## Limitations
+
 Not available for tools registered through ToolGate: LangChain4j's compensating actions
-(`@CompensateFor`) and tool search (`toolSearchStrategy`).
+(`@CompensateFor`) and tool search (`toolSearchStrategy`). MCP resources presented as tools are always
+denied. See [Known limitations](limitations.md#langchain4j).
+
+## Next
+
+- Add [argument rules, taint labels and budgets](policies.md), and [test them](testing.md).
+- Before enforcing in production, work through [Running in production](production.md).

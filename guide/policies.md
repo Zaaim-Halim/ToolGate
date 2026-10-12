@@ -21,16 +21,22 @@ ToolGatePolicy policy = ToolGatePolicy.builder()
         .build();
 ```
 
+The examples on this page assume static imports of `ArgumentRules.*`, `ResultRules.*`, `Label.*` and
+`Effect.*`.
+
 ## Agents and tools
 
 - **Deny by default.** An agent may call only the tools it `allow`s. A tool is named `local/name`, or
   `mcp:server/name` for an MCP tool; `allow("sendEmail")` means the application's own tool.
-- **MCP servers** must be listed with `.mcpServers("jira", ...)`; any other server's tools are denied.
-  A server is named after the connection the application configured, never after what it claims.
+- **MCP servers** must be listed policy-wide with `.mcpServers("jira", ...)`; any other server's tools
+  are denied. A server is named after the connection the application configured, never after what it
+  claims.
 - **Pins.** `.tool("mcp:jira/search_issues", t -> t.pin(sha256))` denies the tool once its description
   or input schema changes, until someone reviews the change and updates the pin.
 - **Principals.** `.principal(...)` gives a headless agent its service identity. Interactive agents
   (`.interactive(true)`) act for the signed-in user, who confirms what the policy holds.
+- **Roles.** `.requireRole("issueRefund", "finance")` lets only principals with one of these roles call
+  the tool. It is checked right after the allow-list, before any lookup.
 
 ## Argument rules
 
@@ -46,6 +52,24 @@ arguments its schema declares.
 | `emailDomains` (`toolgate-email`) | Every recipient of an email argument |
 | `readOnlySql` (`toolgate-sql`) | A pre-check that a SQL argument is one query |
 | `validated(validator)` | Your own `ArgumentValidator` |
+
+The rules are static methods on `ArgumentRules`, `EmailRules` (`toolgate-email`) and `SqlRules`
+(`toolgate-sql`).
+
+**Ownership.** `sameTenant` and `ownedByPrincipal` ask the application who a record belongs to, through
+an `OwnershipResolver`: give one to the gate's builder (`.ownershipResolver(...)`), or declare it as a
+bean on Spring AI. A record the resolver does not know is denied.
+
+```java
+OwnershipResolver owners = new OwnershipResolver() {
+    @Override
+    public Optional<String> tenantOf(String resourceType, String id) {
+        return "invoice".equals(resourceType) ? invoices.findTenant(id) : Optional.empty();
+    }
+};
+```
+
+Override `tenantsOf` and `ownersOf` as well when one query can look up a whole list of IDs.
 
 ## Taint
 
@@ -64,6 +88,8 @@ Effects say what a call changes: `READ`, `REVERSIBLE`, or `IRREVERSIBLE` (the de
 - **Downgrades** soften both: `.downgrade("sendEmail", "draftEmail")` runs the safe tool instead, so a
   job keeps working and a person reviews the draft.
 - **Your own rules**: `.whenTainted("sendEmail", UNTRUSTED_CONTENT).then(TaintAction.DEFER)`.
+- **Declassifying.** When a person has checked what a session holds, `gate.declassify(sessionId, label,
+  justification)` removes a label from it. It is audited with the justification.
 
 ## Budgets and denials
 
@@ -73,14 +99,18 @@ session the run ends too; change it with `.defaults(d -> d.denialBudget(n))`.
 ## Results
 
 `.result("searchInvoices", "items[*].tenantId", matchesTenant())` withholds a tool's output if any
-value at that path belongs to another tenant. The model gets a generic message instead.
+value at that path is not the principal's tenant ID. `matchesPrincipal()` requires the principal's own
+ID, and `sameTenant(type)` or `ownedByPrincipal(type)` look record IDs up through the
+`OwnershipResolver`, as argument rules do. The model gets a generic message instead of the output.
 
 ## Approvals
 
 A deferred call waits in the review queue, in memory or in your database with `toolgate-jdbc`.
 `.reviewers("finance")` says who may approve, in the call's own tenant; without it, nobody may, except
 the signed-in user of an interactive agent. Nobody may approve their own call anywhere else. An approved
-call is re-checked against the policy running at that moment, and runs once.
+call is re-checked against the policy running at that moment, and runs once. A call nobody decides
+expires: after 24 hours for a headless agent, or 10 minutes for an interactive one, whose user is right
+there. Change it per agent with `.approvalExpiry(Duration.ofHours(4))`.
 
 Policy-wide, `superAdmins("toolgate-admin")` names who may see and decide every agent's calls in every
 tenant, and `auditors("compliance")` who may see them all and decide none. Neither exists unless you
@@ -103,7 +133,9 @@ The adapters do the claiming for you. On Spring AI, `ToolGateApprovals.approve(.
 runs and reports the call; a scheduled executor (on by default, every 30 seconds) sweeps the queue and
 runs calls approved elsewhere, such as from a separate console, so you don't schedule `sweep()`
 yourself. Tune it with `toolgate.approvals.executor.id`, `.lease` and `.interval`, or turn it off with
-`toolgate.approvals.executor.enabled=false`. On LangChain4j, call `runApproved()` on your own schedule.
+`toolgate.approvals.executor.enabled=false`. On LangChain4j, call `runApproved()`, which also sweeps, on
+your own schedule, such as every 30 seconds; without a framework, see
+[Using the core directly](core.md).
 In a cluster, register tools that need approval as beans (or with `agent(...).tools(...)`), so any
 instance can run them.
 
@@ -119,7 +151,8 @@ arguments, shown, masked or hidden by the agent's review view:
 ```
 
 Without a review view, arguments the policy has rules on are shown and all others are masked. A
-deferral reason that would quote a masked or hidden argument ("480 is above 200") is withheld. The inbox, `pending(viewer)`, returns the same masked review items, and so does
+deferral reason that would quote a masked or hidden argument ("480 is above 200") is withheld. The
+inbox, `pending(viewer)`, returns the same masked review items, only those the viewer may see, and so does
 `history(viewer, ApprovalQuery.decidedSince(since, limit))` for decided calls, newest first. An item's
 `mayDecide()` says whether the viewer may take the step its status allows: approve or reject it while
 pending, resolve it while its outcome is unknown. Values that could look like something
@@ -130,11 +163,11 @@ so the approval names exactly what the reviewer saw. A super admin's or auditor'
 audited (`toolgate.approval.viewed`, `toolgate.approvals.listed`), and an `ApprovalListener` hears both.
 
 A chat screen can read the calls its own request deferred from the response, to show "Confirm?":
-`ToolGateDeferrals.of(chatClient.prompt()...call().chatClientResponse())`. The requester or a super admin can `cancel` a call nobody decided yet. Run
-`sweep()` on a schedule, such as every minute.
+`ToolGateDeferrals.of(chatClient.prompt()...call().chatClientResponse())`. The requester or a super
+admin can `cancel` a call nobody decided yet.
 
-A review screen lists `pending(viewer)`: only the calls that viewer may see, each saying whether they
-may decide it. `pending()` returns every tenant's calls, for operators and jobs only.
+`pending()`, without a viewer, returns every tenant's calls: for operators and jobs only, never for a
+screen a reviewer sees.
 
 ## Modes
 

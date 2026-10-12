@@ -46,13 +46,4 @@ special-purpose, such as loopback, a private network or the cloud metadata servi
 with `RefusedDestinationException`; otherwise the client connects to exactly those addresses, so a
 name cannot pass the check with one address and connect to another. Proxies are never used.
 
-## Testing policies: `toolgate-test`
-
-```java
-try (var session = ScriptedSession.of(policy, "invoice-processor", principal)) {
-    session.call("readInvoice", Map.of("id", "INV-118")).assertAllowed();
-    session.call("sendEmail", Map.of("to", "remit@acme-payments.example")).assertDeniedBy("sendEmail.to");
-}
-```
-
-Plays tool calls as a compromised model would and asserts what ToolGate decides, without a model.
+To test a policy without a model, see [Testing policies](testing.md).

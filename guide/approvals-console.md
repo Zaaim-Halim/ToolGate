@@ -116,6 +116,6 @@ itself: 400 invalid, 401 not signed in, 403 refused by the forgery checks, 404 n
 
 ## 6. Testing it
 
-`mvn -pl toolgate-approvals-web -Pe2e verify` also runs the browser tests (Playwright for Java), which
+`./mvnw -pl toolgate-approvals-web -am -Pe2e verify` also runs the browser tests (Playwright for Java), which
 download a browser on first run: an attacker's text stays text, masked values stay masked, and a
 reviewer can approve.
