@@ -58,6 +58,17 @@
             <artifactId>spring-security-core</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- Optional: lets Slack's signed clicks past Spring Security, on one path only. -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-config</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-web</artifactId>
+            <optional>true</optional>
+        </dependency>
         <!-- Optional: approval mail, only when the application has a MailSender. -->
         <dependency>
             <groupId>org.springframework</groupId>

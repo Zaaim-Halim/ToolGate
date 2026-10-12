@@ -62,7 +62,7 @@ line in the audit log:
 - **Approvals people can use**: deferred calls are decided by reviewers in their own tenant, re-checked
   against the current policy, run once on any instance, and reported back to the agent. An opt-in
   review console and REST API for Spring applications, with notifications by signed webhook, Slack,
-  Teams or email.
+  Teams or email, and an Approve button in Slack that shows the reviewer what they approve.
 - **Helpers for tool authors**: `SafeHttp` connects only to the addresses it checked; `SafeJdbc` runs a
   model's query read-only, with limits.
 - **Drafts, tests and replay**: draft a policy from a week of monitor mode with `toolgate suggest`,

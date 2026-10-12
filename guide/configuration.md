@@ -54,6 +54,14 @@ Declare any of these and the auto-configuration uses it; each is optional unless
 | `toolgate.approvals.notify.email.from` | none | The sender address. |
 | `toolgate.approvals.notify.email.to` | none | Who hears about every agent's calls, super admin bursts and unknown outcomes. |
 | `toolgate.approvals.notify.email.agents.<agent>` | none | Who hears about one agent's calls, besides `to`. |
+| `toolgate.approvals.slack.signing-secret` | none | The Slack app's signing secret, which proves a click came through Slack. |
+| `toolgate.approvals.slack.app-id` | none | The Slack app's ID; clicks from any other app are refused. |
+| `toolgate.approvals.slack.team-id` | none | The Slack workspace's ID; clicks from any other workspace are refused. |
+| `toolgate.approvals.slack.response-hosts` | `hooks.slack.com`, `hooks.slack-gov.com` | Hosts a click's `response_url` may point at. |
+| `toolgate.approvals.slack.channels[n].webhook-url` | none | One of the Slack app's incoming webhooks, over HTTPS. Turns Slack approval messages on. |
+| `toolgate.approvals.slack.channels[n].agents` | all | The agents whose calls go to this channel. |
+| `toolgate.approvals.slack.channels[n].tenant`, `.roles` | none | The tenant and reviewer roles of the channel's members: the message shows what such a reviewer may see. Super admin and auditor roles are refused. |
+| `toolgate.approvals.slack.channels[n].show-arguments` | `false` | Show the call's masked review view and an Approve button; off, the message only links to the console. |
 
 ### Beans it uses
 
@@ -61,3 +69,4 @@ Declare any of these and the auto-configuration uses it; each is optional unless
 | --- | --- | --- |
 | `ToolGateReviewerResolver` | the user's name and authorities without `ROLE_`, in no tenant | Who a reviewer is; declare one in a multi-tenant application |
 | `ToolGateRequesterDirectory` | the requester as recorded at deferral | Looking up the requester's current roles for the re-check on approval |
+| `ToolGateSlackReviewers` | none: no Approve button in Slack | Who a Slack user is, as a reviewer |

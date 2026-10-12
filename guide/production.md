@@ -86,7 +86,9 @@ codec (`--codec-class`) to replay an encrypted log.
   `ToolGateRequesterDirectory` (requesters' current roles) for the [console](approvals-console.md).
 - Make irreversible tools idempotent on the call's idempotency key (`toolgate.idempotencyKey` in the
   tool context).
-- Tell reviewers a call waits: [webhooks, Slack, Teams or email](audit.md#approval-events).
+- Tell reviewers a call waits: [webhooks, Slack, Teams or email](audit.md#approval-events). To approve
+  from Slack, map Slack users with `ToolGateSlackReviewers`, and turn on `show-arguments` only for channels
+  whose members may see the values ([Approving in Slack](audit.md#approving-in-slack)).
 
 ## 5. Watch it
 

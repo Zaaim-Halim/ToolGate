@@ -93,6 +93,19 @@ With `toolgate.approvals.outcome.chat-memory=true`, ToolGate also writes the out
 headless request's own session (`request-<uuid>`), which no conversation reads; an in-memory chat
 memory keeps it until restart. Turn the setting on only in applications whose agents are chats.
 
+## Approving in Slack
+
+- **Slack's login stands in for the console's.** Whoever can click in the channel as a Slack user that
+  `ToolGateSlackReviewers` maps to a reviewer approves as that reviewer. Step-up re-authentication is not
+  built, here or in the console.
+- **Shown values leave your systems.** With `show-arguments=true`, the review view's shown values are
+  stored by Slack. Keep it off for channels that may not see them.
+- **Teams has no Approve button.** Teams cards link to the console: buttons there need a registered Azure
+  Bot, which ToolGate does not set up yet.
+- **Spring MVC only.** On WebFlux, Slack messages link to the console.
+- **Not run by the click.** A call approved in Slack runs when the approval executor next sweeps; with the
+  executor turned off, something else must run released calls.
+
 ## Console behind a proxy
 
 A decision is accepted only if the browser's `Origin` matches the `Host` it addressed. A proxy that

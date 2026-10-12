@@ -223,6 +223,68 @@ still fails is dropped and counted in `webhook.dropped()`. Redirects are not fol
 must be HTTPS. Close the webhook when the application stops; on Spring, declare it as a bean and Spring
 closes it.
 
+### Approving in Slack
+
+With `toolgate-approvals-web` on Spring MVC, a Slack app can carry the call itself, and an **Approve**
+button. Rejecting needs a reason, so it stays in the console, one click away.
+
+1. Create a Slack app. Turn on **Incoming Webhooks** and add one per channel; turn on **Interactivity** with
+   the request URL `https://<your application>/toolgate/slack/actions`.
+2. Map Slack users to reviewers. ToolGate never guesses this from a name or an email:
+
+   ```java
+   @Bean
+   ToolGateSlackReviewers slackReviewers(UserDirectory users) {
+       return (teamId, userId) -> users.findBySlackId(userId)
+               .map(user -> Principal.user(user.id(), Tenant.of(user.tenant()), user.roles().toArray(String[]::new)));
+   }
+   ```
+
+3. Configure the app and its channels:
+
+   ```properties
+   toolgate.approvals.notify.console-url=https://refunds.example.com/toolgate/approvals/
+   toolgate.approvals.slack.signing-secret=${SLACK_SIGNING_SECRET}
+   toolgate.approvals.slack.app-id=A0123ABCD
+   toolgate.approvals.slack.team-id=T0123ABCD
+   toolgate.approvals.slack.channels[0].webhook-url=${SLACK_FINANCE_WEBHOOK}
+   toolgate.approvals.slack.channels[0].agents=refund-agent
+   toolgate.approvals.slack.channels[0].tenant=acme
+   toolgate.approvals.slack.channels[0].roles=finance
+   toolgate.approvals.slack.channels[0].show-arguments=true
+   ```
+
+What a message shows is decided per channel. **By default, no argument value reaches Slack**: the message
+says which agent asks to run which tool, with a link to the console. With `show-arguments=true` it shows
+what the console shows a reviewer of the channel's tenant and roles: the action's title, why it waits,
+where the session's taint came from, and each argument as the review view shows, masks or hides it, with
+the console's warnings on suspicious characters. Shown values reach Slack, so turn it on only for
+channels whose members may see them.
+
+How a click is checked:
+
+- **Signed by Slack.** The signature is checked over the raw request, within five minutes, before anything
+  is read; then the app ID and workspace ID. A click from another workspace, such as a Slack Connect
+  partner's, is refused.
+- **Bound to what was shown.** The button carries the digest of the view, so a call whose view changed
+  since is not approved.
+- **Decided as the reviewer.** The Slack user is mapped with `ToolGateSlackReviewers`, then ToolGate
+  decides as from the console: the reviewer's tenant and roles, never their own call, the re-check on
+  release. The decision is audited with the Slack user ID. Super admins are sent to the console, where
+  they give a justification.
+- **Released, then run.** An approval from Slack releases the call; the approval executor runs it within
+  its interval (30 seconds by default), so Slack gets its answer in time. The message is updated through
+  Slack's `response_url`, and only if that URL is on one of `toolgate.approvals.slack.response-hosts`.
+- **Text stays text.** Every value is Slack `plain_text`: a model-written `<!channel>`, mention or link is
+  shown, never acted on. A message whose view Slack would cut, past 3,000 characters in one value or 50
+  blocks, has no Approve button.
+
+The endpoint authenticates by Slack's signature, not by the application's sign-in, so ToolGate tells
+Spring Security to leave that one path, `POST /toolgate/slack/actions`, to it; every other path stays as
+your security configuration has it. Without a `ToolGateSlackReviewers` bean, or without the signing
+secret, app ID and workspace ID, there is no endpoint and no Approve button. Approving in Slack is for
+Spring MVC; on WebFlux, messages link to the console.
+
 ### Email
 
 With `toolgate-approvals-web` and a `MailSender` (`spring-boot-starter-mail` and `spring.mail.host`):
