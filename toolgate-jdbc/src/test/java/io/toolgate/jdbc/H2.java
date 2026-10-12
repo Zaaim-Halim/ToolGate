@@ -19,16 +19,7 @@ final class H2 implements DataSource {
 
     static H2 withQueueTable() {
         var database = new H2();
-        try (Connection connection = database.getConnection(); var statement = connection.createStatement()) {
-            for (String ddl : JdbcApprovalQueue.Dialect.H2.ddl().split(";")) {
-                String sql = ddl.lines().filter(line -> !line.startsWith("--")).reduce("", (a, b) -> a + "\n" + b).strip();
-                if (!sql.isEmpty()) {
-                    statement.execute(sql);
-                }
-            }
-        } catch (SQLException failure) {
-            throw new IllegalStateException(failure);
-        }
+        Schema.create(database, JdbcApprovalQueue.Dialect.H2);
         return database;
     }
 

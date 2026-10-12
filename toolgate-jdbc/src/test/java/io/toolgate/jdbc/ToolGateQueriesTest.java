@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 
 /** Approval figures from the v1 views, the views' stable columns, and purging finished calls. */
@@ -34,7 +35,7 @@ class ToolGateQueriesTest {
 
     private static final Instant NOW = Instant.parse("2026-10-11T12:00:00Z");
 
-    private final H2 database = H2.withQueueTable();
+    private final DataSource database = newDatabase();
     private final JdbcApprovalQueue queue = new JdbcApprovalQueue(database);
     private final ToolGateQueries queries = new ToolGateQueries(database, Clock.fixed(NOW, ZoneOffset.UTC));
 
@@ -144,5 +145,14 @@ class ToolGateQueriesTest {
         } catch (SQLException failure) {
             throw new IllegalStateException(failure);
         }
+    }
+
+    /**
+     * A fresh database with ToolGate's tables. H2 here; the PostgreSQL and MySQL suites override it.
+     *
+     * @return the database
+     */
+    DataSource newDatabase() {
+        return H2.withQueueTable();
     }
 }

@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 
 /** The same contract as the in-memory queue, against a real database. */
@@ -33,7 +34,7 @@ class JdbcApprovalQueueTest {
 
     private static final Instant T0 = Instant.parse("2026-10-08T10:02:00.123456Z");
 
-    private final H2 database = H2.withQueueTable();
+    private final DataSource database = newDatabase();
     private final JdbcApprovalQueue queue = new JdbcApprovalQueue(database);
 
     @Test
@@ -156,7 +157,7 @@ class JdbcApprovalQueueTest {
 
     @Test
     void missingTablesFailWithTheFix() {
-        var empty = new H2();
+        var empty = emptyDatabase();
         var unready = new JdbcApprovalQueue(empty);
 
         assertThatThrownBy(unready::verifySchema).isInstanceOf(JdbcStoreException.class)
@@ -278,5 +279,23 @@ class JdbcApprovalQueueTest {
                 approvalId.substring(0, Math.max(approvalId.indexOf(':'), 1)), tool, args, at);
         return new PendingCall(approvalId, call, new Decision.Defer("issueRefund.amount", "480 is above 200", approvalId),
                 at, at.plus(Duration.ofHours(24)), ApprovalStatus.PENDING);
+    }
+
+    /**
+     * A fresh database with ToolGate's tables. H2 here; the PostgreSQL and MySQL suites override it.
+     *
+     * @return the database
+     */
+    DataSource newDatabase() {
+        return H2.withQueueTable();
+    }
+
+    /**
+     * A fresh database without ToolGate's tables.
+     *
+     * @return the database
+     */
+    DataSource emptyDatabase() {
+        return new H2();
     }
 }

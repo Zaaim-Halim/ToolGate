@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 
 /** What lands in the database when the stores are given a key, and what an attacker with SQL access can do. */
@@ -31,7 +32,7 @@ class EncryptionAtRestTest {
     private static final byte[] NEW_KEY = "fedcba9876543210fedcba9876543210".getBytes();
     private static final String SECRET = "billing@mycompany.com";
 
-    private final H2 database = H2.withQueueTable();
+    private final DataSource database = newDatabase();
     private final ValueCodec codec = ValueCodec.aesGcm("2026-10", KEY);
 
     @Test
@@ -52,8 +53,14 @@ class EncryptionAtRestTest {
         var queue = new JdbcApprovalQueue(database, codec);
         queue.add(pending("refunds:c2", "harmless"));
         queue.add(pending("refunds:c3", "harmless"));
-        execute("UPDATE toolgate_pending_call SET payload = (SELECT payload FROM toolgate_pending_call"
-                + " WHERE approval_id = 'refunds:c2') WHERE approval_id = 'refunds:c3'");
+        String approved = rawColumn("SELECT payload FROM toolgate_pending_call WHERE approval_id = 'refunds:c2'")
+                .getFirst();
+        try (Connection connection = database.getConnection();
+             var update = connection.prepareStatement(
+                     "UPDATE toolgate_pending_call SET payload = ? WHERE approval_id = 'refunds:c3'")) {
+            update.setString(1, approved);
+            update.executeUpdate();
+        }
 
         assertThatThrownBy(() -> queue.get("refunds:c3")).isInstanceOf(JdbcStoreException.class);
         assertThat(queue.get("refunds:c2")).isPresent();
@@ -126,5 +133,14 @@ class EncryptionAtRestTest {
         try (Connection connection = database.getConnection(); var statement = connection.createStatement()) {
             statement.execute(sql);
         }
+    }
+
+    /**
+     * A fresh database with ToolGate's tables. H2 here; the PostgreSQL and MySQL suites override it.
+     *
+     * @return the database
+     */
+    DataSource newDatabase() {
+        return H2.withQueueTable();
     }
 }

@@ -27,6 +27,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 
 /** The audit log as rows: what a gate writes, how the application reads it back, and how it is purged. */
@@ -36,7 +37,7 @@ class JdbcAuditSinkTest {
     private static final Principal LENA = Principal.user("lena", Tenant.of("acme"), "finance");
     private static final Instant T0 = Instant.parse("2026-10-08T10:00:00Z");
 
-    private final H2 database = H2.withQueueTable();
+    private final DataSource database = newDatabase();
     private final JdbcAuditSink sink = new JdbcAuditSink(database);
     private final ToolGateQueries queries = new ToolGateQueries(database);
 
@@ -100,7 +101,7 @@ class JdbcAuditSinkTest {
 
     @Test
     void refusesToWorkWithoutItsTable() {
-        var empty = new H2();
+        var empty = emptyDatabase();
 
         assertThatThrownBy(() -> new JdbcAuditSink(empty).emit(decided(T0, "s1")))
                 .isInstanceOf(JdbcStoreException.class).hasMessageContaining("Dialect.ddl()");
@@ -127,5 +128,23 @@ class JdbcAuditSinkTest {
     private static AuditRow single(List<AuditRow> rows) {
         assertThat(rows).hasSize(1);
         return rows.getFirst();
+    }
+
+    /**
+     * A fresh database with ToolGate's tables. H2 here; the PostgreSQL and MySQL suites override it.
+     *
+     * @return the database
+     */
+    DataSource newDatabase() {
+        return H2.withQueueTable();
+    }
+
+    /**
+     * A fresh database without ToolGate's tables.
+     *
+     * @return the database
+     */
+    DataSource emptyDatabase() {
+        return new H2();
     }
 }

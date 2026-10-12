@@ -10,10 +10,11 @@ Requires JDK 21 or later; the Maven wrapper brings Maven.
 ```sh
 ./mvnw verify                                          # every module's tests
 ./mvnw -pl toolgate-approvals-web -am -Pe2e verify     # the console in a real browser
+./mvnw -pl toolgate-jdbc,toolgate-safe-jdbc -am -Pcontainers verify   # PostgreSQL and MySQL, with Docker
 ./mvnw -Prelease -Dgpg.skip -DskipTests verify         # sources, Javadoc and SBOMs, as for a release
 ```
 
-The compiler runs with `-Xlint:all -Werror`, so a warning fails the build. CI runs all three on every
+The compiler runs with `-Xlint:all -Werror`, so a warning fails the build. CI runs all four on every
 pull request.
 
 ## Before you open a pull request

@@ -85,7 +85,7 @@ The [guide](guide/README.md) starts with ToolGate in monitor mode in a few minut
 | Java | 21 |
 | Spring AI adapter, console | Spring AI 2.0.1, Spring Boot 4.1.1 |
 | LangChain4j adapter | LangChain4j 1.22.0 |
-| JDBC stores | H2; DDL also for PostgreSQL and MySQL |
+| JDBC stores, SafeJdbc | H2 2.5, PostgreSQL 17, MySQL 9.6 |
 
 The adapters hook into framework internals, so other versions may need changes.
 
@@ -128,6 +128,13 @@ saved inputs. The console's browser tests download a browser on first run, so th
 ./mvnw -pl toolgate-approvals-web -am -Pe2e verify
 ```
 
+The JDBC stores and SafeJdbc also run against real PostgreSQL and MySQL servers, started with
+Testcontainers. They need Docker, so they run only with `-Pcontainers`:
+
+```sh
+./mvnw -pl toolgate-jdbc,toolgate-safe-jdbc -am -Pcontainers verify
+```
+
 To fuzz one target for real, for example for an hour:
 
 ```sh
@@ -142,8 +149,8 @@ To measure `check` with JMH:
 java -jar toolgate-benchmarks/target/benchmarks.jar
 ```
 
-CI runs the build, the browser tests and a release build on every push and pull request, and fuzzes
-every target nightly.
+CI runs the build, the browser tests, the database tests and a release build on every push and pull
+request, and fuzzes every target nightly.
 
 ## Trifecta trigger rate
 

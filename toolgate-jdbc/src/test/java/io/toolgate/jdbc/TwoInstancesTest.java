@@ -31,6 +31,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 
 /** What the module is for: pending calls shared by every instance, and kept across restarts. */
@@ -47,7 +48,7 @@ class TwoInstancesTest {
             .agent("refund-agent", a -> a.allow("issueRefund").reviewers("finance")
                     .rule("issueRefund.amount", atMost("1000"), atMost("200").otherwise(DEFER)))
             .build();
-    private final H2 database = H2.withQueueTable();
+    private final DataSource database = newDatabase();
 
     @Test
     void oneInstanceDefersAnotherApprovesAndTheFirstCannotReleaseAgain() {
@@ -186,5 +187,14 @@ class TwoInstancesTest {
     private static ToolCall refund(int amount) {
         return new ToolCall("c1", JOB, "refund-agent", "refunds", ToolId.local("issueRefund"),
                 ObjectValue.of(Map.of("order", ArgValue.number(7731), "amount", ArgValue.number(amount))), Instant.EPOCH);
+    }
+
+    /**
+     * A fresh database with ToolGate's tables. H2 here; the PostgreSQL and MySQL suites override it.
+     *
+     * @return the database
+     */
+    DataSource newDatabase() {
+        return H2.withQueueTable();
     }
 }

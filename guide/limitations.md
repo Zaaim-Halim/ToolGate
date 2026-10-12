@@ -86,8 +86,8 @@ rewrites `Host` without forwarding the original makes every decision fail with 4
 - **Renamed tables.** `JdbcApprovalQueue` can use a table name of your choosing, but the `toolgate_v1_*`
   views and `ToolGateQueries` read the default names. With a renamed table, create the views by hand
   with the same columns.
-- **Tested on H2 only.** The PostgreSQL and MySQL statements are checked, but not yet run against real
-  servers in the test suite.
+- **Tested databases.** The stores and SafeJdbc are tested on H2, PostgreSQL 17 and MySQL 9.6. MariaDB
+  and other versions are expected to work but are not tested.
 
 ## LangChain4j
 
@@ -101,5 +101,6 @@ rewrites `Host` without forwarding the original makes every decision fail with 4
 
 ## Versions
 
-0.1.0 is tested with Java 21, Spring Boot 4.1.1, Spring AI 2.0.1 and LangChain4j 1.22.0. The adapters
+0.1.0 is tested with Java 21, Spring Boot 4.1.1, Spring AI 2.0.1, LangChain4j 1.22.0, PostgreSQL 17 and
+MySQL 9.6. The adapters
 rely on framework internals that other versions may change. Every API may change before 1.0.

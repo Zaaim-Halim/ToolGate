@@ -77,6 +77,12 @@
         <!-- Optional in core, for its telemetry: the versions Spring Boot 4.1.1 manages. Only stable API is used. -->
         <micrometer.version>1.17.1</micrometer.version>
         <opentelemetry.version>1.62.0</opentelemetry.version>
+        <!-- Database tests on real servers, under -Pcontainers. -->
+        <testcontainers.version>2.0.5</testcontainers.version>
+        <postgresql.version>42.7.13</postgresql.version>
+        <mysql-connector.version>9.5.0</mysql-connector.version>
+        <!-- Tests tagged "containers" need Docker, so they run only under -Pcontainers. -->
+        <containers.excluded>containers</containers.excluded>
     </properties>
 
     <dependencyManagement>
@@ -87,6 +93,23 @@
                 <version>${junit.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>${postgresql.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mysql</groupId>
+                <artifactId>mysql-connector-j</artifactId>
+                <version>${mysql-connector.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.assertj</groupId>
@@ -253,6 +276,17 @@
     </build>
 
     <profiles>
+        <!--
+            Runs the tests tagged "containers" as well: the JDBC stores and SafeJdbc on real PostgreSQL and
+            MySQL servers, started with Testcontainers. Needs Docker.
+                ./mvnw -pl toolgate-jdbc,toolgate-safe-jdbc -am -Pcontainers verify
+        -->
+        <profile>
+            <id>containers</id>
+            <properties>
+                <containers.excluded>none</containers.excluded>
+            </properties>
+        </profile>
         <!--
             What Maven Central needs: sources, javadoc, signatures and an SBOM for every published module.
                 ./mvnw -Prelease deploy            signs with your GPG key and uploads to the Central Portal,

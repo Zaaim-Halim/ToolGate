@@ -22,6 +22,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 
 class JdbcSessionStoreTest {
@@ -29,7 +30,7 @@ class JdbcSessionStoreTest {
     private static final Instant T0 = Instant.parse("2026-10-09T08:00:00.123456Z");
     private static final Principal MARIA = Principal.user("maria", Tenant.of("acme"), "support");
 
-    private final H2 database = H2.withQueueTable();
+    private final DataSource database = newDatabase();
     private final JdbcSessionStore store = new JdbcSessionStore(database, ValueCodec.unencrypted(), Clock.fixed(T0, ZoneOffset.UTC));
 
     @Test
@@ -161,5 +162,14 @@ class JdbcSessionStoreTest {
 
     private static SessionEvent result(String callId, String tool, Label label) {
         return new SessionEvent.ResultRecorded("s1", callId, ToolId.local(tool), true, false, Set.of(label), T0);
+    }
+
+    /**
+     * A fresh database with ToolGate's tables. H2 here; the PostgreSQL and MySQL suites override it.
+     *
+     * @return the database
+     */
+    DataSource newDatabase() {
+        return H2.withQueueTable();
     }
 }

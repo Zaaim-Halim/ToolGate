@@ -10,8 +10,8 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.Test;
 
 /**
- * The statements SafeJdbc sends to the engines it makes read-only. These run against a recording
- * fake: that the real databases then refuse writes is their documented behavior, not tested here.
+ * The statements SafeJdbc sends to the engines it makes read-only, against a recording fake. That the
+ * real databases then refuse writes is tested in {@link SafeJdbcPostgreSqlTest} and {@link SafeJdbcMySqlTest}.
  */
 class ReadOnlyTransactionTest {
 
