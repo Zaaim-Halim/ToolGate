@@ -136,18 +136,21 @@ class CasesBCEEndToEndTest {
                 .doesNotContain("AKIA-SECRET");
     }
 
-    /** Case E: a normal ticket gets a draft; the poisoned one ends at its budget; the batch goes on. */
+    /**
+     * Case E with bound arguments: a normal ticket's reply goes to its own customer; the poisoned one's lookups of
+     * other customers are denied, so the run ends at its denial budget with nothing read; the batch goes on.
+     */
     @Test
-    void caseE_aNormalTicketGetsADraftThePoisonedOneStopsAtItsBudgetAndTheBatchGoesOn() {
+    void caseE_aNormalTicketIsAnsweredThePoisonedOneStopsAtItsDenialBudgetAndTheBatchGoesOn() {
         MODEL.thenToolCalls(new Call("e1", "readTicket", "{\"id\":\"48212\"}"))
                 .thenToolCalls(new Call("e2", "lookupCustomer", "{\"id\":\"C-5512\"}"))
                 .thenToolCalls(new Call("e3", "replyToCustomer", "{\"customerId\":\"C-5512\",\"body\":\"Fixed.\"}"))
                 .thenText("Ticket 48212 answered.");
         assertThat(tickets.triage("48212")).isEqualTo("Ticket 48212 answered.");
-        assertThat(mailbox.sent()).isEmpty();
-        assertThat(mailbox.drafts()).containsExactly("customer:C-5512");
+        assertThat(mailbox.sent()).containsExactly("customer:C-5512");
+        assertThat(mailbox.drafts()).isEmpty();
         assertThat(appliedRules(3)).containsExactly(tuple("Allow", BuiltInRules.ALLOW_LIST),
-                tuple("Allow", BuiltInRules.ALLOW_LIST), tuple("Downgrade", BuiltInRules.TAINT_TRIFECTA));
+                tuple("Allow", BuiltInRules.ALLOW_LIST), tuple("Allow", "replyToCustomer.customerId.bound"));
 
         AUDIT.clear();
         MODEL.thenToolCalls(new Call("p1", "readTicket", "{\"id\":\"48213\"}"));
@@ -156,9 +159,12 @@ class CasesBCEEndToEndTest {
         }
         assertThatThrownBy(() -> tickets.triage("48213"))
                 .isInstanceOfSatisfying(ToolGateViolationException.class,
-                        ended -> assertThat(ended.ruleId()).isEqualTo(BuiltInRules.TOOL_CALL_BUDGET));
-        assertThat(appliedRules(41)).last().isEqualTo(tuple("Terminate", BuiltInRules.TOOL_CALL_BUDGET));
-        assertThat(appliedRules(41)).filteredOn(rule -> rule.toList().getFirst().equals("Allow")).hasSize(40);
+                        ended -> assertThat(ended.ruleId()).isEqualTo(BuiltInRules.DENIAL_BUDGET));
+        // The ticket is read; each lookup of another customer is denied, and the sixth call ends the run.
+        assertThat(appliedRules(7)).containsExactly(tuple("Allow", BuiltInRules.ALLOW_LIST),
+                tuple("Deny", "lookupCustomer.id.bound"), tuple("Deny", "lookupCustomer.id.bound"),
+                tuple("Deny", "lookupCustomer.id.bound"), tuple("Deny", "lookupCustomer.id.bound"),
+                tuple("Deny", "lookupCustomer.id.bound"), tuple("Terminate", BuiltInRules.DENIAL_BUDGET));
 
         MODEL.reset();
         AUDIT.clear();

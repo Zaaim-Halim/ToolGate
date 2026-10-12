@@ -5,6 +5,7 @@ import io.toolgate.api.Tenant;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.policy.AgentPolicy;
 import io.toolgate.api.policy.ArgumentRule;
+import io.toolgate.api.policy.Binding;
 import io.toolgate.api.policy.ResultCheck;
 import io.toolgate.api.policy.ResultRule;
 import io.toolgate.api.policy.TaintRule;
@@ -65,8 +66,14 @@ public final class PolicyHash {
         mcpServers.stream().sorted().forEach(server -> line(text, "mcpServer", server));
         tools.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
-                .forEach(entry -> line(text, "tool", withLabels(entry.getValue().labels(),
-                        entry.getKey().toString(), entry.getValue().effect().name())));
+                .forEach(entry -> {
+                    line(text, "tool", withLabels(entry.getValue().labels(),
+                            entry.getKey().toString(), entry.getValue().effect().name()));
+                    // Only when declared, so policies without trusted fields keep their hash.
+                    if (!entry.getValue().trusted().isEmpty()) {
+                        line(text, " trusted", entry.getValue().trusted().stream().sorted().toArray(String[]::new));
+                    }
+                });
         pins.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolId::toString)))
                 .forEach(entry -> line(text, "pin", entry.getKey().toString(), entry.getValue()));
@@ -105,6 +112,11 @@ public final class PolicyHash {
                 .forEach(entry -> line(text, " requireRole",
                         Stream.concat(Stream.of(entry.getKey().toString()), entry.getValue().stream().sorted())
                                 .toArray(String[]::new)));
+        // Only when declared, so policies without bindings keep their hash.
+        agent.bindings().values().stream()
+                .sorted(Comparator.comparing(Binding::ruleId))
+                .forEach(binding -> line(text, " bind", binding.argument().ruleId(), binding.source().toString(),
+                        binding.field()));
         agent.argumentRules().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(ToolArgument::ruleId)))
                 .forEach(entry -> {

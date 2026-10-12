@@ -34,8 +34,8 @@ ToolGate gate = ToolGate.builder(policy)
 A gate is thread-safe. Build one per application and `close()` it when the application stops, so
 queued audit events are written.
 
-A tool catalog is required when the policy has argument rules or pins: a call may pass only the
-arguments its tool's definition declares. Put each tool's definition in it as the model is offered it
+A tool catalog is required when the policy has argument rules, bound arguments or pins: a call may
+pass only the arguments its tool's definition declares. Put each tool's definition in it as the model is offered it
 (`catalog.put(definition)`), or pass the definition with each check, as below.
 
 The builder also takes a `sessionStore` and an `approvalQueue` (in memory by default; JDBC with
@@ -94,7 +94,9 @@ denial budget.
 
 ## 4. Record what the tool returned
 
-Taint labels and result rules need the result of every call that ran, failed ones included:
+Taint labels, result rules and bound arguments need the result of every call that ran, failed ones
+included. Pass the output as structured values, such as `ArgValueJson.read(json)`, so trusted fields can
+be read from it:
 
 ```java
 ResultDecision result = gate.recordResult(call, new ToolResult.Succeeded(output));

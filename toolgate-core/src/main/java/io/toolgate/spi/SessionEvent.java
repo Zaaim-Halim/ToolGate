@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Something that happened in a session. A session's state is the fold of its events, so it can
@@ -73,8 +74,8 @@ public sealed interface SessionEvent
     /**
      * A tool's output reached the model, bringing its source labels into the session.
      *
-     * <p>The output itself is not kept: taint needs only the labels, and outputs will be stored,
-     * encrypted, once bound arguments need them.
+     * <p>The output itself is not kept: taint needs only the labels, and bound arguments only the
+     * fingerprints of the trusted fields' values.
      *
      * @param sessionId the session
      * @param callId    the call whose tool ran
@@ -84,11 +85,13 @@ public sealed interface SessionEvent
      *                  labels and counts as a denial
      * @param labels    the source labels its output brought in; empty when withheld
      * @param at        when the call was captured
+     * @param trusted   fingerprints of the values of the tool's trusted fields, by
+     *                  {@code Binding.sourceKey}; empty when withheld or failed
      */
     record ResultRecorded(String sessionId, String callId, ToolId tool, boolean succeeded, boolean withheld,
-                          Set<Label> labels, Instant at) implements SessionEvent {
+                          Set<Label> labels, Instant at, Map<String, Set<String>> trusted) implements SessionEvent {
 
-        /** Requires every component and copies the labels. */
+        /** Requires every component and copies the labels and fingerprints. */
         public ResultRecorded {
             requireNonBlank(sessionId, "sessionId");
             requireNonBlank(callId, "callId");
@@ -98,6 +101,27 @@ public sealed interface SessionEvent
             if (withheld && !labels.isEmpty()) {
                 throw new IllegalArgumentException("a withheld output never reached the model, so it adds no labels");
             }
+            trusted = trusted.entrySet().stream().filter(entry -> !entry.getValue().isEmpty())
+                    .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> Set.copyOf(entry.getValue())));
+            if ((withheld || !succeeded) && !trusted.isEmpty()) {
+                throw new IllegalArgumentException("only an output the model read can hold trusted values");
+            }
+        }
+
+        /**
+         * A result with no trusted values.
+         *
+         * @param sessionId the session
+         * @param callId    the call whose tool ran
+         * @param tool      the tool that ran
+         * @param succeeded whether the tool returned normally
+         * @param withheld  whether a result rule kept the output from the model
+         * @param labels    the source labels its output brought in
+         * @param at        when the call was captured
+         */
+        public ResultRecorded(String sessionId, String callId, ToolId tool, boolean succeeded, boolean withheld,
+                              Set<Label> labels, Instant at) {
+            this(sessionId, callId, tool, succeeded, withheld, labels, at, Map.of());
         }
     }
 

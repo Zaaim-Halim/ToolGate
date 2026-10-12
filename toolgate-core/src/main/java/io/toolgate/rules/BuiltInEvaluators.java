@@ -101,6 +101,7 @@ public final class BuiltInEvaluators {
                     evaluators.add(new ArgumentEvaluator(agent.id(), argument, ArgumentChecks.compile(rules, nameCheck)));
                 }
             });
+            agent.bindings().values().forEach(binding -> evaluators.add(new BindingEvaluator(agent.id(), binding)));
             agent.taintRules().forEach(rule -> evaluators.add(new TaintRuleEvaluator(agent.id(), rule)));
             agent.requiredRoles().forEach((tool, roles) -> evaluators.add(new RoleEvaluator(agent.id(), tool, roles)));
         });

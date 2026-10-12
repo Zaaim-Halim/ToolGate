@@ -39,14 +39,22 @@ otherwise the model refuses it.
 
 ## Taint holds most sends that follow untrusted content
 
-With the default policy, nearly every session that reads untrusted content and then calls an external
-sink is held or downgraded, because a tool labeled `UNTRUSTED_CONTENT` taints everything it returns,
-including fields set by a trusted system, such as a ticket's customer ID. The measured rates are in the
-[README](../README.md#trifecta-trigger-rate).
+Without bindings, nearly every session that reads untrusted content and then calls an external sink is
+held or downgraded. [Bound arguments](policies.md#bound-arguments) let a send through when its
+destination comes from a field the application's own system set, such as a ticket's customer: in the
+demo, 65 of the ticket agent's 67 replies (see the [README](../README.md#trifecta-trigger-rate)).
 
-**Today:** use downgrades (`.downgrade("sendEmail", "draftEmail")`) so headless agents keep working, and
-`ruleMode("taint.trifecta", Mode.MONITOR)` to measure before enforcing. **Planned:** arguments bound to
-specific fields of earlier results.
+They do not help when the destination comes from the untrusted content itself, as an email
+assistant's reply to a message's sender does: those sends still become drafts or ask the user. Use
+downgrades (`.downgrade("sendEmail", "draftEmail")`) so headless agents keep working, and
+`ruleMode("taint.trifecta", Mode.MONITOR)` to measure before enforcing.
+
+## A binding settles where a call goes, not what it carries
+
+A bound reply goes to the ticket's customer, but its text can carry anything the session read, and the
+customer may be the attacker. Bind the session's reads to the same field, or put ownership rules on
+them, so it can only read what the destination may see. A value counts only if the session received it
+before reading untrusted content, so a second record the model is steered into reading is not trusted.
 
 ## Totals are per session
 

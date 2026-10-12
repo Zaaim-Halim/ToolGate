@@ -4,8 +4,11 @@ import io.toolgate.api.Decision;
 import io.toolgate.api.Mode;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.policy.AgentPolicy;
+import io.toolgate.api.policy.Binding;
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.ToolGatePolicy;
+import io.toolgate.rules.Bindings;
+import io.toolgate.rules.TaintConditions;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.ToolCatalog;
 import java.util.ArrayList;
@@ -42,16 +45,33 @@ public final class DecisionEngine {
     /** Evaluates one call against the session's state before it and the tool definitions given. */
     public Evaluation evaluate(ToolCall call, SessionState session, ToolCatalog definitions) {
         Optional<AgentPolicy> agent = policy.agent(call.agentId());
-        List<RuledVerdict> verdicts = agent.isPresent()
-                ? collectVerdicts(new EvaluationContext(call, policy, agent.get(), session, definitions))
-                : unknownAgent(call);
+        EvaluationContext context = agent.map(found -> new EvaluationContext(call, policy, found, session, definitions))
+                .orElse(null);
+        List<RuledVerdict> verdicts = context != null ? collectVerdicts(context) : unknownAgent(call);
 
-        Decision computed = combine(verdicts, call);
-        Decision effective = combine(verdicts.stream().filter(RuledVerdict::enforced).toList(), call);
+        Decision computed = boundIfLifted(combine(verdicts, call), context);
+        Decision effective = boundIfLifted(combine(verdicts.stream().filter(RuledVerdict::enforced).toList(), call), context);
         if (effective instanceof Decision.Allow && !(computed instanceof Decision.Allow)) {
             effective = new Decision.Allow(BuiltInRules.MODE_MONITOR);
         }
         return new Evaluation(effective, computed);
+    }
+
+    /**
+     * An allow that the trifecta or irreversible rule would have held without the call's bindings names the
+     * binding that let it through, so the audit says why a tainted call ran.
+     */
+    private static Decision boundIfLifted(Decision decision, EvaluationContext context) {
+        if (context == null || !(decision instanceof Decision.Allow allow) || !allow.ruleId().equals(BuiltInRules.ALLOW_LIST)
+                || !taintWouldHold(context)) {
+            return decision;
+        }
+        List<Binding> holding = Bindings.holding(context);
+        return holding.isEmpty() ? decision : new Decision.Allow(holding.getFirst().ruleId());
+    }
+
+    private static boolean taintWouldHold(EvaluationContext context) {
+        return TaintConditions.trifecta(context) || TaintConditions.irreversible(context);
     }
 
     private List<RuledVerdict> unknownAgent(ToolCall call) {

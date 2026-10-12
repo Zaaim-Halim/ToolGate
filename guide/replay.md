@@ -110,6 +110,8 @@ Not replayed: result rules, because tool outputs are not stored
 - `--codec-class` supplies the `ValueCodec` the store was given, to open an encrypted event log.
 - The password may come from `TOOLGATE_JDBC_PASSWORD` instead of `--jdbc-password`.
 - `--fail-on-change` exits with 1 if anything would change, for a CI check.
+- Bound arguments replay from the fingerprints history recorded, so a field the proposed policy trusts
+  but the recorded one did not has no values yet: calls bound to it are denied in the replay.
 
 `toolgate validate --policy-class ...` builds a policy and prints its hash, or why it is invalid.
 

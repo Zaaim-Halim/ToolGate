@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Keeps argument rules and the tool's own definition in step, for tools an agent has argument rules
@@ -34,7 +35,9 @@ final class DeclaredArgumentsEvaluator implements Evaluator {
     private final Map<String, Map<ToolId, Set<String>>> ruled = new HashMap<>();
 
     DeclaredArgumentsEvaluator(ToolGatePolicy policy) {
-        policy.agents().values().forEach(agent -> ruled.put(agent.id(), agent.argumentRules().keySet().stream()
+        // Bound arguments count as ruled: a bound tool may not take an argument its definition does not declare.
+        policy.agents().values().forEach(agent -> ruled.put(agent.id(), Stream.concat(
+                        agent.argumentRules().keySet().stream(), agent.bindings().keySet().stream())
                 .collect(Collectors.groupingBy(ToolArgument::tool,
                         Collectors.mapping(ToolArgument::name, Collectors.toUnmodifiableSet())))));
     }
@@ -46,7 +49,8 @@ final class DeclaredArgumentsEvaluator implements Evaluator {
      * @return {@code true} if any agent has an argument rule
      */
     static boolean needed(ToolGatePolicy policy) {
-        return policy.agents().values().stream().anyMatch(agent -> !agent.argumentRules().isEmpty());
+        return policy.agents().values().stream()
+                .anyMatch(agent -> !agent.argumentRules().isEmpty() || !agent.bindings().isEmpty());
     }
 
     @Override

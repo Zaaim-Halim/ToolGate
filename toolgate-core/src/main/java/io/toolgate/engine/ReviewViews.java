@@ -14,10 +14,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Turns a deferred call into what a review screen may show: each argument shown, masked or hidden by
@@ -67,11 +69,16 @@ final class ReviewViews {
 
     /**
      * The call's arguments as a reviewer may see them. Without a view, or for arguments the view does not
-     * name, an argument with a rule is shown, since it is why the call waits, and any other is masked.
+     * name, an argument with a rule or a binding is shown, since it is why the call waits or where it goes,
+     * and any other is masked.
      */
     static List<ReviewArgument> arguments(Optional<AgentPolicy> agent, ToolCall call) {
         ReviewView view = agent.map(found -> found.reviews().get(call.tool())).orElse(null);
-        Map<ToolArgument, ?> rules = agent.<Map<ToolArgument, ?>>map(AgentPolicy::argumentRules).orElse(Map.of());
+        Set<ToolArgument> ruled = agent.map(found -> {
+            var names = new HashSet<ToolArgument>(found.argumentRules().keySet());
+            names.addAll(found.bindings().keySet());
+            return (Set<ToolArgument>) names;
+        }).orElse(Set.of());
         var arguments = new ArrayList<ReviewArgument>();
         for (Map.Entry<String, ArgValue> argument : call.args().fields().entrySet()) {
             String name = argument.getKey();
@@ -81,7 +88,7 @@ final class ReviewViews {
             } else if (view != null && view.masks().containsKey(name)) {
                 arguments.add(masked(name, value, view.masks().get(name)));
             } else if ((view != null && view.show().contains(name))
-                    || rules.containsKey(new ToolArgument(call.tool(), name))) {
+                    || ruled.contains(new ToolArgument(call.tool(), name))) {
                 arguments.add(new ReviewArgument(name, value, ReviewArgument.Visibility.SHOWN, warnings(value)));
             } else {
                 arguments.add(masked(name, value, Mask.full()));

@@ -45,6 +45,7 @@ CREATE INDEX toolgate_pending_call_decision_access ON toolgate_pending_call_deci
 -- ToolGate session store. One row per session: the state every check reads. The event log keeps
 -- every session event, including the calls' REAL ARGUMENT VALUES, sealed by the store's ValueCodec
 -- (unencrypted unless one was given), purge idle sessions (JdbcSessionStore.purgeIdle) to bound how long it is kept.
+-- trusted holds fingerprints of values bound arguments may take, never the values, sealed by the same codec.
 CREATE TABLE toolgate_session (
     session_id  VARCHAR(512)  NOT NULL PRIMARY KEY,
     version     BIGINT        NOT NULL,
@@ -53,6 +54,7 @@ CREATE TABLE toolgate_session (
     taint       TEXT          NOT NULL,
     totals      TEXT          NOT NULL,
     unresolved  TEXT          NOT NULL,
+    trusted     TEXT          NOT NULL,
     updated_at  BIGINT        NOT NULL
 );
 CREATE INDEX toolgate_session_updated ON toolgate_session (updated_at);

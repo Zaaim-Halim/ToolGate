@@ -47,7 +47,8 @@ class DemoPolicy {
                 .tool("fetchSupplierPage", t -> t.labels(UNTRUSTED_CONTENT, EXTERNAL_SINK).effect(READ))
                 .tool("sendEmail", t -> t.labels(EXTERNAL_SINK).effect(IRREVERSIBLE))
                 .tool("draftEmail", t -> t.effect(REVERSIBLE))
-                .tool("readTicket", t -> t.labels(UNTRUSTED_CONTENT).effect(READ))
+                // The ticket system sets a ticket's customer; the customer writes its body.
+                .tool("readTicket", t -> t.labels(UNTRUSTED_CONTENT).effect(READ).trusted("customer"))
                 .tool("searchKnowledgeBase", t -> t.effect(READ))
                 .tool("lookupCustomer", t -> t.labels(PRIVATE_DATA).effect(READ))
                 .tool("tagTicket", t -> t.effect(REVERSIBLE))
@@ -81,10 +82,14 @@ class DemoPolicy {
                         .rule("sendEmail.to", emailDomains("mycompany.com"))
                         .budget(b -> b.toolCalls(200)))
                 .agent("ticket-triage", a -> a
-                        // Case E: one session per ticket, nobody watching; replies become drafts once tainted.
+                        // Case E: one session per ticket, nobody watching. A reply goes out on its own when it goes
+                        // to the ticket's customer; lookups are bound too, so a reply can only carry that customer's
+                        // account. Any other reply becomes a draft once the session is tainted.
                         .principal(Principal.service("ticket-triage", Tenant.of("acme")))
                         .allow("readTicket", "searchKnowledgeBase", "lookupCustomer", "tagTicket", "replyToCustomer",
                                 "draftReply")
+                        .bind("replyToCustomer.customerId", "readTicket", "customer")
+                        .bind("lookupCustomer.id", "readTicket", "customer")
                         .downgrade("replyToCustomer", "draftReply")
                         .budget(b -> b.toolCalls(40)))
                 .agent("support-chat", a -> {

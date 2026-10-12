@@ -16,7 +16,9 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * An immutable snapshot of one session, built by folding its events in order.
@@ -31,9 +33,18 @@ import java.util.TreeMap;
  * @param taint     the source labels the session holds, each with the call that first brought it in
  * @param totals    the sums that total limits watch, by rule ID: what allowed and released calls added
  * @param unresolved the approved calls whose outcome is unknown, by approval ID, with their tools
+ * @param trusted   fingerprints of trusted field values that bound arguments may take, by
+ *                  {@code Binding.sourceKey}: only from outputs received before the session first held untrusted
+ *                  content, and the output that brought it in; at most {@link #MAX_TRUSTED_VALUES} per field
+ * @param trustClosed whether the session has ever held untrusted content: from then on no output adds trusted
+ *                  values, even after the label is declassified, since the model has read that content
  */
 public record SessionState(String sessionId, long version, int toolCalls, int denials, Map<Label, TaintSource> taint,
-                           Map<String, BigDecimal> totals, Map<String, ToolId> unresolved) {
+                           Map<String, BigDecimal> totals, Map<String, ToolId> unresolved,
+                           Map<String, Set<String>> trusted, boolean trustClosed) {
+
+    /** Values kept per trusted field; later ones do not count, so a long list cannot grow a session without bound. */
+    public static final int MAX_TRUSTED_VALUES = 100;
 
     /** Rejects negative counters, which only a corrupt store could produce. */
     public SessionState {
@@ -44,6 +55,25 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         taint = taint.isEmpty() ? Map.of() : Collections.unmodifiableMap(new EnumMap<>(taint));
         totals = Totals.copy(totals);
         unresolved = Collections.unmodifiableMap(new TreeMap<>(unresolved));
+        var copied = new TreeMap<String, Set<String>>();
+        trusted.forEach((key, values) -> copied.put(key, Collections.unmodifiableSet(new TreeSet<>(values))));
+        trusted = Collections.unmodifiableMap(copied);
+    }
+
+    /**
+     * A state with no trusted values.
+     *
+     * @param sessionId  the session
+     * @param version    the number of events applied
+     * @param toolCalls  calls that used tool-call budget
+     * @param denials    calls that were denied
+     * @param taint      the source labels the session holds
+     * @param totals     the sums that total limits watch
+     * @param unresolved the approved calls whose outcome is unknown
+     */
+    public SessionState(String sessionId, long version, int toolCalls, int denials, Map<Label, TaintSource> taint,
+                        Map<String, BigDecimal> totals, Map<String, ToolId> unresolved) {
+        this(sessionId, version, toolCalls, denials, taint, totals, unresolved, Map.of(), taint.containsKey(Label.UNTRUSTED_CONTENT));
     }
 
     /**
@@ -68,7 +98,7 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
      * @return the state at version zero
      */
     public static SessionState empty(String sessionId) {
-        return new SessionState(sessionId, 0, 0, 0, Map.of(), Map.of(), Map.of());
+        return new SessionState(sessionId, 0, 0, 0, Map.of(), Map.of(), Map.of(), Map.of(), false);
     }
 
     /**
@@ -95,7 +125,7 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
             // A withheld output counts as a denial, so probing through search results ends the run too.
             case ResultRecorded recorded -> recorded.withheld()
                     ? next(toolCalls, denials + 1, taint, totals)
-                    : next(toolCalls, denials, withLabels(recorded), totals);
+                    : withTrusted(recorded).next(toolCalls, denials, withLabels(recorded), totals);
             case Declassified declassified -> next(toolCalls, denials, without(declassified.label()), totals);
             case CallUnresolved lost -> withUnresolved(lost.approvalId(), lost.tool());
             case CallResolved known -> withUnresolved(known.approvalId(), null);
@@ -132,9 +162,44 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         return unresolved.entrySet().stream().filter(entry -> entry.getValue().equals(tool)).map(Map.Entry::getKey).findFirst();
     }
 
+    /**
+     * Whether a bound argument may take a value.
+     *
+     * @param sourceKey   the trusted field, as {@code Binding.sourceKey} names it
+     * @param fingerprint the value's fingerprint
+     * @return {@code true} if the session received that value in that field while it could trust it
+     */
+    public boolean trusts(String sourceKey, String fingerprint) {
+        return trusted.getOrDefault(sourceKey, Set.of()).contains(fingerprint);
+    }
+
     private SessionState next(int newToolCalls, int newDenials, Map<Label, TaintSource> newTaint,
                               Map<String, BigDecimal> newTotals) {
-        return new SessionState(sessionId, version + 1, newToolCalls, newDenials, newTaint, newTotals, unresolved);
+        return new SessionState(sessionId, version + 1, newToolCalls, newDenials, newTaint, newTotals, unresolved, trusted,
+                trustClosed || newTaint.containsKey(Label.UNTRUSTED_CONTENT));
+    }
+
+    /**
+     * Keeps a result's trusted values if the session did not yet hold untrusted content: after that, the
+     * model may have been steered into reading a record whose trusted fields an outsider chose.
+     */
+    private SessionState withTrusted(ResultRecorded recorded) {
+        if (recorded.trusted().isEmpty() || trustClosed || holds(Label.UNTRUSTED_CONTENT)) {
+            return this;
+        }
+        var updated = new TreeMap<String, Set<String>>(trusted);
+        recorded.trusted().forEach((key, values) -> {
+            var kept = new TreeSet<>(updated.getOrDefault(key, Set.of()));
+            // One output arrives capped in its own order; across outputs the earlier ones are kept, then by fingerprint.
+            for (String value : new TreeSet<>(values)) {
+                if (kept.size() >= MAX_TRUSTED_VALUES) {
+                    break;
+                }
+                kept.add(value);
+            }
+            updated.put(key, kept);
+        });
+        return new SessionState(sessionId, version, toolCalls, denials, taint, totals, unresolved, updated, trustClosed);
     }
 
     /** One more unresolved call, or one fewer when {@code tool} is null. */
@@ -145,7 +210,7 @@ public record SessionState(String sessionId, long version, int toolCalls, int de
         } else {
             updated.put(approvalId, tool);
         }
-        return new SessionState(sessionId, version + 1, toolCalls, denials, taint, totals, updated);
+        return new SessionState(sessionId, version + 1, toolCalls, denials, taint, totals, updated, trusted, trustClosed);
     }
 
     /** The first source of each label is kept: it is where the session became tainted. */

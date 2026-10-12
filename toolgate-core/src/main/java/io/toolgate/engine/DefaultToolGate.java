@@ -29,6 +29,7 @@ import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.audit.ArgumentSummary;
 import io.toolgate.audit.AuditChannel;
 import io.toolgate.queue.InMemoryApprovalQueue;
+import io.toolgate.rules.BoundValues;
 import io.toolgate.rules.BuiltInEvaluators;
 import io.toolgate.rules.ResultChecker;
 import io.toolgate.rules.Spending;
@@ -49,9 +50,9 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -210,9 +211,13 @@ public final class DefaultToolGate implements ToolGate {
             labels.addAll(policy.tool(callThatRan.tool()).labels());
             labels.retainAll(SOURCE_LABELS);
         }
+        // Only the fingerprints of trusted fields' values, and only of an output the model read.
+        Map<String, Set<String>> trusted = !withheld && result instanceof ToolResult.Succeeded(ArgValue output)
+                ? BoundValues.of(callThatRan.tool(), policy.tool(callThatRan.tool()).trusted(), output)
+                : Map.of();
         // Taint only grows and denials only count up, so the event stays valid whatever was appended in between.
         sessions.append(new ResultRecorded(callThatRan.sessionId(), callThatRan.callId(), callThatRan.tool(),
-                result instanceof ToolResult.Succeeded, withheld, labels, callThatRan.at()));
+                result instanceof ToolResult.Succeeded, withheld, labels, callThatRan.at(), trusted));
         if (computed instanceof ResultDecision.Withhold(String ruleId, String reason)) {
             Instant checkedAt = clock.instant();
             audit.submit(() -> new AuditEvent.ResultWithheld(checkedAt, callThatRan.callId(), callThatRan.sessionId(),

@@ -32,8 +32,7 @@ final class TrifectaEvaluator implements Evaluator {
     public Verdict evaluate(EvaluationContext context) {
         SessionState session = context.session();
         ToolId tool = context.call().tool();
-        if (!session.holds(Label.PRIVATE_DATA) || !session.holds(Label.UNTRUSTED_CONTENT)
-                || !context.policy().tool(tool).has(Label.EXTERNAL_SINK)) {
+        if (!TaintConditions.trifecta(context) || !Bindings.holding(context).isEmpty()) {
             return Verdict.PASS;
         }
         return TaintVerdicts.object(context.agent(), tool, context.agent().onTrifecta(),

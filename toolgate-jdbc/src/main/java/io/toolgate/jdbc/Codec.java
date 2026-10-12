@@ -23,8 +23,9 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * Turns session events, decisions, principals and taint into JSON and back, through ArgValueJson.
@@ -58,7 +59,8 @@ final class Codec {
                     "succeeded", ArgValue.bool(recorded.succeeded()),
                     "withheld", ArgValue.bool(recorded.withheld()),
                     "labels", ArgValue.list(recorded.labels().stream().sorted().map(label -> text(label.name())).toList()),
-                    "at", number(recorded.at()));
+                    "at", number(recorded.at()),
+                    "trusted", fingerprints(recorded.trusted()));
             case SessionEvent.CallReleased released -> object(
                     "type", text("CallReleased"),
                     "sessionId", text(released.sessionId()),
@@ -97,7 +99,8 @@ final class Codec {
                     string(event, "callId"), amounts(field(event, "spent")), instant(event, "at"));
             case "ResultRecorded" -> new SessionEvent.ResultRecorded(string(event, "sessionId"), string(event, "callId"),
                     ToolId.parse(string(event, "tool")), bool(event, "succeeded"), bool(event, "withheld"),
-                    labels(field(event, "labels")), instant(event, "at"));
+                    labels(field(event, "labels")), instant(event, "at"),
+                    event.field("trusted").map(Codec::fingerprints).orElse(Map.of()));
             case "Declassified" -> new SessionEvent.Declassified(string(event, "sessionId"),
                     Label.valueOf(string(event, "label")), string(event, "justification"), instant(event, "at"));
             case "CallUnresolved" -> new SessionEvent.CallUnresolved(string(event, "sessionId"),
@@ -120,6 +123,45 @@ final class Codec {
         asObject(ArgValueJson.read(json)).fields().forEach((label, source) -> taint.put(Label.valueOf(label),
                 new TaintSource(string(asObject(source), "callId"), ToolId.parse(string(asObject(source), "tool")))));
         return taint;
+    }
+
+    /**
+     * A session's trusted values: fingerprints by field, as sorted lists, never the values themselves, and
+     * whether the session has closed to new ones.
+     */
+    static String trusted(Map<String, Set<String>> trusted, boolean closed) {
+        return ArgValueJson.write(object("closed", ArgValue.bool(closed), "fields", fingerprints(trusted)));
+    }
+
+    /** Reads {@link #trusted(Map, boolean)}: the fingerprints, and whether trust is closed. */
+    static Map.Entry<Map<String, Set<String>>, Boolean> trusted(String json) {
+        ObjectValue state = asObject(ArgValueJson.read(json));
+        return Map.entry(fingerprints(field(state, "fields")), bool(state, "closed"));
+    }
+
+    private static ArgValue fingerprints(Map<String, Set<String>> trusted) {
+        var fields = new LinkedHashMap<String, ArgValue>();
+        new TreeMap<>(trusted).forEach((key, values) ->
+                fields.put(key, ArgValue.list(values.stream().sorted().map(ArgValue::text).toList())));
+        return ArgValue.object(fields);
+    }
+
+    private static Map<String, Set<String>> fingerprints(ArgValue encoded) {
+        var trusted = new TreeMap<String, Set<String>>();
+        asObject(encoded).fields().forEach((key, values) -> {
+            if (!(values instanceof ListValue list)) {
+                throw new IllegalArgumentException("trusted values of " + key + " are not a list");
+            }
+            var fingerprints = new TreeSet<String>();
+            list.elements().forEach(value -> {
+                if (!(value instanceof TextValue(String fingerprint))) {
+                    throw new IllegalArgumentException("a trusted value of " + key + " is not text");
+                }
+                fingerprints.add(fingerprint);
+            });
+            trusted.put(key, fingerprints);
+        });
+        return trusted;
     }
 
     static String totals(Map<String, BigDecimal> totals) {

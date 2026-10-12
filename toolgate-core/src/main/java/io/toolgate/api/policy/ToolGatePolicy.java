@@ -415,7 +415,21 @@ public final class ToolGatePolicy {
          */
         public ToolGatePolicy build() {
             agents.values().forEach(this::requireKnownMcpServers);
+            agents.values().forEach(this::requireTrustedSources);
             return new ToolGatePolicy(this);
+        }
+
+        /** A binding may only name a field its source tool declares trusted. */
+        private void requireTrustedSources(AgentPolicy agent) {
+            agent.bindings().values().forEach(binding -> {
+                ToolPolicy source = tools.get(binding.source());
+                if (source == null || !source.trusted().contains(binding.field())) {
+                    throw new InvalidPolicyException("agent '" + agent.id() + "': " + binding.argument()
+                            + " is bound to " + binding.source() + " field '" + binding.field()
+                            + "', which the tool does not declare trusted; add .trusted(\"" + binding.field()
+                            + "\") to tool " + binding.source() + " if its own system sets that field");
+                }
+            });
         }
 
         private void requireKnownMcpServers(AgentPolicy agent) {
@@ -435,6 +449,7 @@ public final class ToolGatePolicy {
         private Set<Label> labels;
         private Effect effect = Effect.IRREVERSIBLE;
         private String pin;
+        private final Set<String> trusted = new LinkedHashSet<>();
 
         private ToolBuilder(ToolId tool) {
             this.tool = tool;
@@ -484,11 +499,33 @@ public final class ToolGatePolicy {
             return this;
         }
 
+        /**
+         * Fields of the tool's output that the application's own system sets, rather than text someone
+         * else wrote, such as the {@code customer} of a ticket, which the ticket system fills in, as
+         * opposed to its body, which the customer writes. An agent's argument may be bound to such a
+         * field with {@link AgentBuilder#bind}. Declare a field only if nobody outside can choose its
+         * value: a trusted field that an outsider writes lets them choose where a bound call goes.
+         *
+         * @param paths paths into the output, such as {@code customer} or {@code items[*].id}
+         * @return this tool builder
+         */
+        public ToolBuilder trusted(String... paths) {
+            for (String path : paths) {
+                try {
+                    OutputPath.parse(path);
+                } catch (IllegalArgumentException invalid) {
+                    throw new InvalidPolicyException("tool " + tool + ": trusted field " + invalid.getMessage());
+                }
+                trusted.add(path);
+            }
+            return this;
+        }
+
         private ToolPolicy build() {
             Set<Label> resolved = labels != null
                     ? labels
                     : (tool.isLocal() ? ToolPolicy.LOCAL_DEFAULT : ToolPolicy.MCP_DEFAULT).labels();
-            return new ToolPolicy(resolved, effect);
+            return new ToolPolicy(resolved, effect, trusted);
         }
     }
 
@@ -521,6 +558,7 @@ public final class ToolGatePolicy {
         private final List<TaintRule> taintRules = new ArrayList<>();
         private final Map<ToolId, Set<String>> requiredRoles = new LinkedHashMap<>();
         private final List<ResultRule> resultRules = new ArrayList<>();
+        private final Map<ToolArgument, Binding> bindings = new LinkedHashMap<>();
         private Budget budget = Budget.UNLIMITED;
         private boolean interactive;
         private TaintAction onTrifecta;
@@ -673,6 +711,44 @@ public final class ToolGatePolicy {
             if (requiredRoles.putIfAbsent(target, Set.copyOf(Arrays.asList(roles))) != null) {
                 throw new InvalidPolicyException("agent '" + id + "': " + target + " has requireRole twice");
             }
+            return this;
+        }
+
+        /**
+         * Binds an argument to a trusted field of an earlier result: the argument must equal a value that
+         * field held, as in {@code bind("replyToCustomer.customerId", "readTicket", "customer")}. A call
+         * whose bound arguments all match goes where the application's own data says, so the trifecta
+         * and irreversible rules do not hold it even after the session read untrusted content; the
+         * agent's own {@code whenTainted} rules still apply. A call whose bound argument matches no such
+         * value is denied, tainted or not.
+         *
+         * <p>Only values from outputs the session received before it held untrusted content count, and
+         * the value of the output that brought it in: once the model has read text an outsider wrote, it
+         * may be steered into reading another record whose field the outsider chose. A binding settles
+         * where a call goes, not what it carries: pair it with ownership rules on what the session reads.
+         * And since it lets the whole call through, bind every argument of the tool that chooses a
+         * destination, such as a {@code cc} beside the {@code customerId}.
+         *
+         * @param target      the argument, as in {@link #rule}: {@code replyToCustomer.customerId}
+         * @param sourceTool  the tool whose output holds the field, such as {@code readTicket}
+         * @param sourceField the field, declared trusted on that tool with {@link ToolBuilder#trusted}
+         * @return this agent builder
+         */
+        public AgentBuilder bind(String target, String sourceTool, String sourceField) {
+            requireNoPendingRule();
+            ToolArgument argument;
+            ToolId source;
+            try {
+                argument = ToolArgument.parse(target);
+                source = ToolId.parse(sourceTool);
+                OutputPath.parse(sourceField);
+            } catch (IllegalArgumentException malformed) {
+                throw new InvalidPolicyException("agent '" + id + "': " + malformed.getMessage());
+            }
+            if (bindings.containsKey(argument)) {
+                throw new InvalidPolicyException("agent '" + id + "': " + argument + " is bound twice");
+            }
+            bindings.put(argument, new Binding(argument, source, sourceField));
             return this;
         }
 
@@ -844,12 +920,16 @@ public final class ToolGatePolicy {
                             + invalid.getMessage());
                 }
             });
+            bindings.values().forEach(binding -> {
+                requireAllowed(binding.argument().tool(), "bound tool");
+                requireAllowed(binding.source(), "binding source");
+            });
             TaintAction trifecta = onTrifecta != null ? onTrifecta : (interactive ? TaintAction.DEFER : TaintAction.BLOCK);
             Duration expiry = approvalExpiry != null
                     ? approvalExpiry
                     : (interactive ? INTERACTIVE_APPROVAL_EXPIRY : HEADLESS_APPROVAL_EXPIRY);
             return new AgentPolicy(id, allowedTools, budget, argumentRules, interactive, downgrades, trifecta, taintRules,
-                    requiredRoles, resultRules, expiry, reviewers, service, reviews);
+                    requiredRoles, resultRules, expiry, reviewers, service, reviews, bindings);
         }
     }
 

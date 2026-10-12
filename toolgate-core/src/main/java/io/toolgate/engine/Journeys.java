@@ -44,8 +44,11 @@ final class Journeys {
             switch (event) {
                 case SessionEvent.CallDecided decided -> {
                     boolean subject = decided.callId().equals(subjectId);
+                    // A call a binding let through went out despite the taint, so its flows are shown as well.
                     boolean taintRule = decided.applied().ruleId().startsWith("taint.")
-                            || decided.computed().ruleId().startsWith("taint.");
+                            || decided.computed().ruleId().startsWith("taint.")
+                            || decided.applied().ruleId().endsWith(".bound")
+                            || decided.computed().ruleId().endsWith(".bound");
                     if (subject || taintRule) {
                         for (Map.Entry<Label, TaintSource> source : state.taint().entrySet()) {
                             flows.add(new Journey.Flow(source.getValue().callId(), decided.callId(), source.getKey()));

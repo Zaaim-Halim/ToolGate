@@ -1,6 +1,5 @@
 package io.toolgate.rules;
 
-import io.toolgate.api.Effect;
 import io.toolgate.api.Label;
 import io.toolgate.api.ToolId;
 import io.toolgate.api.policy.BuiltInRules;
@@ -31,8 +30,7 @@ final class IrreversibleEvaluator implements Evaluator {
     @Override
     public Verdict evaluate(EvaluationContext context) {
         ToolId tool = context.call().tool();
-        if (!context.session().holds(Label.UNTRUSTED_CONTENT)
-                || context.policy().tool(tool).effect() != Effect.IRREVERSIBLE) {
+        if (!TaintConditions.irreversible(context) || !Bindings.holding(context).isEmpty()) {
             return Verdict.PASS;
         }
         return TaintVerdicts.object(context.agent(), tool, TaintAction.DEFER,

@@ -51,7 +51,8 @@ line in the audit log:
 
 - **Decides every tool call** against the policy: allow-lists, argument rules (URLs, paths, email
   recipients, SQL, numbers and totals, record ownership, roles), MCP server allow-lists and pinned tool
-  definitions, budgets, and taint rules that hold a send after the agent read untrusted content.
+  definitions, budgets, and taint rules that hold a send after the agent read untrusted content, unless
+  its destination is bound to a field the application's own system set.
 - **Applies the decision**: allow, deny, downgrade to a safe tool (a draft instead of a send), defer for
   a person to approve, or end the run. **Monitor mode** records what it would do without blocking
   anything, so you can add it to a running application safely.
@@ -155,20 +156,23 @@ request, and fuzzes every target nightly.
 
 ## Trifecta trigger rate
 
-How often taint rules hold the demo agents' calls with the default policy, measured October 11, 2026.
+How often taint rules hold the demo agents' calls with the default policy, measured October 12, 2026.
 Fourteen session shapes run end to end through Spring AI on a scripted model, weighted by an assumed
 mix of 100 sessions per agent. Each shape's outcome is a property of the policy; the rates depend on the
 assumed mix. A trigger is a call `taint.trifecta` denies or defers; downgrades and `taint.irreversible`
 are counted apart.
 
-| Agent | Sending sessions held or downgraded | Trifecta held | Trifecta downgraded | `taint.irreversible` held | `taint.irreversible` downgraded | Any taint rule |
-| --- | --- | --- | --- | --- | --- | --- |
-| `invoice-processor` (headless) | 40 of 100 | 0% | 40% | 0% | 0% | 40% |
-| `ticket-triage` (headless) | 67 of 67 | 0% | 32% | 0% | 35% | 67% |
-| `inbox-assistant` (interactive) | 47 of 62 | 22% | 0% | 25% | 0% | 47% |
+| Agent | Sending sessions held or downgraded | Trifecta held | Trifecta downgraded | `taint.irreversible` held | `taint.irreversible` downgraded | Any taint rule | Sent through a binding |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `invoice-processor` (headless) | 40 of 100 | 0% | 40% | 0% | 0% | 40% | 0 of 100 |
+| `ticket-triage` (headless) | 0 of 67 | 0% | 0% | 0% | 0% | 0% | 65 of 67 |
+| `inbox-assistant` (interactive) | 47 of 62 | 22% | 0% | 25% | 0% | 47% | 0 of 62 |
 
-Every session that reads untrusted content and then sends is held or downgraded. The headless agents
-keep working because their sends become drafts; the interactive assistant asks its user. This is a
+The ticket agent binds its replies and lookups to the ticket's `customer`
+([bound arguments](guide/policies.md#bound-arguments)): 65 of its 67 replies go out on their own, and
+the 2 sent by an injected ticket to another customer are denied. Before bindings, all 67 became drafts.
+The invoice job's recipient is fixed by policy, and the inbox assistant's comes from the message itself,
+which is untrusted, so bindings do not apply to them: their sends still become drafts or ask the user, a
 [known limitation](guide/limitations.md#taint-holds-most-sends-that-follow-untrusted-content). To
 regenerate the report per session shape:
 

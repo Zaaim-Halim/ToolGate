@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 import javax.sql.DataSource;
 
@@ -30,7 +31,8 @@ import javax.sql.DataSource;
  * <p>The event log keeps every session event, including the calls' real argument values. Give the
  * store a {@link ValueCodec} to seal each event, bound to its session and version; without one,
  * events are stored in clear, and the store says so once in the log. Snapshots hold counters,
- * labels with call IDs, and the sums that total limits watch, and stay in clear. Bound how long events are kept with
+ * labels with call IDs, and the sums that total limits watch, and stay in clear; and the fingerprints of
+ * values bound arguments may take, never the values, sealed like events. Bound how long events are kept with
  * {@link #purgeIdle}. Every check costs a database round trip, which is the price of
  * consistent decisions across instances; the in-memory store remains the fast choice for one
  * instance.
@@ -43,6 +45,7 @@ public final class JdbcSessionStore implements SessionStore {
     private final DataSource dataSource;
     private final ValueCodec codec;
     private final Clock clock;
+    private final AtomicBoolean schemaVerified = new AtomicBoolean();
 
     /**
      * A store in the tables the shipped DDL creates, keeping events in clear, timed by the system clock.
@@ -76,8 +79,36 @@ public final class JdbcSessionStore implements SessionStore {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * Checks that the session tables have every column this version uses, so a missed upgrade fails at
+     * startup rather than as the end of every agent run. Every operation also checks, once.
+     *
+     * @throws JdbcStoreException if a table or column is missing
+     */
+    public void verifySchema() {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement sessions = connection.prepareStatement("SELECT session_id, version, tool_calls, denials,"
+                     + " taint, totals, unresolved, trusted, updated_at FROM toolgate_session WHERE 1 = 0");
+             PreparedStatement events = connection.prepareStatement("SELECT session_id, version, event_type, event,"
+                     + " recorded_at FROM toolgate_session_event WHERE 1 = 0")) {
+            sessions.executeQuery().close();
+            events.executeQuery().close();
+            schemaVerified.set(true);
+        } catch (SQLException failure) {
+            throw new JdbcStoreException("the session tables toolgate_session and toolgate_session_event are missing or"
+                    + " out of date; create them with JdbcApprovalQueue.Dialect.ddl()", failure);
+        }
+    }
+
+    private void requireSchema() {
+        if (!schemaVerified.get()) {
+            verifySchema();
+        }
+    }
+
     @Override
     public SessionState state(String sessionId) {
+        requireSchema();
         try (Connection connection = dataSource.getConnection()) {
             return read(connection, sessionId).orElseGet(() -> SessionState.empty(sessionId));
         } catch (SQLException failure) {
@@ -87,6 +118,7 @@ public final class JdbcSessionStore implements SessionStore {
 
     @Override
     public boolean append(SessionEvent event, long expectedVersion) {
+        requireSchema();
         try (Connection connection = dataSource.getConnection()) {
             boolean autoCommit = connection.getAutoCommit();
             connection.setAutoCommit(false);
@@ -117,6 +149,7 @@ public final class JdbcSessionStore implements SessionStore {
 
     @Override
     public void append(SessionEvent event) {
+        requireSchema();
         for (int attempt = 0; attempt < MAX_UNCONDITIONAL_ATTEMPTS; attempt++) {
             if (append(event, state(event.sessionId()).version())) {
                 return;
@@ -134,6 +167,7 @@ public final class JdbcSessionStore implements SessionStore {
      */
     @Override
     public List<SessionEvent> events(String sessionId) {
+        requireSchema();
         String sql = "SELECT version, event FROM toolgate_session_event WHERE session_id = ? ORDER BY version";
         try (Connection connection = dataSource.getConnection();
              PreparedStatement select = connection.prepareStatement(sql)) {
@@ -162,6 +196,7 @@ public final class JdbcSessionStore implements SessionStore {
      * @return the events, session by session; empty if no call was decided in the window
      */
     public Stream<SessionEvent> events(Instant from, Instant to) {
+        requireSchema();
         if (!from.isBefore(to)) {
             throw new IllegalArgumentException("from must be before to, was " + from + " and " + to);
         }
@@ -229,7 +264,8 @@ public final class JdbcSessionStore implements SessionStore {
         long now = Codec.micros(clock.instant());
         if (stored.isEmpty()) {
             try (PreparedStatement insert = connection.prepareStatement("INSERT INTO toolgate_session"
-                    + " (session_id, version, tool_calls, denials, taint, totals, unresolved, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                    + " (session_id, version, tool_calls, denials, taint, totals, unresolved, trusted, updated_at)"
+                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
                 insert.setString(1, sessionId);
                 insert.setLong(2, next.version());
                 insert.setInt(3, next.toolCalls());
@@ -237,22 +273,24 @@ public final class JdbcSessionStore implements SessionStore {
                 insert.setString(5, Codec.taint(next.taint()));
                 insert.setString(6, Codec.totals(next.totals()));
                 insert.setString(7, Codec.unresolved(next.unresolved()));
-                insert.setLong(8, now);
+                insert.setString(8, codec.seal(Codec.trusted(next.trusted(), next.trustClosed()), trustedContext(sessionId)));
+                insert.setLong(9, now);
                 insert.executeUpdate();
             }
         } else {
             try (PreparedStatement update = connection.prepareStatement("UPDATE toolgate_session"
-                    + " SET version = ?, tool_calls = ?, denials = ?, taint = ?, totals = ?, unresolved = ?, updated_at = ?"
-                    + " WHERE session_id = ? AND version = ?")) {
+                    + " SET version = ?, tool_calls = ?, denials = ?, taint = ?, totals = ?, unresolved = ?, trusted = ?,"
+                    + " updated_at = ? WHERE session_id = ? AND version = ?")) {
                 update.setLong(1, next.version());
                 update.setInt(2, next.toolCalls());
                 update.setInt(3, next.denials());
                 update.setString(4, Codec.taint(next.taint()));
                 update.setString(5, Codec.totals(next.totals()));
                 update.setString(6, Codec.unresolved(next.unresolved()));
-                update.setLong(7, now);
-                update.setString(8, sessionId);
-                update.setLong(9, expectedVersion);
+                update.setString(7, codec.seal(Codec.trusted(next.trusted(), next.trustClosed()), trustedContext(sessionId)));
+                update.setLong(8, now);
+                update.setString(9, sessionId);
+                update.setLong(10, expectedVersion);
                 if (update.executeUpdate() != 1) {
                     return false;
                 }
@@ -275,23 +313,29 @@ public final class JdbcSessionStore implements SessionStore {
         return "toolgate_session_event:" + sessionId + ":" + version;
     }
 
+    /** Binds a session's sealed trusted values to it: copied to another session, they fail to open. */
+    private static String trustedContext(String sessionId) {
+        return "toolgate_session.trusted:" + sessionId;
+    }
+
     /** SQL state class 40: serialization failure or deadlock, the database's way to end a race. */
     private static boolean isTransactionRollback(SQLException failure) {
         return failure.getSQLState() != null && failure.getSQLState().startsWith("40");
     }
 
-    private static Optional<SessionState> read(Connection connection, String sessionId) throws SQLException {
-        try (PreparedStatement select = connection.prepareStatement(
-                "SELECT version, tool_calls, denials, taint, totals, unresolved FROM toolgate_session WHERE session_id = ?")) {
+    private Optional<SessionState> read(Connection connection, String sessionId) throws SQLException {
+        try (PreparedStatement select = connection.prepareStatement("SELECT version, tool_calls, denials, taint, totals,"
+                + " unresolved, trusted FROM toolgate_session WHERE session_id = ?")) {
             select.setString(1, sessionId);
             try (ResultSet row = select.executeQuery()) {
                 if (!row.next()) {
                     return Optional.empty();
                 }
                 try {
+                    var trusted = Codec.trusted(codec.open(row.getString("trusted"), trustedContext(sessionId)));
                     return Optional.of(new SessionState(sessionId, row.getLong("version"), row.getInt("tool_calls"),
                             row.getInt("denials"), Codec.taint(row.getString("taint")), Codec.totals(row.getString("totals")),
-                            Codec.unresolved(row.getString("unresolved"))));
+                            Codec.unresolved(row.getString("unresolved")), trusted.getKey(), trusted.getValue()));
                 } catch (IllegalArgumentException corrupt) {
                     throw new JdbcStoreException("unreadable state of session " + sessionId, corrupt);
                 }

@@ -91,6 +91,53 @@ Effects say what a call changes: `READ`, `REVERSIBLE`, or `IRREVERSIBLE` (the de
 - **Declassifying.** When a person has checked what a session holds, `gate.declassify(sessionId, label,
   justification)` removes a label from it. It is audited with the justification.
 
+## Bound arguments
+
+Taint holds a send once the session has read untrusted content, even when the send goes exactly where
+it should. A ticket agent reads a ticket, whose body the customer wrote, then replies to the ticket's
+customer: the reply is held, although the ticket system, not the customer, chose who that is. A bound
+argument says where a value must come from:
+
+```java
+.tool("readTicket", t -> t.labels(UNTRUSTED_CONTENT).effect(READ)
+        .trusted("customer"))                       // the ticket system sets it; the customer writes the body
+.agent("ticket-triage", a -> a
+        .allow("readTicket", "lookupCustomer", "replyToCustomer")
+        .bind("replyToCustomer.customerId", "readTicket", "customer")
+        .bind("lookupCustomer.id", "readTicket", "customer"))
+```
+
+- **A bound argument must equal a trusted value** the session received: a value of that field in that
+  tool's output. Otherwise the call is denied, tainted or not, by the rule `replyToCustomer.customerId.bound`.
+  A list must hold only trusted values. Values match exactly: case counts, and a text never equals a
+  number.
+- **A call whose bound arguments all match is not held by the trifecta or irreversible rules.** The
+  audit names the binding as the rule that allowed it. The agent's own `whenTainted` rules still apply.
+- **Only values received before the session first read untrusted content count**, and those of the
+  output that brought it in; declassifying the label later does not change that. Otherwise an injected ticket could tell the model to read a second ticket, which the
+  attacker opened, and have its customer trusted.
+- **Declare a field trusted only if nobody outside chooses its value.** `trusted("body")` would let the
+  author of the text choose where a bound call goes. For a list, such as `items[*].customer` of a search,
+  every record the tool can return must be one the agent may act on: an attacker's record in the list
+  becomes a trusted value too.
+- **Bind every argument that chooses a destination.** A binding lets the whole call through, so a tool
+  with a bound `customerId` and an unbound `cc`, `bcc` or callback URL sends the latter wherever the
+  model says. Bind them all, or leave such a tool unbound. A bound argument the call leaves out, such
+  as an optional `cc`, is fine: it sends nowhere.
+- **One session per record.** Only the first untrusted read's values count, so an agent that handles
+  several tickets in one session can only reply to the first ticket's customer; the others are denied.
+  Give each ticket its own session, as a job processing a queue usually does.
+
+**A binding settles where a call goes, not what it carries.** The reply's text can still carry anything
+the session read, to the ticket's customer, who may be the attacker. Bind the reads too, as above with
+`lookupCustomer.id`, or put ownership rules on them, so the session can only read what the destination
+may see.
+
+Sessions keep only SHA-256 fingerprints of trusted values, at most the first 100 of each field per
+output. `JdbcSessionStore` seals them with its `ValueCodec`, like the event log. Without one, a value
+with few possibilities, such as a short customer ID, can be guessed from its fingerprint; the event log
+then holds the calls' arguments in clear anyway, so give the store a codec.
+
 ## Budgets and denials
 
 `.budget(b -> b.toolCalls(40))` ends the run past 40 tool calls in a session. After five denials in a

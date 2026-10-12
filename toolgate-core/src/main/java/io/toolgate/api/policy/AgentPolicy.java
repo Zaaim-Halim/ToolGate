@@ -34,13 +34,14 @@ import java.util.stream.Collectors;
  *                      the request; see {@link #servicePrincipal()}
  * @param reviews       what a reviewer sees of each tool's deferred calls, by tool; a tool without one gets
  *                      the default: arguments with rules shown, all others masked
+ * @param bindings      arguments bound to trusted fields of earlier results, by argument
  */
 public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
                           Map<ToolArgument, List<ArgumentRule>> argumentRules,
                           boolean interactive, Map<ToolId, ToolId> downgrades, TaintAction onTrifecta,
                           List<TaintRule> taintRules, Map<ToolId, Set<String>> requiredRoles,
                           List<ResultRule> resultRules, Duration approvalExpiry, Set<String> reviewers,
-                          Principal service, Map<ToolId, ReviewView> reviews) {
+                          Principal service, Map<ToolId, ReviewView> reviews, Map<ToolArgument, Binding> bindings) {
 
     /** Validates and copies every component. */
     public AgentPolicy {
@@ -61,6 +62,7 @@ public record AgentPolicy(String id, Set<ToolId> allowedTools, Budget budget,
         }
         reviewers = Set.copyOf(reviewers);
         reviews = Map.copyOf(reviews);
+        bindings = Collections.unmodifiableMap(new LinkedHashMap<>(bindings));
         if (service != null && service.kind() != Principal.Kind.SERVICE) {
             throw new IllegalArgumentException("agent '" + id + "' can only act as a service identity, not " + service);
         }

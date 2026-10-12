@@ -6,19 +6,20 @@ import io.toolgate.api.Mode;
 import io.toolgate.api.ReplayReport;
 import io.toolgate.api.ToolCall;
 import io.toolgate.api.ToolGate;
+import io.toolgate.api.policy.Binding;
 import io.toolgate.api.policy.BuiltInRules;
 import io.toolgate.api.policy.ToolGatePolicy;
 import io.toolgate.rules.Spending;
 import io.toolgate.spi.ApprovalQueue;
 import io.toolgate.spi.HostResolver;
 import io.toolgate.spi.OwnershipResolver;
-import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionEvent.CallDecided;
 import io.toolgate.spi.SessionEvent.CallReleased;
 import io.toolgate.spi.SessionEvent.CallResolved;
 import io.toolgate.spi.SessionEvent.CallUnresolved;
 import io.toolgate.spi.SessionEvent.Declassified;
 import io.toolgate.spi.SessionEvent.ResultRecorded;
+import io.toolgate.spi.SessionEvent;
 import io.toolgate.spi.SessionState;
 import io.toolgate.spi.SessionStore;
 import io.toolgate.spi.ToolCatalog;
@@ -126,7 +127,7 @@ public final class Replayer {
                 switch (event) {
                     case CallDecided decided -> decide(decided);
                     case CallReleased released -> release(released);
-                    case ResultRecorded result -> result(result.callId(), result.succeeded(), result.at());
+                    case ResultRecorded result -> result(result, result.at());
                     case Declassified declassified -> store.append(declassified);
                     // What happened to approved runs is history the proposed policy cannot change.
                     case CallUnresolved lost -> store.append(lost);
@@ -165,9 +166,10 @@ public final class Replayer {
         private void runs(ToolCall ran) {
             running.put(ran.callId(), ran);
             if (!recordedResults.contains(ran.callId())) {
-                // It never ran in history, so nothing was recorded: take it to succeed.
+                // It never ran in history, so nothing was recorded: take it to succeed, with no trusted values.
                 counts[1]++;
-                result(ran.callId(), true, ran.at());
+                result(new ResultRecorded(ran.sessionId(), ran.callId(), ran.tool(), true, false, Set.of(), ran.at()),
+                        ran.at());
             }
         }
 
@@ -182,18 +184,31 @@ public final class Replayer {
             runs(call);
         }
 
-        private void result(String callId, boolean succeeded, Instant at) {
+        private void result(ResultRecorded recorded, Instant at) {
+            String callId = recorded.callId();
+            boolean succeeded = recorded.succeeded();
             ToolCall ran = running.remove(callId);
             if (ran == null) {
                 return;
             }
             boolean withheld = withheldInHistory.getOrDefault(callId, false) && policy.mode() == Mode.ENFORCE;
             var labels = EnumSet.noneOf(Label.class);
+            var trusted = new HashMap<String, Set<String>>();
             if (!withheld) {
                 labels.addAll(policy.tool(ran.tool()).labels());
                 labels.retainAll(SOURCE_LABELS);
+                // History has fingerprints only for the fields trusted when it was recorded, and of the tool that ran
+                // then; keep those the proposed policy trusts too.
+                if (succeeded && recorded.tool().equals(ran.tool())) {
+                    policy.tool(ran.tool()).trusted().forEach(field -> {
+                        Set<String> values = recorded.trusted().get(Binding.sourceKey(ran.tool(), field));
+                        if (values != null) {
+                            trusted.put(Binding.sourceKey(ran.tool(), field), values);
+                        }
+                    });
+                }
             }
-            store.append(new ResultRecorded(ran.sessionId(), callId, ran.tool(), succeeded, withheld, labels, at));
+            store.append(new ResultRecorded(ran.sessionId(), callId, ran.tool(), succeeded, withheld, labels, at, trusted));
         }
     }
 

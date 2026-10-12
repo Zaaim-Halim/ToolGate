@@ -1,6 +1,7 @@
 package io.toolgate.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import io.toolgate.api.ArgValue;
@@ -15,6 +16,8 @@ import io.toolgate.spi.SessionState;
 import io.toolgate.spi.TaintSource;
 import io.toolgate.spi.ValueCodec;
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -56,6 +59,39 @@ class JdbcSessionStoreTest {
 
         assertThat(store.state("s1").total("issueRefund.amount")).isEqualByComparingTo("199.99");
         assertThat(store.state("s1").total("transfer.quantity")).isEqualByComparingTo("10");
+    }
+
+    /** Trusted values live in the snapshot and the event log as fingerprints, sealed, and survive a restart. */
+    @Test
+    void keepsTrustedFingerprintsSealedInTheSnapshot() throws SQLException {
+        var codec = ValueCodec.aesGcm("k1", new byte[32]);
+        var sealed = new JdbcSessionStore(database, codec, Clock.fixed(T0, ZoneOffset.UTC));
+        String key = "local/readTicket#customer";
+        sealed.append(new SessionEvent.ResultRecorded("s1", "s1/1", ToolId.local("readTicket"), true, false,
+                Set.of(Label.UNTRUSTED_CONTENT), T0, Map.of(key, Set.of("ab12", "cd34"))), 0);
+
+        var restarted = new JdbcSessionStore(database, codec, Clock.fixed(T0, ZoneOffset.UTC));
+        assertThat(restarted.state("s1").trusts(key, "ab12")).isTrue();
+        assertThat(restarted.state("s1").trusts(key, "ef56")).isFalse();
+        assertThat(restarted.events("s1")).singleElement().isInstanceOfSatisfying(SessionEvent.ResultRecorded.class,
+                recorded -> assertThat(recorded.trusted()).isEqualTo(Map.of(key, Set.of("ab12", "cd34"))));
+        try (Connection connection = database.getConnection(); var rows = connection.createStatement()
+                .executeQuery("SELECT trusted FROM toolgate_session WHERE session_id = 's1'")) {
+            rows.next();
+            assertThat(rows.getString(1)).doesNotContain("ab12", "readTicket");
+        }
+    }
+
+    @Test
+    void anOutOfDateTableFailsWithTheFix() throws SQLException {
+        try (Connection connection = database.getConnection(); var statement = connection.createStatement()) {
+            statement.execute("ALTER TABLE toolgate_session DROP COLUMN trusted");
+        }
+        var outdated = new JdbcSessionStore(database);
+
+        assertThatThrownBy(outdated::verifySchema).isInstanceOf(JdbcStoreException.class)
+                .hasMessageContaining("Dialect.ddl()");
+        assertThatThrownBy(() -> outdated.state("s1")).isInstanceOf(JdbcStoreException.class);
     }
 
     @Test
