@@ -55,13 +55,16 @@ memory is a session of its own, since the model sees nothing from earlier reques
 ## 4. Build chat clients from Spring Boot's builder
 
 Inject `ChatClient.Builder`; its clients are gated. A client built by hand with
-`ChatClient.create(model)` or `ChatClient.builder(model)` is not: use `ToolGateChatClients.builder(model)`
-instead. Tool beans are guarded either way: a hand-built client that runs one is refused (or logged, in
-monitor mode). To guard them, ToolGate wraps tool beans in a proxy, like `@Transactional` does: call
-their methods, never read their fields from outside.
+`ChatClient.create(model)` or `ChatClient.builder(model)` is not: in enforce mode, any request of such a
+client that offers tools fails with `ToolGateViolationException` before the model is called. Use
+`ToolGateChatClients.builder(model)` instead.
 
-> **Important.** In a hand-built client, tools passed as plain objects, function callbacks, MCP tools
-> and `final` tool classes run **unchecked**. See [Known limitations](limitations.md#spring-ai-tools-a-hand-built-chatclient-runs-unchecked).
+If you call the chat model yourself and run its tool calls with the `ToolCallingManager` bean, pass the
+prompt through ToolGate first: `chatModel.call(toolGateChatClients.gated(prompt))`.
+
+ToolGate also wraps tool beans in a proxy, like `@Transactional` does, as a second line of defense:
+call their methods, never read their fields from outside. Use the auto-configured chat model bean; a
+model built by hand is not covered. See [Known limitations](limitations.md#spring-ai-chat-clients-and-models-built-by-hand).
 
 ## 5. Run and read the log
 

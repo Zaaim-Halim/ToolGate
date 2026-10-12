@@ -16,16 +16,26 @@ do about it today, and the direction of the fix. Read this before relying on Too
   identity provider, with MFA, under dedicated role names, never a general `ADMIN`, and watch the audit
   for `"access":"super_admin"`.
 
-## Spring AI: tools a hand-built `ChatClient` runs unchecked
+## Spring AI: chat clients and models built by hand
 
 `ChatClient.create(model)` and `ChatClient.builder(model)` create their own tool calling manager, which
-ToolGate never sees. Tool beans with `@Tool` methods are still guarded: if such a client runs one, the
-guard refuses it (enforce mode) or logs it (monitor mode). Still **unchecked** in a hand-built client:
-tools passed as plain objects (`.tools(new MyTools())`), function callbacks, MCP tools, and tool classes
-declared `final`, which cannot be proxied (ToolGate warns about these at startup).
+would run tools without ToolGate. ToolGate refuses such a request before the model sees any tool: the
+chat model asks Spring's `ToolCallingManager` bean, which ToolGate wraps, for the tools' definitions, and
+that bean refuses tool callbacks ToolGate did not wrap, whatever their kind (enforce mode; logged in
+monitor mode). The request fails with `ToolGateViolationException`, rule `adapter.ungated`.
 
-**Today:** build every chat client from Spring Boot's `ChatClient.Builder`, or with
-`ToolGateChatClients.builder(model)`.
+This is tested with Spring AI's OpenAI model. The Anthropic and Ollama auto-configurations give their
+models the same bean, but are not tested. Still **not covered**:
+
+- **A chat model built by hand** (`OpenAiChatModel.builder()...build()`) with its own tool calling
+  manager. Use the auto-configured model bean.
+- **A chat model that offers tools without asking the `ToolCallingManager`** for their definitions.
+- **An application `ToolAdvisor` ordered at exactly the highest precedence**, which ties with ToolGate's
+  advisor and can run tools first. Tool beans are still guarded; other tools are not.
+
+An application that calls the chat model itself and runs the model's tool calls with the
+`ToolCallingManager` bean must pass its prompt through `toolGateChatClients.gated(prompt)` first;
+otherwise the model refuses it.
 
 ## Taint holds most sends that follow untrusted content
 

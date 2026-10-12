@@ -116,8 +116,9 @@ Session events hold real argument values, so keep them no longer than you need f
 
 ## 7. Hardening checklist
 
-- [ ] Every chat client comes from Spring Boot's `ChatClient.Builder` or `ToolGateChatClients`
-      ([why](limitations.md#spring-ai-tools-a-hand-built-chatclient-runs-unchecked)).
+- [ ] Every chat client comes from Spring Boot's `ChatClient.Builder` or `ToolGateChatClients`, and
+      every chat model is the auto-configured bean
+      ([why](limitations.md#spring-ai-chat-clients-and-models-built-by-hand)).
 - [ ] Every tool that reads text someone else wrote is labeled `UNTRUSTED_CONTENT`.
 - [ ] Every tool that sends data out is labeled `EXTERNAL_SINK`, and irreversible ones have a downgrade
       or a reviewer.

@@ -210,16 +210,17 @@ class SpringAiAdapterTest {
     }
 
     /**
-     * ChatClient.create(model) runs tools without ToolGate. For tool beans the guard refuses them
-     * ({@link ToolBeanGuardTest}); tools passed as plain objects, as here, remain the documented gap, which
-     * ToolGateChatClients closes.
+     * ChatClient.create(model) would run tools without ToolGate, so the model refuses its request before
+     * offering any tool ({@link HandBuiltClientTest}); ToolGateChatClients builds a gated one.
      */
     @Test
-    void aClientBuiltByHandIsGatedOnlyThroughToolGateChatClients() {
+    void aClientBuiltByHandIsRefusedAndToolGateChatClientsIsGated() {
         MODEL.thenToolCalls(new Call("call_1", "deleteAllOrders", "{}")).thenText("Done.");
-        ChatClient.create(chatModel).prompt().user("Clean up").tools(new TestTools())
-                .toolContext(ToolGateContext.of("support-chat", MARIA, session)).call().content();
-        assertThat(TestTools.RAN).as("the documented gap").containsExactly("deleteAllOrders");
+        assertThatThrownBy(() -> ChatClient.create(chatModel).prompt().user("Clean up").tools(new TestTools())
+                .toolContext(ToolGateContext.of("support-chat", MARIA, session)).call().content())
+                .isInstanceOf(ToolGateViolationException.class);
+        assertThat(TestTools.RAN).isEmpty();
+        assertThat(MODEL.requests()).isEmpty();
 
         reset();
         MODEL.thenToolCalls(new Call("call_1", "deleteAllOrders", "{}")).thenText("I cannot do that.");

@@ -1,6 +1,7 @@
 package io.toolgate.springai;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 import io.modelcontextprotocol.client.McpClient;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
@@ -61,6 +63,8 @@ class McpToolsTest {
 
     @Autowired
     private ChatClient.Builder chatClients;
+    @Autowired
+    private ChatModel chatModel;
     @LocalServerPort
     private int port;
 
@@ -170,6 +174,24 @@ class McpToolsTest {
             assertThat(RAN).isEmpty();
             await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(decisions()).singleElement()
                     .satisfies(decided -> assertThat(decided.tool().toString()).isEqualTo("mcp:unattributed/searchTickets")));
+        }
+    }
+
+    /** A client built by hand would run MCP tools without ToolGate, so its request never reaches the model. */
+    @Test
+    void aClientBuiltByHandCannotOfferMcpTools() {
+        try (McpSyncClient jira = client("jira")) {
+            ToolCallback[] tools = provider(jira);
+            MODEL.thenToolCalls(new Call("call_1", tools[0].getToolDefinition().name(), "{\"query\":\"refund\"}"))
+                    .thenText("Done.");
+
+            assertThatThrownBy(() -> ChatClient.create(chatModel).prompt().user("Any refund tickets?")
+                    .tools((Object[]) tools).toolContext(ToolGateContext.of("triage", JOB, session)).call().content())
+                    .isInstanceOfSatisfying(ToolGateViolationException.class, refused ->
+                            assertThat(refused.ruleId()).isEqualTo(GatedToolCallingManager.UNGATED));
+
+            assertThat(RAN).isEmpty();
+            assertThat(MODEL.requests()).isEmpty();
         }
     }
 

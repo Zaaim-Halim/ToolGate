@@ -1,6 +1,7 @@
 package io.toolgate.springai;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.toolgate.api.Decision;
 import io.toolgate.api.Mode;
@@ -122,16 +123,17 @@ class ToolBeanGuardTest {
             assertThat(AopUtils.isCglibProxy(tools)).isTrue();
         }
 
+        /** Refused at the model now, before the guard is reached; the tied advisor below still needs the guard. */
         @Test
         void aClientBuiltByHandCannotRunAToolBean() {
             MODEL.thenToolCalls(new Call("call_1", "getWeather", "{\"city\":\"Paris\"}")).thenText("Sorry.");
 
-            ChatClient.create(chatModel).prompt().user("Weather?").tools(tools)
-                    .toolContext(ToolGateContext.of("support-chat", MARIA, session)).call().content();
+            assertThatThrownBy(() -> ChatClient.create(chatModel).prompt().user("Weather?").tools(tools)
+                    .toolContext(ToolGateContext.of("support-chat", MARIA, session)).call().content())
+                    .isInstanceOf(ToolGateViolationException.class);
 
-            assertThat(WeatherTools.RAN).as("the gap is closed for tool beans").isEmpty();
-            assertThat(MODEL.requests().get(1)).as("the model learns only the generic denial")
-                    .contains(Decision.Deny.MODEL_MESSAGE);
+            assertThat(WeatherTools.RAN).isEmpty();
+            assertThat(MODEL.requests()).as("no tool was offered to the model").isEmpty();
         }
 
         @Test

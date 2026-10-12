@@ -25,8 +25,10 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
  * callback, and the mark never outlives that call. Application code calling a tool method directly
  * is not refused: only Spring AI's dispatch is.
  *
- * <p>Covers tools that are beans, with a class that can be proxied. Tools passed as plain objects,
- * function callbacks and MCP tools in a client built by hand stay unguarded; see the setup checklist.
+ * <p>A second line of defense: the chat model already refuses a request whose tools ToolGate did not
+ * wrap ({@link GatedToolCallingManager}). The guard still catches an application {@code ToolAdvisor}
+ * tied with ToolGate's, which the model cannot see. Covers tools that are beans, with a class that can be
+ * proxied.
  */
 final class ToolBeanGuard implements MethodInterceptor {
 
