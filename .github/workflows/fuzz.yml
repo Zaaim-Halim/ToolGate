@@ -1,0 +1,53 @@
+name: Fuzz
+
+# Each target fuzzed on its own JVM, since Jazzer fuzzes one target per run. Pull requests only replay the
+# saved inputs, in CI's build job; this is the continuous fuzzing.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: Fuzzing time per target, as Jazzer reads it (30s, 10m, 1h)
+        default: 10m
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - ArgValueJsonFuzzTest
+          - AuditJsonFuzzTest
+          - EmailDomainsFuzzTest
+          - IpLiteralsFuzzTest
+          - PathCheckFuzzTest
+          - ReadOnlySqlFuzzTest
+          - UrlCheckFuzzTest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: >-
+          ./mvnw -B -ntp -pl toolgate-fuzz -am test
+          -Dtest=${{ matrix.target }} -Dsurefire.failIfNoSpecifiedTests=false
+          -Djazzer.max_duration=${{ inputs.duration || '10m' }}
+        env:
+          JAZZER_FUZZ: '1'
+      # Jazzer saves an input that fails under the target's resources; keep it to add as a regression input.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings-${{ matrix.target }}
+          path: |
+            toolgate-fuzz/src/test/resources/
+            toolgate-fuzz/target/surefire-reports/
+          retention-days: 30
