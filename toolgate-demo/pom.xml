@@ -61,6 +61,11 @@
     <dependencies>
         <dependency>
             <groupId>io.github.zaaim-halim.toolgate</groupId>
+            <artifactId>toolgate-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.zaaim-halim.toolgate</groupId>
             <artifactId>toolgate-spring-ai</artifactId>
             <version>${project.version}</version>
         </dependency>
